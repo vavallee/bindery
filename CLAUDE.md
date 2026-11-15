@@ -6,13 +6,15 @@ Go service, deployed to k8s via Helm + ArgoCD. Repo: vavallee/bindery. Docker: `
 
 All PRs target `main`. Tag push triggers CI:
 
-1. `test` (no -race) gates → `image` + `goreleaser` run in parallel. `race` runs parallel, non-blocking.
-2. `image`: Docker push (linux/amd64), then bumps `charts/bindery/values-dev.yaml` on `development` → `bindery-dev` ArgoCD app refreshes. Dev-first so changes are validated before prod.
+1. `test` (no -race) gates → `image` + `goreleaser` run in parallel. `race` and `lint` run parallel, non-blocking.
+2. `image`: Docker push (linux/amd64 + linux/arm64), including `:latest`. It needs only `test`, so a tag whose `goreleaser` or smoke fails has still moved `:latest`. A tag does not touch dev: `deploy-dev` runs only for the `development` branch, where it sets `image.tag` to `sha-{short}` in `charts/bindery/values-dev.yaml` and refreshes the `bindery-dev` ArgoCD app.
 3. `goreleaser`: binaries for linux (amd64/arm64/armv6/armv7), darwin, windows + SBOMs → GitHub Release.
 
 **CHANGELOG.md entry for the version MUST exist before tagging** — the release step reads it and aborts if missing. Tag the commit that contains the entry. (Learned the hard way on v1.1.1.)
 
-**A `v*` tag deploys automatically** — there is no manual promotion step. `deploy-prod` is gated on the tag plus a green `goreleaser`, bumps `charts/bindery/values.yaml` on main, and the ArgoCD `bindery` app syncs it. `notify-discord` posts the release announcement at the same time. (The old "Promote to production" workflow_dispatch flow is gone; this file described it long after it was removed.)
+**A `v*` tag deploys automatically.** There is no manual promotion step. `deploy-prod` needs `image`, `goreleaser` and `predeploy-smoke` on a tag, sets `image.tag` in `charts/bindery/values.yaml` on main to the release version (a tag, not a digest), and the ArgoCD `bindery` app syncs it. `notify-discord` needs `image` and `goreleaser` and posts the release announcement without waiting for the deploy. (The old "Promote to production" workflow_dispatch flow is gone; this file described it long after it was removed.)
+
+**The chart on main runs ahead of the prod image.** The prod ArgoCD app syncs `charts/bindery` from main, while `image.tag` in `values.yaml` moves only at a release. A chart change that needs a newer binary must wait until prod runs that image (merging one early caused a 10 hour outage on 2026-11-14, #3885).
 
 The ArgoCD "prod" app is the maintainer's own instance, not a customer fleet — the parts that actually reach other people are the public GitHub Release and the Discord post.
 

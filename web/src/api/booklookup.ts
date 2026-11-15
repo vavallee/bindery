@@ -33,9 +33,26 @@ export function isbnFromQuery(query: string): string | null {
   return ISBN_RE.test(compact) ? compact : null
 }
 
+// A Hardcover book reference (#3839): `hc:<slug>`, the form Bindery stores
+// Hardcover ids in, or the address of the book's page on hardcover.app, with or
+// without the scheme and with anything after the slug (an editions tab, a query
+// string). Both name one book, so they skip the title search, which may not
+// surface it at all.
+const HARDCOVER_ID_RE = /^hc:([a-z0-9][a-z0-9-]*)$/i
+const HARDCOVER_URL_RE = /^(?:https?:\/\/)?(?:www\.)?hardcover\.app\/books\/([a-z0-9][a-z0-9-]*)(?:[/?#]\S*)?$/i
+
+// hardcoverSlugFromQuery returns the Hardcover book slug a query names, or null
+// when it is not a Hardcover reference.
+export function hardcoverSlugFromQuery(query: string): string | null {
+  const q = query.trim()
+  const match = HARDCOVER_ID_RE.exec(q) ?? HARDCOVER_URL_RE.exec(q)
+  return match ? match[1] : null
+}
+
 // resolveBookQuery turns one free-text query into provider metadata results,
-// choosing the endpoint by the shape of the query: an ISBN or ASIN goes to
-// /book/lookup (exact, one result), anything else to /search/book.
+// choosing the endpoint by the shape of the query: an ISBN, an ASIN or a
+// Hardcover reference goes to /book/lookup (exact, one result), anything else
+// to /search/book.
 //
 // Shared by the Add Book modal and Manual Import's metadata search so the two
 // accept the same inputs. A user who can paste an ISBN into one should not find
@@ -46,6 +63,8 @@ export async function resolveBookQuery(query: string): Promise<Book[]> {
   const isbn = isbnFromQuery(q)
   if (isbn) return [await api.lookupISBN(isbn)]
   if (ASIN_RE.test(q)) return [await api.lookupASIN(q.toUpperCase())]
+  const hardcoverSlug = hardcoverSlugFromQuery(q)
+  if (hardcoverSlug) return [await api.lookupHardcover(hardcoverSlug)]
   // A backend that encodes an empty search as `null` rather than `[]` must not
   // reach the callers' `.map()`.
   return (await api.searchBooks(q)) ?? []

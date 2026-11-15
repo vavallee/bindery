@@ -649,7 +649,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					case "copy":
 						fileErr = CopyFileCtx(importCtx, srcFile, dstFile)
 					default:
-						fileErr = MoveFileCtx(importCtx, srcFile, dstFile)
+						fileErr = MoveDownloadFileCtx(importCtx, srcFile, dstFile)
 					}
 					if fileErr != nil {
 						dirErr = fileErr
@@ -778,7 +778,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					case "copy":
 						mergeSkippedFiles, dirErr = CopyDirMergeCtx(importCtx, audiobookSource, destDir)
 					default:
-						mergeSkippedFiles, dirErr = MoveDirMergeCtx(importCtx, audiobookSource, destDir)
+						mergeSkippedFiles, dirErr = MoveDownloadDirMergeCtx(importCtx, audiobookSource, destDir)
 					}
 					if len(mergeSkippedFiles) > 0 {
 						slog.Warn("audiobook merge skipped same-named file(s) already present in the shared folder",
@@ -843,7 +843,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 					case mode == "copy":
 						dirErr = CopyFileCtx(importCtx, audiobookSource, dstFile)
 					default:
-						dirErr = MoveFileCtx(importCtx, audiobookSource, dstFile)
+						dirErr = MoveDownloadFileCtx(importCtx, audiobookSource, dstFile)
 					}
 					// A lone .m4b had no cleanup at all, so any failure here
 					// left the directory MkdirAll had just made, and the next
