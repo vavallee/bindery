@@ -14,14 +14,21 @@ interface Props {
   title: string
   subtitle?: string
   imageUrl?: string
+  // The formats a request can still ask for, when the library already holds
+  // the book with the other one (#3898). Absent means any format.
+  requestableFormats?: string[]
   onBack: () => void
   onClose: () => void
   onRequested: (request: LibraryRequest) => void
 }
 
-export default function RequestConfirm({ kind, foreignId, title, subtitle, imageUrl, onBack, onClose, onRequested }: Props) {
+export default function RequestConfirm({ kind, foreignId, title, subtitle, imageUrl, requestableFormats, onBack, onClose, onRequested }: Props) {
   const { t } = useTranslation()
-  const [mediaType, setMediaType] = useState('')
+  // With one format left to ask for, that format is the only choice: "any
+  // format" could resolve to the one the library has and be refused, and
+  // "both" would ask for nothing more.
+  const onlyFormat = requestableFormats?.length === 1 ? requestableFormats[0] : ''
+  const [mediaType, setMediaType] = useState(onlyFormat)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -65,10 +72,10 @@ export default function RequestConfirm({ kind, foreignId, title, subtitle, image
             onChange={e => setMediaType(e.target.value)}
             className="text-xs bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1"
           >
-            <option value="">{t('requests.confirm.anyFormat')}</option>
-            <option value="ebook">{t('common.ebook')}</option>
-            <option value="audiobook">{t('common.audiobook')}</option>
-            <option value="both">{t('common.both')}</option>
+            <option value="" disabled={onlyFormat !== ''}>{t('requests.confirm.anyFormat')}</option>
+            <option value="ebook" disabled={onlyFormat !== '' && onlyFormat !== 'ebook'}>{t('common.ebook')}</option>
+            <option value="audiobook" disabled={onlyFormat !== '' && onlyFormat !== 'audiobook'}>{t('common.audiobook')}</option>
+            <option value="both" disabled={onlyFormat !== ''}>{t('common.both')}</option>
           </select>
         </label>
 

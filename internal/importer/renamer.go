@@ -945,7 +945,48 @@ func moveDir(ctx context.Context, src, dst string, allowRename bool) error {
 	}
 	// The copy completed without error (and without cancellation — copyDirContext
 	// returns ctx.Err() on cancel). Only now is it safe to remove the source.
-	return os.RemoveAll(src)
+	// A failure here leaves dst complete, so it must not look like a failed
+	// copy: callers that own dst decide whether leftovers matter (#3897).
+	if err := os.RemoveAll(src); err != nil {
+		return sourceNotRemoved(err)
+	}
+	return nil
+}
+
+// ErrSourceNotRemoved marks a move whose copy finished but whose source could
+// not be deleted afterwards (a download folder the client left unwritable to
+// Bindery's user). The destination is complete and verified at that point, so
+// the error is distinguishable from a failed copy. Import paths absorb it with
+// a warning; library-internal moves still report it (#3897).
+var ErrSourceNotRemoved = errors.New("source could not be removed after the copy")
+
+func sourceNotRemoved(err error) error {
+	return fmt.Errorf("%w: %w", ErrSourceNotRemoved, err)
+}
+
+// MoveDownloadDirMergeCtx is MoveDirMergeCtx for a download folder: a source
+// that cannot be deleted once everything was placed is a warning, not a
+// failure, so the import is not retried into a duplicate folder (#3897).
+func MoveDownloadDirMergeCtx(ctx context.Context, src, dst string) ([]string, error) {
+	skipped, err := MoveDirMergeCtx(ctx, src, dst)
+	if errors.Is(err, ErrSourceNotRemoved) {
+		slog.Warn("download folder copied into the library but could not be removed; leaving it for the operator",
+			"src", src, "dst", dst, "error", err)
+		return skipped, nil
+	}
+	return skipped, err
+}
+
+// MoveDownloadFileCtx is MoveFileCtx for a file that came from a download,
+// with the same leftover-source tolerance as MoveDownloadDirCtx (#3897).
+func MoveDownloadFileCtx(ctx context.Context, src, dst string) error {
+	err := MoveFileCtx(ctx, src, dst)
+	if errors.Is(err, ErrSourceNotRemoved) {
+		slog.Warn("download file copied into the library but could not be removed; leaving it for the operator",
+			"src", src, "dst", dst, "error", err)
+		return nil
+	}
+	return err
 }
 
 // MoveDirMergeCtx is moveDirCtx's merge-aware sibling — see CopyDirMergeCtx
@@ -978,7 +1019,10 @@ func MoveDirMergeCtx(ctx context.Context, src, dst string) (skipped []string, er
 	if len(skipped) > 0 {
 		return skipped, nil
 	}
-	return skipped, os.RemoveAll(src)
+	if err := os.RemoveAll(src); err != nil {
+		return skipped, sourceNotRemoved(err)
+	}
+	return skipped, nil
 }
 
 // CopyFile copies src to dst without removing the source. It is the "copy"
@@ -1644,7 +1688,10 @@ func MoveFileCtx(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("size mismatch: src=%d dst=%d", srcInfo.Size(), dstInfo.Size())
 	}
 
-	return os.Remove(src)
+	if err := os.Remove(src); err != nil {
+		return sourceNotRemoved(err)
+	}
+	return nil
 }
 
 // CopyFileCtx is like CopyFile but returns ctx.Err() if the context is
@@ -1899,10 +1946,14 @@ func MoveDownloadDirCtx(ctx context.Context, src, dst string) error {
 		// the filtering copy as well.
 		slog.Warn("download folder holds symlinks or special files, copying its regular files instead of moving the folder",
 			"src", src, "entries", capEntries(found), "count", len(found), "scanError", scanErr)
-		return moveDir(ctx, src, dst, false)
+		return absorbSourceNotRemoved(moveDir(ctx, src, dst, false), src, dst)
 	}
 	if err := moveDir(ctx, src, dst, true); err != nil {
-		return err
+		if !errors.Is(err, ErrSourceNotRemoved) {
+			return err
+		}
+		slog.Warn("download folder copied into the library but could not be removed; leaving it for the operator",
+			"src", src, "dst", dst, "error", err)
 	}
 	return ensureNoNonRegularEntries(dst)
 }
@@ -2126,4 +2177,14 @@ func UniqueDir(dst string) string {
 // NowYear returns the current year as a string, used as fallback.
 func NowYear() string {
 	return fmt.Sprintf("%d", time.Now().Year())
+}
+
+// absorbSourceNotRemoved turns ErrSourceNotRemoved into a warning and nil.
+func absorbSourceNotRemoved(err error, src, dst string) error {
+	if errors.Is(err, ErrSourceNotRemoved) {
+		slog.Warn("download folder copied into the library but could not be removed; leaving it for the operator",
+			"src", src, "dst", dst, "error", err)
+		return nil
+	}
+	return err
 }

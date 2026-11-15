@@ -1,0 +1,233 @@
+---
+# Source: bindery/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bindery
+  labels:
+    app.kubernetes.io/name: bindery
+    app.kubernetes.io/instance: x
+    app.kubernetes.io/version: "1.50.0"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: bindery-0.9.12
+automountServiceAccountToken: false
+
+---
+# Source: bindery/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bindery-config
+  labels:
+    app.kubernetes.io/name: bindery
+    app.kubernetes.io/instance: x
+    app.kubernetes.io/version: "1.50.0"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: bindery-0.9.12
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 4Gi
+
+---
+# Source: bindery/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: bindery
+  labels:
+    app.kubernetes.io/name: bindery
+    app.kubernetes.io/instance: x
+    app.kubernetes.io/version: "1.50.0"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: bindery-0.9.12
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: bindery
+    app.kubernetes.io/instance: x
+  ports:
+    - name: http
+      port: 8787
+      targetPort: http
+      protocol: TCP
+
+---
+# Source: bindery/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bindery
+  labels:
+    app.kubernetes.io/name: bindery
+    app.kubernetes.io/instance: x
+    app.kubernetes.io/version: "1.50.0"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: bindery-0.9.12
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bindery
+      app.kubernetes.io/instance: x
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bindery
+        app.kubernetes.io/instance: x
+    spec:
+      serviceAccountName: bindery
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bindery
+          image: "ghcr.io/vavallee/bindery:1.50.0"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8787
+              protocol: TCP
+          env:
+            - name: BINDERY_DATA_DIR
+              value: "/config"
+            - name: BINDERY_DB_PATH
+              value: "/config/bindery.db"
+            - name: BINDERY_DOWNLOAD_DIR
+              value: "/downloads"
+            - name: BINDERY_DOWNLOAD_RETENTION_DAYS
+              value: "90"
+            - name: BINDERY_LIBRARY_DIR
+              value: "/books"
+            - name: BINDERY_LOG_LEVEL
+              value: "info"
+            - name: BINDERY_PORT
+              value: "8787"
+            # Telemetry signal — distinguishes Helm-installed pods from raw
+            # k8s manifests / kustomize / operators in the public dashboard
+            # at https://getbindery.dev/stats. Only the bucket label is sent;
+            # the install ID and ping payload are unchanged.
+            - name: BINDERY_DEPLOY_METHOD
+              value: "helm"
+          startupProbe:
+            tcpSocket:
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          # Readiness round trips the database (2 s budget inside the
+          # handler, so timeoutSeconds must exceed it); while it fails the pod
+          # leaves the Service but keeps running. Liveness stays on the static
+          # /api/v1/health on purpose: a liveness probe that touches the
+          # database restarts the pod on a slow disk or a long write, which
+          # fixes neither.
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            timeoutSeconds: 3
+            failureThreshold: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            failureThreshold: 5
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /config
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: config
+          persistentVolumeClaim:
+            claimName: bindery-config
+      terminationGracePeriodSeconds: 30
+
+---
+# Source: bindery/templates/hooks/postsync-smoke.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bindery-postsync-smoke
+  labels:
+    app.kubernetes.io/name: bindery
+    app.kubernetes.io/instance: x
+    app.kubernetes.io/version: "1.50.0"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: bindery-0.9.12
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  ttlSecondsAfterFinished: 120
+  template:
+    metadata:
+      labels:
+        # Deliberately NOT bindery.selectorLabels. The Service and the
+        # NetworkPolicy select on name+instance; carrying both would put this
+        # pod under the NetworkPolicy's egress lockdown (so it could never
+        # reach the Service it probes) and make it a Service endpoint
+        # candidate.
+        app.kubernetes.io/name: bindery-postsync-smoke
+        app.kubernetes.io/instance: x
+        app.kubernetes.io/component: postsync-smoke
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: smoke
+          image: "busybox:1.37"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Running post-sync smoke test..."
+              URL="http://bindery:8787/api/v1/health"
+              STATUS=$(wget -q -S -O /dev/null -T 10 "$URL" 2>&1 | grep "HTTP/" | awk '{print $2}' | head -1)
+              if [ "$STATUS" = "200" ]; then
+                echo "Health check passed (HTTP $STATUS)"
+                exit 0
+              else
+                echo "Health check failed (HTTP $STATUS)"
+                exit 1
+              fi
