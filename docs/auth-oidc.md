@@ -19,7 +19,7 @@ Sessions are issued using the same HMAC-signed cookie as password login. OIDC si
 |----------|---------|-------------|
 | `BINDERY_OIDC_REDIRECT_BASE_URL` | _(see resolution below)_ | Public base URL Bindery is reachable at (e.g. `https://bindery.example.com`). Used as the prefix for OIDC callback URLs. Required for path-prefix deploys; otherwise optional when behind a trusted proxy that sets `X-Forwarded-Proto` and `X-Forwarded-Host`. |
 | `BINDERY_TRUSTED_PROXY` | _(unset)_ | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-*` headers Bindery may trust. Required for the auto-derive fallback to kick in. |
-| `BINDERY_LOCAL_AUTH_ENABLED` | `true` | Set to `false` to disable password-based login entirely. `POST /auth/login` returns 403 and the admin user-create API is also blocked. Use when all users must authenticate via OIDC. |
+| `BINDERY_LOCAL_AUTH_ENABLED` | `true` | Set to `false` to turn off the web login form and the login API: `POST /auth/login` returns 403 and the admin user-create API is also blocked. Use when all users must sign in to the web UI through OIDC. It does not turn off passwords for OPDS. A reading app still signs in with an account's username and password over HTTP Basic, see [What SSO-only mode leaves open](#what-sso-only-mode-leaves-open-opds). |
 | `BINDERY_OIDC_AUTO_PROVISION` | `true` | Set to `false` to require that OIDC users already exist in Bindery's database. First-time OIDC logins from unknown `(issuer, sub)` pairs return 403 instead of creating an account. |
 | `BINDERY_OIDC_EMAIL_LINK` | `false` | Set to `true` to link an unknown OIDC identity to an existing Bindery account if the email address matches. Runs before the auto-provision check. Useful for migrating from local accounts to OIDC without losing history. |
 | `BINDERY_OIDC_DEFAULT_ROLE` | `user` | Role assigned to a freshly auto-provisioned OIDC user. Valid values: `user`, `admin`, `requester`. Any other value falls back to `user`. Set to `admin` for single-admin homelab deployments to skip the manual promotion step, or to `requester` so new logins can only browse and ask until an admin says otherwise. |
@@ -106,9 +106,31 @@ Three env vars govern who can log in and how accounts are created. All default t
 BINDERY_LOCAL_AUTH_ENABLED=false
 ```
 
-With this set, `POST /auth/login` returns `403 Forbidden` and the OIDC providers are the only way in. The admin user-create API is also blocked. The login page hides the username/password form; if no OIDC providers are configured it shows "Contact your administrator for access".
+With this set, `POST /auth/login` returns `403 Forbidden` and the OIDC providers are the only way in to the web UI. The admin user-create API is also blocked. The login page hides the username/password form; if no OIDC providers are configured it shows "Contact your administrator for access".
 
 **Before** setting this: ensure at least one OIDC provider is configured and working, and that you can authenticate through it. There is no break-glass override — if you lock yourself out, you must restart with `BINDERY_LOCAL_AUTH_ENABLED=true` to recover.
+
+#### What SSO-only mode leaves open: OPDS
+
+The flag covers the web login form and `POST /auth/login`. It does not cover the OPDS catalogue. Reading apps cannot follow an OIDC redirect, so `/opds` keeps accepting an account's username and password over HTTP Basic, and that is how readers work on an SSO-only install.
+
+In practice this means an account that has a password can still browse the catalogue and download book files with that password, without going through your identity provider. Disabling or removing the person at the IdP stops their web sign in but not this.
+
+Which accounts have a password:
+
+- An account auto-provisioned on a first OIDC sign in has no password, so Basic can never match it.
+- An account an admin created (`POST /api/v1/auth/users`), and the account from first-run setup, has the password it was given.
+- Any account that an admin later ran **Reset password** on has that password.
+
+Accounts with the `requester` role are refused by OPDS (`403`) whatever they sign in with.
+
+To cut an account off from OPDS as well, do one of these:
+
+- **Reset its password** to a long random value nobody keeps: the **Reset password** button on the **Users** page, or `PUT /api/v1/auth/users/{id}/reset-password`. The old password stops working at once and the account's existing sessions end. Bindery has no way to blank a password or to disable an account, so replacing the password is the closest thing.
+- **Change its role to `requester`** on the **Users** page, if the person should keep requesting books but not read or download.
+- **Delete the account** on the **Users** page, or `DELETE /api/v1/auth/users/{id}`.
+
+OPDS also accepts the API key, which is unaffected by this flag. See the [OPDS sign in order](Calibre-Windows-Desktop-Wiki.md#how-opds-decides-who-may-in) for the full list of what `/opds` accepts.
 
 ### Preventing account self-registration via OIDC
 
@@ -190,7 +212,7 @@ BINDERY_LOCAL_AUTH_ENABLED=false
 BINDERY_OIDC_AUTO_PROVISION=false
 ```
 
-Only users who already exist can log in, and only through OIDC. **Create the accounts first.** `POST /api/v1/auth/users` is refused with `403 local accounts are disabled` while `BINDERY_LOCAL_AUTH_ENABLED=false`, so the working order is: start with local auth enabled, create every account (each needs a password of at least 8 characters even though nobody will use it), then set `BINDERY_LOCAL_AUTH_ENABLED=false` and restart. Setting both variables on a fresh install leaves no way in at all. First-run setup (`POST /api/v1/auth/setup`) is refused with `403` while local auth is disabled and an OIDC provider or proxy mode is configured, and `/auth/status` reports `setupRequired: false`, so the UI goes to the login page. With no provider configured setup stays available. Pair this with `allowed_groups` on the provider to further restrict who can authenticate.
+Only users who already exist can sign in to the web UI, and only through OIDC. **Create the accounts first.** `POST /api/v1/auth/users` is refused with `403 local accounts are disabled` while `BINDERY_LOCAL_AUTH_ENABLED=false`, so the working order is: start with local auth enabled, create every account (each needs a password of at least 8 characters; the web UI will not accept it once local auth is off, but OPDS still does, so treat it as a real credential, see [What SSO-only mode leaves open](#what-sso-only-mode-leaves-open-opds)), then set `BINDERY_LOCAL_AUTH_ENABLED=false` and restart. Setting both variables on a fresh install leaves no way in at all. First-run setup (`POST /api/v1/auth/setup`) is refused with `403` while local auth is disabled and an OIDC provider or proxy mode is configured, and `/auth/status` reports `setupRequired: false`, so the UI goes to the login page. With no provider configured setup stays available. Pair this with `allowed_groups` on the provider to further restrict who can authenticate.
 
 ### `client_secret` write-only semantics
 
