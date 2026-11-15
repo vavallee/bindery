@@ -523,7 +523,11 @@ unpaged response carries every series with every linked book.
 GET    /api/v1/search/author?term=…               metadata author search
 GET    /api/v1/search/book?term=…                 metadata book search
 GET    /api/v1/search/library?q=…                 your own catalogue: `{authors, books, series}`, up to `limit` rows per group (default 5, max 10), owner scoped like the list endpoints; 400 on an empty `q`
-GET    /api/v1/book/lookup?isbn=… | ?asin=…       single-book lookup by identifier
+GET    /api/v1/book/lookup?isbn=… | ?asin=… | ?hardcover=…
+                                                  single-book lookup by identifier. `hardcover` takes a Hardcover book slug (the last
+                                                  part of a hardcover.app/books/ address, `hc:` prefix optional) and fetches that one book
+                                                  even when the title search does not return it; 400 on a value that is not a slug, 404
+                                                  when Hardcover has no such book, is turned off as a source, or has no API token saved
 GET    /api/v1/wanted/missing                     list wanted-but-missing books. A bare array, every one of them, unless `limit` is passed:
                                                   `?limit=50&offset=0&search=&includeExcluded=` answers {"items":[..],"total":N,"limit":50,"offset":0}.
                                                   `total` counts every wanted book you can see that matches `search` and `includeExcluded`,

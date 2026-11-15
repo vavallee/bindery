@@ -267,7 +267,12 @@ monitored.
 | **Library imports** (Calibre, Readarr, ABS, Goodreads CSV, author list) | Your existing catalogue — see the next section |
 
 **Add Author** and **Add Book** open the same dialog. Type an author name, a
-title, an ISBN or an ASIN and press Enter. The **All / Books / Authors** control
+title, an ISBN or an ASIN and press Enter. If a book has a page on Hardcover
+that the search does not return, paste the page's address
+(`https://hardcover.app/books/<slug>`) or type `hc:<slug>`: that fetches the
+one book straight from Hardcover and offers it like any other result, so you
+can add it and then edit whatever Hardcover has too little of. This needs a
+Hardcover API token in Settings → API Keys. The **All / Books / Authors** control
 under the search box picks what the results show: *Books* is a flat list of
 books, best title match first; *Authors* is author rows only; *All* lists
 authors first, each followed by the books the provider attributes to them, with

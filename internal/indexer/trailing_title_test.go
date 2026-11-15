@@ -252,3 +252,51 @@ func TestTrailingTitleNegativesNeedNoContext(t *testing.T) {
 		})
 	}
 }
+
+// The author's name after the title is not another title (#3902): library
+// books named "Octavia E. Butler: The Last Interview" have the primary title
+// "Octavia E. Butler".
+func TestTrailingTitleAuthorNameIsNotAnotherTitle(t *testing.T) {
+	others := []string{
+		"Octavia E. Butler : Lilith's Brood : the Xenogenesis Trilogy",
+		"Octavia E. Butler: The Last Interview: and Other Conversations",
+	}
+	for _, rel := range []string{
+		"Survivor by Octavia E Butler [ENG / EPUB MOBI]",
+		"Survivor by Octavia E Butler [ENG / EPUB] [VIP]",
+	} {
+		res := []newznab.SearchResult{{Title: rel, GUID: rel}}
+		kept, dropped := filterRelevantKeepDropped(res, "Survivor", "Octavia E. Butler", nil, bookContext{otherTitles: others})
+		if len(kept) != 1 {
+			t.Errorf("%q dropped: %+v", rel, dropped)
+		}
+	}
+	keeps := func(rel, title, author string, lib ...string) bool {
+		res := []newznab.SearchResult{{Title: rel, GUID: rel}}
+		kept, _ := filterRelevantKeepDropped(res, title, author, nil, bookContext{otherTitles: lib})
+		return len(kept) == 1
+	}
+	for _, tc := range []struct {
+		name, rel, title, author string
+		lib                      []string
+		want                     bool
+	}{
+		{"author before the title", "Octavia E. Butler - Survivor", "Survivor", "Octavia E. Butler", others, true},
+		{"full name prefixed title still rejects", "Survivor Octavia E Butler The Last Interview and Other Conversations", "Survivor", "Octavia E. Butler", others, false},
+		// Once the name segment is skipped, what follows it is the other
+		// book's title and must reject on its own.
+		{"title after the name rejects", "Survivor - Octavia E Butler - The Last Interview", "Survivor", "Octavia E. Butler", others, false},
+		{"whole title after the name rejects", "Survivor - The Last Interview and Other Conversations", "Survivor", "Octavia E. Butler", others, false},
+		// A one word remainder is too weak to reject on.
+		{"one word remainder does not reject", "Octavia E Butler - Survivor - Kindred [EPUB]", "Survivor", "Octavia E. Butler", []string{"Octavia E. Butler: Kindred"}, true},
+		{"author stored last name first", "Survivor by Octavia E Butler [ENG / EPUB]", "Survivor", "Butler, Octavia E.", others, true},
+		{"last name first still rejects the title after the name", "Survivor - Octavia E Butler - The Last Interview", "Survivor", "Butler, Octavia E.", others, false},
+		// The wanted book's main title is itself a library book: a release
+		// that carries only the main title is that other book.
+		{"main title that is another library book", "Octavia E Butler [EPUB]", "Octavia E. Butler: The Last Interview", "Octavia E. Butler", []string{"Octavia E. Butler"}, false},
+	} {
+		if got := keeps(tc.rel, tc.title, tc.author, tc.lib...); got != tc.want {
+			t.Errorf("%s: %q kept = %v, want %v", tc.name, tc.rel, got, tc.want)
+		}
+	}
+}

@@ -1044,6 +1044,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	// way, or a spelled out series title would never equal the folded release.
 	// Author aliases are names, not titles, and are deliberately not folded.
 	bc.seriesTitle = newznab.FoldNumberWords(bc.seriesTitle)
+	bc.authorNames = append([]string{author}, aliases...)
 	if len(bc.otherTitles) > 0 {
 		folded := make([]string, len(bc.otherTitles))
 		for i, t := range bc.otherTitles {

@@ -1,0 +1,2 @@
+### Added
+- **Add a book from its Hardcover page** (#3839). When the Add Book search does not return a book that Hardcover has, paste the book's hardcover.app address or type `hc:` and its slug, and Bindery fetches that one book from Hardcover and offers it like any other result. Manual Import's metadata search and Fix Match accept the same input. It needs a saved Hardcover API token. API clients can use `GET /api/v1/book/lookup?hardcover=<slug>`.

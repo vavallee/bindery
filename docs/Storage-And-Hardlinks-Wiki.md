@@ -48,7 +48,7 @@ Enable **Settings → General → File Naming → Flatten multi-disc audiobooks*
 Guarantees:
 
 - **Off by default.** Single-disc audiobooks and downloads with no disc folders are never altered.
-- **Never in external mode.** Flattening renames files, so it only ever places via copy or hardlink. In `copy` and `hardlink` mode the source is left untouched. In `move` mode Bindery flattens by copying and then removes the source folder, the same copy-then-delete contract move mode already uses, which is why move mode cannot seed. In `external` mode the setting is ignored and the existing whole-folder behaviour applies.
+- **Never in external mode.** Flattening renames files, so it only ever places via copy or hardlink. In `copy` and `hardlink` mode the source is left untouched. In `move` mode Bindery flattens by copying and then removes the source folder, the same copy-then-delete contract move mode already uses, which is why move mode cannot seed. Only what reached the library is deleted: a flatten carries the tracks and the root-level sidecars, so when the download also holds other files inside its subfolders (a booklet, a cover per disc, an archive volume), or a sidecar could not be copied, those files stay in the download folder and the log names them. In `external` mode the setting is ignored and the existing whole-folder behaviour applies.
 - **Seeding preserved in copy and hardlink mode.** The source download is copied or hardlinked, never renamed in place, so it keeps seeding.
 
 ## Audiobooks whose files share no folder
