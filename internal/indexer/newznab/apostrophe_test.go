@@ -130,12 +130,12 @@ func scriptedIndexer(t *testing.T, respond func(term string) string) (*httptest.
 		mu.Lock()
 		queries = append(queries, term)
 		mu.Unlock()
-		switch out := respond(term); {
-		case out == "!429":
+		switch out := respond(term); out {
+		case "!429":
 			w.WriteHeader(http.StatusTooManyRequests)
-		case out == "!500":
+		case "!500":
 			w.WriteHeader(http.StatusInternalServerError)
-		case out == "":
+		case "":
 			w.Header().Set("Content-Type", "application/xml")
 			w.Write([]byte(emptyFeed))
 		default:
