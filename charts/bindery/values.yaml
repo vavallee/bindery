@@ -143,7 +143,8 @@ networkPolicy:
   # peers. Leave disabled unless your cluster has a NetworkPolicy-capable
   # CNI (Calico, Cilium, etc).
   enabled: false
-  # Label selector(s) allowed to reach the Bindery pod on its service port.
+  # Label selector(s) allowed to reach the Bindery pod on its container port
+  # (the port named http, 8787). service.port does not affect this rule.
   # Example: { matchLabels: { app.kubernetes.io/part-of: media-stack } }
   ingressSelector: {}
   # Additional egress rules beyond DNS. One entry per downstream service —

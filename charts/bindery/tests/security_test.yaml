@@ -139,3 +139,27 @@ tests:
       - contains:
           path: spec.policyTypes
           content: Egress
+
+  # A NetworkPolicy port is the pod port. The Service may listen on anything,
+  # the container always listens on the port named http.
+  - it: NetworkPolicy admits the container port, not service.port
+    template: networkpolicy.yaml
+    set:
+      networkPolicy.enabled: true
+      service.port: 80
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - protocol: TCP
+              port: http
+
+  - it: the container port the NetworkPolicy names exists on the pod
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: http
+            containerPort: 8787
+            protocol: TCP

@@ -523,7 +523,11 @@ unpaged response carries every series with every linked book.
 GET    /api/v1/search/author?term=…               metadata author search
 GET    /api/v1/search/book?term=…                 metadata book search
 GET    /api/v1/search/library?q=…                 your own catalogue: `{authors, books, series}`, up to `limit` rows per group (default 5, max 10), owner scoped like the list endpoints; 400 on an empty `q`
-GET    /api/v1/book/lookup?isbn=… | ?asin=…       single-book lookup by identifier
+GET    /api/v1/book/lookup?isbn=… | ?asin=… | ?hardcover=…
+                                                  single-book lookup by identifier. `hardcover` takes a Hardcover book slug (the last
+                                                  part of a hardcover.app/books/ address, `hc:` prefix optional) and fetches that one book
+                                                  even when the title search does not return it; 400 on a value that is not a slug, 404
+                                                  when Hardcover has no such book, is turned off as a source, or has no API token saved
 GET    /api/v1/wanted/missing                     list wanted-but-missing books. A bare array, every one of them, unless `limit` is passed:
                                                   `?limit=50&offset=0&search=&includeExcluded=` answers {"items":[..],"total":N,"limit":50,"offset":0}.
                                                   `total` counts every wanted book you can see that matches `search` and `includeExcluded`,
@@ -575,6 +579,13 @@ identifier. Both fields hold the library row id and are omitted otherwise, so a
 client can offer "open" for those rows and "add" for the rest. The lookup is
 owner scoped: another user's copy does not stamp. If the library lookup itself
 fails the search still succeeds, unstamped.
+
+For a requester the book stamp means "nothing left to ask for" (#3898):
+`libraryBookId` is kept only when both formats are on disk or monitored. A book
+the requester can see that still lacks a format is returned without it and with
+`requestableFormats`, the formats (`ebook`, `audiobook`) a request can still
+name. The field is never sent to other roles and never describes another
+account's book.
 
 An author in `/search/author` carries the provider's work count as
 `statistics.bookCount` when one is known (#3126). Hardcover supplies it as well as
@@ -1993,7 +2004,7 @@ an id with no account `422`. Answers:
 | `201` | the request, as below |
 | `403` | `forUser` sent by anyone but an admin session or the API key |
 | `400`, `422` | `forUser` is not a user id, or no account has that id |
-| `409` | already in the library, already requested by this user (pending or declined); the `error` field says which |
+| `409` | already in the library with the requested format on disk or monitored (a book the library holds without it can still be requested, #3898), or, with `BINDERY_ENFORCE_TENANCY` on, held by another account whether or not it has the format (same `error` sentence as a covered book); already requested by this user (pending or declined); the `error` field says which |
 | `429` | this user already has `requests.max_pending_per_user` requests waiting (default 25), or a requester made creates or searches faster than the per user allowance (burst of 20, then one every 3 seconds; `Retry-After` says when). The cap is checked in the same statement as the insert, so concurrent creates cannot pass it |
 | `502`, `404` | the provider did not answer, or has no such id |
 
