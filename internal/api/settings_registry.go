@@ -167,6 +167,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingMetadataBookRanobeDB, Type: SettingTypeBool, Default: "false",
+		Description: "Give light novels their official English title from RanobeDB. A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a locked title. Two requests per book, paced to RanobeDB's 60 a minute. Off by default: while off, RanobeDB is sent no request. A change applies to the next metadata lookup, without a restart.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: SettingMetadataEnrichersDisabled, Type: SettingTypeString, Default: "",
 		Description: "Comma separated metadata enrichers to turn off: any of openlibrary, hardcover, googlebooks, dnb, plus the audiobook sources audible (Audible catalogue) and audnex. Empty leaves all on. The primary provider is never turned off, so naming it is ignored. A disabled enricher is no longer used as an enricher (Hardcover can still be reached by its list sync, recommendations and series features), and a disabled audible or audnex is never asked. A change applies to the next metadata lookup, without a restart.",
 		State:       SettingStateActive,

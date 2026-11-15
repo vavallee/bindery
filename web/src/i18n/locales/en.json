@@ -2370,6 +2370,8 @@
       "defaultMediaTypeHint": "Applied to new authors, and to books you add on their own, when no explicit choice is made. Existing rows are unaffected: change authors with the Authors page bulk action, and books from the Books page with Set ebook, Set audiobook or Set both, which also covers your wanted list once Books is filtered to Wanted.",
       "authorWikidataLabel": "Author photos and bios from Wikidata",
       "authorWikidataHint": "Fills an author's missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author's library authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Lookups ride on the daily author refresh, and each photo and bio is credited on the author's page. While this is off, Wikimedia is sent no request.",
+      "bookRanobeDBLabel": "Light novel titles from RanobeDB",
+      "bookRanobeDBHint": "Gives light novels their official English title from RanobeDB (ranobedb.org, data under the ODbL). A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a title you locked. Lookups are paced to RanobeDB's 60 requests a minute. While this is off, RanobeDB is sent no request.",
       "enrichersHeading": "Enrichers",
       "enrichersHint": "These providers fill in what the primary leaves empty. Untick one and Bindery stops using it as an enricher, which means fewer requests but less fill in: DNB also supplies covers through its cover service, and Hardcover also supplies curated genres, series and edition language evidence. Takes effect from the next lookup, with no restart.",
       "enricherPrimaryNote": "This is the primary provider, so it cannot be turned off.",

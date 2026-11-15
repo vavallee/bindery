@@ -1853,8 +1853,9 @@ cover lookup, and turning off Hardcover removes it as an enricher only; the
 separate enhanced Hardcover series setting is unchanged.
 
 A `PUT` (or `DELETE`) of `metadata.primary_provider`, `metadata.enrichers_disabled`,
-`googlebooks.apiKey`, `google_books_api_key`, `hardcover.api_token` or
-`metadata.author_enrichment.wikidata` (#3287) rebuilds the metadata providers
+`googlebooks.apiKey`, `google_books_api_key`, `hardcover.api_token`,
+`metadata.author_enrichment.wikidata` (#3287) or
+`metadata.book_enrichment.ranobedb` (#2012) rebuilds the metadata providers
 before it answers, so the next lookup already uses the new set, with no restart
 (#1771). The `PUT` response for those keys carries an extra boolean:
 

@@ -37,6 +37,13 @@ provider, so a save applies to the next lookup. Because the provider set is part
 of the cache keys, a smaller set never serves answers cached under a larger one;
 the two audiobook sources return before their cache is read while off.
 
+RanobeDB is the one enricher that is opt in rather than opt out:
+`metadata.book_enrichment.ranobedb` adds it after every other enricher
+(#2012). It is also the only enricher that writes a book's title, and only the
+official English title of a match with a clear best score, the same volume
+numbers and a matching author, never over a locked title (see
+[third-party-data.md](third-party-data.md#ranobedb)).
+
 An author's photo and bio come from the author's own provider. When it has none,
 the optional *author enrichers* fill the gap on the staggered `refresh-metadata`
 job and on the two single author actions, adding an author and its Refresh

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -350,5 +351,43 @@ func TestWikidataAuthorEnricherIsOptInAndAppliesLive(t *testing.T) {
 	}
 	if names := agg.AuthorEnricherNames(); len(names) != 0 {
 		t.Errorf("after switching it off: author enrichers %v, want none", names)
+	}
+}
+
+// TestRanobeDBBookEnricherIsOptInAndAppliesLive covers #2012: the RanobeDB
+// enricher is off until its setting is saved as true, a save wires it into
+// the running aggregator without a restart and after every other enricher,
+// and clearing it removes it again.
+func TestRanobeDBBookEnricherIsOptInAndAppliesLive(t *testing.T) {
+	m, repo := metadataProvidersFixture(t)
+	ctx := context.Background()
+	set := m.build(ctx)
+	agg := metadata.NewAggregator(set.primary, set.enrichers...)
+	defaults := agg.ProviderNames()
+	if slices.Contains(defaults, "ranobedb") {
+		t.Fatalf("a default boot wired %v; RanobeDB must be opt in", defaults)
+	}
+	if !metadataProviderSettingKeys[api.SettingMetadataBookRanobeDB] {
+		t.Fatal("saving the RanobeDB setting does not trigger a provider rebuild")
+	}
+
+	if err := repo.Set(ctx, api.SettingMetadataBookRanobeDB, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.apply(ctx, agg); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := agg.ProviderNames(), append(slices.Clone(defaults), "ranobedb"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("after switching it on: providers %v, want %v", got, want)
+	}
+
+	if err := repo.Set(ctx, api.SettingMetadataBookRanobeDB, "false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.apply(ctx, agg); err != nil {
+		t.Fatal(err)
+	}
+	if got := agg.ProviderNames(); !reflect.DeepEqual(got, defaults) {
+		t.Errorf("after switching it off: providers %v, want %v", got, defaults)
 	}
 }

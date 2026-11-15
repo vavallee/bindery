@@ -12,6 +12,7 @@ import (
 	"github.com/vavallee/bindery/internal/metadata/bnf"
 	"github.com/vavallee/bindery/internal/metadata/googlebooks"
 	"github.com/vavallee/bindery/internal/metadata/nb"
+	"github.com/vavallee/bindery/internal/metadata/ranobedb"
 	"github.com/vavallee/bindery/internal/metadata/wikidata"
 )
 
@@ -39,6 +40,9 @@ type metadataProviders struct {
 	// wikidata is the opt in author enricher (#3287). Building it sends
 	// nothing; it is only asked once SettingMetadataAuthorWikidata is on.
 	wikidata *wikidata.Client
+	// ranobedb is the opt in light novel title enricher (#2012). Building it
+	// sends nothing; it is only asked once SettingMetadataBookRanobeDB is on.
+	ranobedb *ranobedb.Client
 
 	// mu serialises apply. Each apply reads the settings and installs what it
 	// read; without it two saves racing could install the older read last.
@@ -59,6 +63,7 @@ func newMetadataProviders(settings *db.SettingsRepo, openLibrary, dnbClient, har
 		bnf:         bnf.New(),
 		googleBooks: googlebooks.New(""),
 		wikidata:    wikidata.New(),
+		ranobedb:    ranobedb.New(),
 	}
 }
 
@@ -103,6 +108,12 @@ func (m *metadataProviders) build(ctx context.Context) metadataProviderSet {
 	set.audnexOff = disabled["audnex"]
 	if s, _ := m.settings.Get(ctx, api.SettingMetadataAuthorWikidata); s != nil && strings.EqualFold(strings.TrimSpace(s.Value), "true") {
 		set.authorEnrichers = append(set.authorEnrichers, m.wikidata)
+	}
+	// RanobeDB is opt in rather than a name in enrichers_disabled: most
+	// libraries hold no light novels and should send it nothing (#2012). It
+	// runs last, after the enrichers that fill description and cover.
+	if s, _ := m.settings.Get(ctx, api.SettingMetadataBookRanobeDB); s != nil && strings.EqualFold(strings.TrimSpace(s.Value), "true") {
+		set.enrichers = append(set.enrichers, m.ranobedb)
 	}
 	return set
 }
@@ -230,6 +241,7 @@ var metadataProviderSettingKeys = map[string]bool{
 	api.LegacySettingGoogleBooksAPIKey:   true,
 	api.SettingHardcoverAPIToken:         true,
 	api.SettingMetadataAuthorWikidata:    true,
+	api.SettingMetadataBookRanobeDB:      true,
 	api.SettingMetadataEnrichersDisabled: true,
 }
 

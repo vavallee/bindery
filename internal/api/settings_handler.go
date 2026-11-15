@@ -95,6 +95,12 @@ const SettingMetadataPrimaryProvider = "metadata.primary_provider"
 // Wikimedia nothing.
 const SettingMetadataAuthorWikidata = "metadata.author_enrichment.wikidata"
 
+// SettingMetadataBookRanobeDB switches on the RanobeDB book enricher (#2012):
+// a light novel gets its official English title from RanobeDB, for a match
+// with a clear winner, the same volume numbers and a matching author. Off by
+// default, so an install that has not chosen it sends RanobeDB nothing.
+const SettingMetadataBookRanobeDB = "metadata.book_enrichment.ranobedb"
+
 // SettingMetadataEnrichersDisabled lists the metadata enrichers an operator
 // has turned off (#1890): a comma separated list of names from
 // MetadataEnrichers, plus the audiobook sources "audible" and "audnex"

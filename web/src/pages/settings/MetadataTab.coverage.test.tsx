@@ -135,6 +135,21 @@ describe('MetadataTab library defaults', () => {
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('metadata.author_enrichment.wikidata', 'false'))
   })
 
+  // #2012: RanobeDB light novel titles are opt in and saved as a plain setting.
+  it('switches RanobeDB light novel titles on and off', async () => {
+    seedSettings({ 'autoGrab.enabled': 'true', 'recommendations.enabled': 'false' })
+    render(<MetadataTab />)
+    await waitFor(() => expect(api.listSettings).toHaveBeenCalled())
+    expect(screen.getByText('settings.general.bookRanobeDBLabel')).toBeInTheDocument()
+    const ranobedb = screen.getAllByRole('switch')[3]
+    expect(ranobedb).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(ranobedb)
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('metadata.book_enrichment.ranobedb', 'true'))
+    expect(ranobedb).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(ranobedb)
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('metadata.book_enrichment.ranobedb', 'false'))
+  })
+
   it('toggles auto-grab off and recommendations on', async () => {
     seedSettings({ 'autoGrab.enabled': 'true', 'recommendations.enabled': 'false' })
     render(<MetadataTab />)

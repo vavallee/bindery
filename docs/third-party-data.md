@@ -245,6 +245,35 @@ not start the month over. An answer built while Commons or Wikipedia was
 failing is not stamped, and the in-memory cache keeps it for 6 hours instead
 of 30 days, so one bad response doesn't cost a month without a photo or bio.
 
+## RanobeDB
+
+Source: the RanobeDB API documentation, <https://ranobedb.org/api/docs/v0>
+(source `src/routes/api/docs/v0/+page.svelte` in
+<https://github.com/Blastose/ranobedb>, last changed 2026-08-21). Reviewed
+2026-11-15. Only contacted while `metadata.book_enrichment.ranobedb` is on
+(#2012): an install that has not switched it on sends RanobeDB no request.
+
+- **Non commercial use only.** The documentation says the API "is for
+  non-commercial use only". Ordinary self-hosted use is non commercial; a
+  deployment that is part of something charged for should leave this off.
+- **The data is ODbL 1.0, with the contents under DbCL 1.0.** Bindery stores
+  what it takes (a book's official English title) in its database and serves
+  it through its own API and OPDS feed, so the stored titles are data taken
+  from RanobeDB and carry its ODbL terms, attribution and share alike among
+  them, when an operator redistributes the database. The setting's
+  description names RanobeDB as the source.
+- **Rate.** The documentation sets no hard limit but asks for no more than 60
+  requests a minute. The client in `internal/metadata/ranobedb` starts at most
+  one request a second, one at a time, for the whole process, so it stays at
+  that ceiling however many lookups run. A match costs two requests (a search,
+  then the book record for its authors), so about 30 books a minute. A 429 or
+  503 holds every RanobeDB request, honouring `Retry-After`.
+- **Identification.** Requests carry Bindery's own User-Agent, like every
+  other provider. RanobeDB's website refuses clients that do not look like a
+  browser; its API answered Bindery's User-Agent normally when this was
+  reviewed. A refusal from the API would be RanobeDB asking Bindery to stop,
+  not something to route around with a browser User-Agent.
+
 ## Audible
 
 `internal/metadata/audible` calls an unpublished Amazon endpoint, and Amazon's
