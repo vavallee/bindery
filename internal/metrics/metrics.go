@@ -5,8 +5,9 @@
 //
 // The metrics here are deliberately minimal — a starter set that covers the
 // production-monitoring use case (HTTP error rates, scheduler health, build
-// info) without instrumenting every code path. Add metrics here and call
-// the helpers from instrumented sites.
+// info) without instrumenting every code path. operational.go adds the
+// grab, download client, import, indexer and queue metrics. Add metrics here
+// and call the helpers from instrumented sites. docs/metrics.md lists them.
 package metrics
 
 import (
@@ -128,6 +129,9 @@ func normalizeMethod(m string) string {
 func ObserveSchedulerRun(job, result string, dur time.Duration) {
 	schedulerRunsTotal.WithLabelValues(job, result).Inc()
 	schedulerRunDuration.WithLabelValues(job).Observe(dur.Seconds())
+	if result == "ok" {
+		schedulerLastSuccess.WithLabelValues(job).SetToCurrentTime()
+	}
 }
 
 // statusRecorder captures the response status code for the metrics

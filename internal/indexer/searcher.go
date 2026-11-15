@@ -339,7 +339,9 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 			client := s.makeClient(idx.URL, idx.APIKey)
 			cats := filterCategoriesForMedia(idx.Categories, c.MediaType, idx.IncludeParentCategories)
 			qctx := newznab.WithQueryBudget(ctx, s.quotaBudget(idx))
+			start := time.Now()
 			hits, trace, err := client.BookSearchTraced(qctx, c.Title, c.Author, cats)
+			observeSearch(idx, start, err)
 			if trace.BudgetExhausted {
 				s.flushQuota(ctx, idx, true)
 			}
@@ -425,7 +427,9 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 
 			client := s.makeClient(idx.URL, idx.APIKey)
 			qctx := newznab.WithQueryBudget(ctx, s.quotaBudget(idx))
+			start := time.Now()
 			hits, err := client.Search(qctx, query, idx.Categories)
+			observeSearch(idx, start, err)
 			if err != nil {
 				if budgetExhausted(err) {
 					s.flushQuota(ctx, idx, true)
@@ -1040,6 +1044,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	// way, or a spelled out series title would never equal the folded release.
 	// Author aliases are names, not titles, and are deliberately not folded.
 	bc.seriesTitle = newznab.FoldNumberWords(bc.seriesTitle)
+	bc.authorNames = append([]string{author}, aliases...)
 	if len(bc.otherTitles) > 0 {
 		folded := make([]string, len(bc.otherTitles))
 		for i, t := range bc.otherTitles {

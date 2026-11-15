@@ -28,6 +28,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"net/http"
 	"sync"
 	"sync/atomic"
 
@@ -37,6 +38,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/rtorrent"
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
 	"github.com/vavallee/bindery/internal/downloader/transmission"
+	"github.com/vavallee/bindery/internal/metrics"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -203,6 +205,7 @@ func (c *ClientCache) QbittorrentFor(client *models.DownloadClient) *qbittorrent
 			client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL,
 		)
 		qb.SetBasicAuth(client.ProxyUsername, client.ProxyPassword)
+		qb.WrapTransport(instrumented(client))
 		return &cachedEntry{qbittorrent: qb}
 	})
 	return e.qbittorrent
@@ -216,9 +219,11 @@ func TransmissionFor(c *models.DownloadClient) *transmission.Client {
 // TransmissionFor is the method form.
 func (c *ClientCache) TransmissionFor(client *models.DownloadClient) *transmission.Client {
 	e := c.lookupOrBuild(client, func() *cachedEntry {
-		return &cachedEntry{transmission: transmission.New(
+		dc := transmission.New(
 			client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL,
-		)}
+		)
+		dc.WrapTransport(instrumented(client))
+		return &cachedEntry{transmission: dc}
 	})
 	return e.transmission
 }
@@ -231,9 +236,11 @@ func DelugeFor(c *models.DownloadClient) *deluge.Client {
 // DelugeFor is the method form.
 func (c *ClientCache) DelugeFor(client *models.DownloadClient) *deluge.Client {
 	e := c.lookupOrBuild(client, func() *cachedEntry {
-		return &cachedEntry{deluge: deluge.New(
+		dc := deluge.New(
 			client.Host, client.Port, client.Password, client.URLBase, client.UseSSL,
-		)}
+		)
+		dc.WrapTransport(instrumented(client))
+		return &cachedEntry{deluge: dc}
 	})
 	return e.deluge
 }
@@ -246,9 +253,11 @@ func RtorrentFor(c *models.DownloadClient) *rtorrent.Client {
 // RtorrentFor is the method form.
 func (c *ClientCache) RtorrentFor(client *models.DownloadClient) *rtorrent.Client {
 	e := c.lookupOrBuild(client, func() *cachedEntry {
-		return &cachedEntry{rtorrent: rtorrent.New(
+		dc := rtorrent.New(
 			client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL,
-		)}
+		)
+		dc.WrapTransport(instrumented(client))
+		return &cachedEntry{rtorrent: dc}
 	})
 	return e.rtorrent
 }
@@ -261,9 +270,11 @@ func NzbgetFor(c *models.DownloadClient) *nzbget.Client {
 // NzbgetFor is the method form.
 func (c *ClientCache) NzbgetFor(client *models.DownloadClient) *nzbget.Client {
 	e := c.lookupOrBuild(client, func() *cachedEntry {
-		return &cachedEntry{nzbget: nzbget.New(
+		dc := nzbget.New(
 			client.Host, client.Port, client.Username, client.Password, client.URLBase, client.UseSSL,
-		)}
+		)
+		dc.WrapTransport(instrumented(client))
+		return &cachedEntry{nzbget: dc}
 	})
 	return e.nzbget
 }
@@ -276,9 +287,21 @@ func SabnzbdFor(c *models.DownloadClient) *sabnzbd.Client {
 // SabnzbdFor is the method form.
 func (c *ClientCache) SabnzbdFor(client *models.DownloadClient) *sabnzbd.Client {
 	e := c.lookupOrBuild(client, func() *cachedEntry {
-		return &cachedEntry{sabnzbd: sabnzbd.New(
+		dc := sabnzbd.New(
 			client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL,
-		)}
+		)
+		dc.WrapTransport(instrumented(client))
+		return &cachedEntry{sabnzbd: dc}
 	})
 	return e.sabnzbd
+}
+
+// instrumented returns the transport wrapper that records
+// bindery_download_client_requests_total and its duration histogram for
+// client. Every downloader client is built here, so wrapping at construction
+// covers every call path: grabs, the scanner's poll, removals and tests.
+func instrumented(client *models.DownloadClient) func(http.RoundTripper) http.RoundTripper {
+	return func(inner http.RoundTripper) http.RoundTripper {
+		return metrics.DownloadClientTransport(client.Type, inner)
+	}
 }

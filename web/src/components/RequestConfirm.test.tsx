@@ -81,6 +81,27 @@ describe('confirm steps for a requester', () => {
     expect(onAdded).not.toHaveBeenCalled()
   })
 
+  it('offers only the format the library does not already have', async () => {
+    const half = { ...dune, requestableFormats: ['audiobook'] } as unknown as Book
+    render(<AddBookConfirm book={half} searchedISBN={null} onBack={vi.fn()} onClose={vi.fn()} onAdded={vi.fn()} onRequested={vi.fn()} />)
+
+    const select = screen.getByRole('combobox', { name: 'Format to request' }) as HTMLSelectElement
+    expect(select.value).toBe('audiobook')
+    const enabled = Array.from(select.options).filter(o => !o.disabled).map(o => o.value)
+    expect(enabled).toEqual(['audiobook'])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Request book' }))
+    await waitFor(() => expect(api.createRequest).toHaveBeenCalledWith('book', 'OL1W', 'audiobook'))
+  })
+
+  it('leaves every format open when both can still be requested', () => {
+    const open = { ...dune, requestableFormats: ['ebook', 'audiobook'] } as unknown as Book
+    render(<AddBookConfirm book={open} searchedISBN={null} onBack={vi.fn()} onClose={vi.fn()} onAdded={vi.fn()} onRequested={vi.fn()} />)
+    const select = screen.getByRole('combobox', { name: 'Format to request' }) as HTMLSelectElement
+    expect(select.value).toBe('')
+    expect(Array.from(select.options).every(o => !o.disabled)).toBe(true)
+  })
+
   it('sends an author request and runs none of the admin lookups', async () => {
     const onRequested = vi.fn()
     render(<AddAuthorConfirm author={herbert} defaults={null} primaryProvider={null} onBack={vi.fn()} onClose={vi.fn()} onAdded={vi.fn()} onRequested={onRequested} />)

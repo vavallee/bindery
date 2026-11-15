@@ -147,6 +147,12 @@ func (ls *LibrarySnapshot) FindExistingAmong(ctx context.Context, title, authorN
 			if libraryVolumeConflict(e.title, e.layoutTitle, title) {
 				continue
 			}
+			// One root can hold both formats of a book (a combined
+			// library), so a lookup for one format must not answer with
+			// the other's file, whichever sorts first (#3896).
+			if !entryMatchesFormat(e.path, mediaType) {
+				continue
+			}
 			if titleWordsMatch(e.title, title) {
 				hits = append(hits, e)
 			}
@@ -166,6 +172,19 @@ func (ls *LibrarySnapshot) FindExistingAmong(ctx context.Context, title, authorN
 		return ""
 	}
 	return best.path
+}
+
+// entryMatchesFormat reports whether path is a file of the format asked for:
+// audio for an audiobook lookup, anything else for an ebook one. Both and an
+// unknown format take every file.
+func entryMatchesFormat(path, mediaType string) bool {
+	switch mediaType {
+	case models.MediaTypeAudiobook:
+		return IsAudioFile(path)
+	case models.MediaTypeEbook:
+		return !IsAudioFile(path)
+	}
+	return true
 }
 
 // dropRivalFiles removes the files that belong to a rival catalogue title

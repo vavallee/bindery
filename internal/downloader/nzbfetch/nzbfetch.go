@@ -1,11 +1,12 @@
-// Package nzbfetch diagnoses failed NZB downloads from indexers. Both usenet
-// download clients (SABnzbd, NZBGet) fetch the NZB themselves before handing
-// the bytes to the client; when that fetch fails the raw response body is
-// often a newznab XML error blob that is unreadable in logs and gives the
-// operator no hint about what to change. This package turns the failure into
-// a structured, actionable error message (issue #1404), and decides which of
-// those failures are worth another attempt before the grab is given up on
-// (issue #2157).
+// Package nzbfetch downloads NZBs from indexers and diagnoses the failures.
+// Both usenet download clients (SABnzbd, NZBGet) fetch the NZB themselves
+// before handing the bytes to the client, and both do it through Fetch, so a
+// policy, cap or timeout fix lands once (issue #3795). When that fetch fails
+// the raw response body is often a newznab XML error blob that is unreadable
+// in logs and gives the operator no hint about what to change. This package
+// turns the failure into a structured, actionable error message (issue
+// #1404), and decides which of those failures are worth another attempt
+// before the grab is given up on (issue #2157).
 package nzbfetch
 
 import (

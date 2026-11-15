@@ -1,0 +1,2 @@
+### Fixed
+- **Titles with an apostrophe now search indexers that choke on one** (#3895), some indexers return nothing for any query containing an apostrophe, so a book like Carl's Doomsday Scenario was never found there. When the normal search finds nothing relevant, Bindery now also tries the title with the apostrophe removed and with it read as a space. Thanks @chrisnlarsen for the report and the detailed query table.

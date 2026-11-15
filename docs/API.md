@@ -8,7 +8,8 @@ Bindery exposes a REST API at `/api/v1/*`. Every Bindery feature is reachable fr
 
 Every request to `/api/v1/*` is authenticated **except** the bootstrap and identity endpoints:
 
-- `GET  /api/v1/health`
+- `GET  /api/v1/health` (static liveness: `{"status":"ok","version":"..."}`)
+- `GET  /api/v1/health/ready` (readiness: pings the database with a 2 second budget; `503 {"status":"unavailable"}` when the connection is closed or unusable or the driver returns an error (it does not detect a damaged database file), `200 {"status":"ok"}` otherwise, plus `"busy":true` when the single connection was held past the budget; cached for 1 second)
 - `GET  /api/v1/auth/status`
 - `POST /api/v1/auth/login`, `/auth/logout`, `/auth/setup`
 - `GET  /api/v1/auth/oidc/{provider}/login` and `/callback`
@@ -522,7 +523,11 @@ unpaged response carries every series with every linked book.
 GET    /api/v1/search/author?term=…               metadata author search
 GET    /api/v1/search/book?term=…                 metadata book search
 GET    /api/v1/search/library?q=…                 your own catalogue: `{authors, books, series}`, up to `limit` rows per group (default 5, max 10), owner scoped like the list endpoints; 400 on an empty `q`
-GET    /api/v1/book/lookup?isbn=… | ?asin=…       single-book lookup by identifier
+GET    /api/v1/book/lookup?isbn=… | ?asin=… | ?hardcover=…
+                                                  single-book lookup by identifier. `hardcover` takes a Hardcover book slug (the last
+                                                  part of a hardcover.app/books/ address, `hc:` prefix optional) and fetches that one book
+                                                  even when the title search does not return it; 400 on a value that is not a slug, 404
+                                                  when Hardcover has no such book, is turned off as a source, or has no API token saved
 GET    /api/v1/wanted/missing                     list wanted-but-missing books. A bare array, every one of them, unless `limit` is passed:
                                                   `?limit=50&offset=0&search=&includeExcluded=` answers {"items":[..],"total":N,"limit":50,"offset":0}.
                                                   `total` counts every wanted book you can see that matches `search` and `includeExcluded`,
@@ -574,6 +579,13 @@ identifier. Both fields hold the library row id and are omitted otherwise, so a
 client can offer "open" for those rows and "add" for the rest. The lookup is
 owner scoped: another user's copy does not stamp. If the library lookup itself
 fails the search still succeeds, unstamped.
+
+For a requester the book stamp means "nothing left to ask for" (#3898):
+`libraryBookId` is kept only when both formats are on disk or monitored. A book
+the requester can see that still lacks a format is returned without it and with
+`requestableFormats`, the formats (`ebook`, `audiobook`) a request can still
+name. The field is never sent to other roles and never describes another
+account's book.
 
 An author in `/search/author` carries the provider's work count as
 `statistics.bookCount` when one is known (#3126). Hardcover supplies it as well as
@@ -1217,7 +1229,7 @@ POST   /api/v1/backup                             snapshot the SQLite database (
 GET    /api/v1/backup                             list stored backups (admin)
 DELETE /api/v1/backup/{filename}                  delete one backup (admin)
 POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
-GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token; `features` lists optional API behaviour an integration can detect (`requestsForUser`)
+GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size (`imageCacheBytes`) and its ceiling (`imageCacheMaxBytes`, both in bytes as counted on disk; the cache is full when they are close), Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token; `features` lists optional API behaviour an integration can detect (`requestsForUser`)
 GET    /api/v1/system/setup-state                 first run checklist state (indexer, client, author, grab, import, complete); admins also get `blocked`, `blockedArea`, `blockedReason` and `hasLibraryFolder` (a root folder exists, or BINDERY_LIBRARY_DIR is writable; left out while the storage probe has no answer)
 POST   /api/v1/library/scan                       start a library scan in the background (202; {"queued": true} when one is already running)
 GET    /api/v1/library/duplicate-candidates      read-only duplicate title groups across every author, paginated (#2999)
@@ -1992,7 +2004,7 @@ an id with no account `422`. Answers:
 | `201` | the request, as below |
 | `403` | `forUser` sent by anyone but an admin session or the API key |
 | `400`, `422` | `forUser` is not a user id, or no account has that id |
-| `409` | already in the library, already requested by this user (pending or declined); the `error` field says which |
+| `409` | already in the library with the requested format on disk or monitored (a book the library holds without it can still be requested, #3898), or, with `BINDERY_ENFORCE_TENANCY` on, held by another account whether or not it has the format (same `error` sentence as a covered book); already requested by this user (pending or declined); the `error` field says which |
 | `429` | this user already has `requests.max_pending_per_user` requests waiting (default 25), or a requester made creates or searches faster than the per user allowance (burst of 20, then one every 3 seconds; `Retry-After` says when). The cap is checked in the same statement as the insert, so concurrent creates cannot pass it |
 | `502`, `404` | the provider did not answer, or has no such id |
 
@@ -2045,8 +2057,8 @@ fields are refused with `400`.
 
 A requester may call only `/requests`, `/requests/{id}` (DELETE),
 `/requests/library`, the three metadata searches (`/search/author`,
-`/search/book`, `/book/lookup`, rate limited per user), `/images` (rate limited per user with a larger allowance), `/health`
-and the session routes under `/auth`. Every other route answers `403` for
+`/search/book`, `/book/lookup`, rate limited per user), `/images` (rate limited per user with a larger allowance), `/health`,
+`/health/ready` and the session routes under `/auth`. Every other route answers `403` for
 that role, and `/opds` does too.
 
 ### Library export

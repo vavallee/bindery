@@ -1,0 +1,16 @@
+{{- /*
+  Refuses to render for a replica count above 1. Bindery keeps its state in one
+  SQLite file opened by a single process, and runs its scheduler inside that
+  process with no leader election. Two pods would both search, grab and import
+  (duplicate downloads, two importers moving the same files), and two writers on
+  one SQLite file over a shared volume risk corrupting the database. For
+  redundancy, keep one replica and rely on the readiness and liveness probes
+  plus a volume that can reattach on another node. This template emits no
+  objects.
+*/ -}}
+{{- if not (regexMatch "^[0-9]+$" (toString .Values.replicaCount)) }}
+{{- fail (printf "replicaCount must be a whole number, got %v. Bindery supports exactly one replica." .Values.replicaCount) }}
+{{- end }}
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- fail (printf "replicaCount is %v, but Bindery supports exactly one replica: it stores its data in a single SQLite file and runs its scheduler in-process with no leader election, so a second pod would duplicate grabs and imports and can corrupt the database. Set replicaCount to 1." .Values.replicaCount) }}
+{{- end }}

@@ -1,8 +1,12 @@
+# Bindery supports exactly one replica: it keeps its data in a single SQLite file
+# and runs its scheduler in-process with no leader election. The chart refuses to
+# render for any value above 1 (templates/validate.yaml). 0 is allowed so a
+# release can be scaled down for maintenance.
 replicaCount: 1
 
 image:
   repository: ghcr.io/vavallee/bindery
-  tag: "1.50.0"
+  tag: "1.51.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -62,6 +66,11 @@ env:
   # trimmed; 0 keeps every row. History and the blocklist are never trimmed.
   # See docs/DEPLOYMENT.md for what trimming changes about duplicate grabs.
   BINDERY_DOWNLOAD_RETENTION_DAYS: "90"
+  # Ceiling in megabytes on the proxied cover cache (image-cache/ under
+  # BINDERY_DATA_DIR, the same volume as the database). At the ceiling covers
+  # are still fetched and shown, just not stored until a sweep removes the
+  # oldest ones. Size it below the config volume if that volume is small.
+  BINDERY_IMAGE_CACHE_MAX_MB: "2048"
   # IMPORTANT: these defaults are placeholders, NOT a working layout — they are
   # two different paths and neither is backed by a mounted volume out of the
   # box. A dir that isn't inside a mounted volume writes to ephemeral container
@@ -139,7 +148,8 @@ networkPolicy:
   # peers. Leave disabled unless your cluster has a NetworkPolicy-capable
   # CNI (Calico, Cilium, etc).
   enabled: false
-  # Label selector(s) allowed to reach the Bindery pod on its service port.
+  # Label selector(s) allowed to reach the Bindery pod on its container port
+  # (the port named http, 8787). service.port does not affect this rule.
   # Example: { matchLabels: { app.kubernetes.io/part-of: media-stack } }
   ingressSelector: {}
   # Additional egress rules beyond DNS. One entry per downstream service —

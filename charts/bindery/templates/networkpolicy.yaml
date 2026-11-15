@@ -20,9 +20,27 @@ spec:
         {{- else }}
         - podSelector: {}
         {{- end }}
+        {{- if .Values.hooks.postsyncSmoke.enabled }}
+        # The ArgoCD PostSync smoke Job probes the Service, so let it in even
+        # when ingressSelector narrows everyone else.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: postsync-smoke
+        {{- end }}
+        {{- if .Values.logAlert.enabled }}
+        # The log alert CronJob reads the log API through the Service.
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "bindery.name" . }}-log-alert
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- end }}
       ports:
+        # A NetworkPolicy port is matched against the pod, not the Service, so
+        # this names the container port instead of using service.port. With
+        # service.port set to anything but 8787 the two differ.
         - protocol: TCP
-          port: {{ .Values.service.port }}
+          port: http
   egress:
     # DNS resolution — required for service discovery and for the metadata
     # providers / indexers referenced by hostname.
