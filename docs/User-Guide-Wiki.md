@@ -374,6 +374,15 @@ torrent by hand, and a release with 0 seeders is shown in red. Peers is
 seeders plus leechers, as the indexer counts them. Usenet results, and torrent
 indexers that leave the counts out, show neither.
 
+Automatic search also reads seeders (#3953). A torrent its indexer reports with
+0 seeders is never grabbed automatically, since nothing can finish it: Bindery
+takes the next release instead, and if every candidate is dead it grabs nothing
+and the book stays Wanted for a later search to find a seeded copy. A torrent
+whose indexer does not report seeders is treated as unknown, not dead, and
+usenet is unaffected. Seeders also break ties between otherwise similar
+results, with a small capped bonus that never outweighs a better format or the
+grab count. Interactive search still lists and grabs zero seeder releases by hand.
+
 **Two language titles.** A translated book whose title is stored as
 "translated / original", such as "El imperio final / The Final Empire", is
 searched under the translated part only, because no release is named with
