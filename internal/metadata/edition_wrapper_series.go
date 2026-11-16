@@ -40,14 +40,29 @@ var wrapperSeriesTitleRe = regexp.MustCompile(`(?i)` +
 	`|\bcolou?ring\s+book\b` +
 	`|\bomnibus\s*(?:edition\s*)?\)?\s*$` +
 	`|\(\s*omnibus\s*\)` +
-	`|[\s,:(-]\s*(?:volume|vol\.?)\s*(?:\d{1,3}|[ivx]{1,5})\s*\)?\s*$`)
+	// Box set only as a trailing edition marker, optionally followed by a
+	// number or a volume range ("Box Set 1: Volumes 1-23"). "The Boxed Set
+	// Murders" is a title, not an edition.
+	`|\bbox(?:ed)?\s*set\b(?:\s*[:,#-]?\s*(?:\d+|vol(?:ume)?s?\.?|-))*\s*\)?\s*$` +
+	`|\(\s*boxed\s*\)` +
+	`|\(\s*set\s*\)\s*$` +
+	`|\bcollection\s*set\b` +
+	`|\bcarton\s+of\s+\d+\s+signed\s+cop` +
+	`|\b\d+\s*(?:books?|vol(?:ume)?s?)\s+set\b`)
+
+// trailingVolumeSeriesRe matches a title that ends in a volume marker ("Storm
+// Front Volume II"). On a series title that shape alone is not enough: "Fate/Zero
+// Vol. 2", "Gundam: Volume 4" and "Star Wars: Darth Vader (2015) Volume 1" are
+// names real series carry, so it only counts together with the book.
+var trailingVolumeSeriesRe = regexp.MustCompile(`(?i)[\s,:(-]\s*(?:volume|vol\.?)\s*(?:\d{1,3}|[ivx]{1,5})\s*\)?\s*$`)
 
 // IsEditionWrapperSeriesTitle reports whether a series title names an edition
-// (box set, omnibus, complete collection, coloring book, single issues, or a
-// trailing "Volume N") rather than a series. Real names with parentheses such
-// as "Discworld (City Watch)" do not match.
+// on its own (single issues, complete collection, coloring book, omnibus, a
+// trailing box set). A trailing "Volume N" is not decided here, it needs the
+// book. Real names with parentheses such as "Discworld (City Watch)" do not
+// match.
 func IsEditionWrapperSeriesTitle(title string) bool {
-	return unambiguousBundleTitleRe.MatchString(title) || wrapperSeriesTitleRe.MatchString(title)
+	return wrapperSeriesTitleRe.MatchString(title)
 }
 
 // wrapperWords is every word a wrapper edition adds to the series name it
@@ -110,6 +125,11 @@ func IsEditionWrapperBook(seriesTitle, bookTitle string) bool {
 	if len(series) == 0 || len(book) <= len(series) {
 		return false
 	}
+	// A series named by one generic word ("Stories") would swallow every
+	// "Collected Stories" member, so the edition words do not apply to it.
+	if len(series) == 1 && genericSeriesWords[series[0]] {
+		return false
+	}
 	at := -1
 	for i := 0; i+len(series) <= len(book) && at < 0; i++ {
 		match := true
@@ -127,9 +147,23 @@ func IsEditionWrapperBook(seriesTitle, bookTitle string) bool {
 		return false
 	}
 	rest := append(append([]string{}, book[:at]...), book[at+len(series):]...)
+	boxSet := false
+	for i := 0; i+1 < len(rest); i++ {
+		if (rest[i] == "box" || rest[i] == "boxed") && rest[i+1] == "set" {
+			boxSet = true
+		}
+	}
 	strong := false
 	for i, tok := range rest {
 		switch {
+		case tok == "omnibus":
+			// A numbered omnibus ("Omnibus 2") is a volume of the real
+			// series and stays in it; a bare "Omnibus" is the single
+			// wrapper edition.
+			if i+1 < len(rest) && isVolumeNumber(rest[i+1]) {
+				return false
+			}
+			strong = true
 		case strongWrapperWords[tok]:
 			strong = true
 		case tok == "vol" || tok == "volume":
@@ -139,6 +173,8 @@ func IsEditionWrapperBook(seriesTitle, bookTitle string) bool {
 				strong = true
 			}
 		case wrapperWords[tok]:
+		case boxSet && (tok == "vols" || tok == "volumes" || isVolumeNumber(tok)):
+			// "Box Set 1: Volumes 1-23" and "Vol. 3 Box Set".
 		case isVolumeNumber(tok) && i > 0 && (rest[i-1] == "vol" || rest[i-1] == "volume"):
 		default:
 			return false
@@ -147,11 +183,48 @@ func IsEditionWrapperBook(seriesTitle, bookTitle string) bool {
 	return strong
 }
 
+// genericSeriesWords are series names too generic for the edition word rule.
+var genericSeriesWords = map[string]bool{
+	"stories": true, "novels": true, "books": true, "tales": true,
+	"works": true, "essays": true, "poems": true, "writings": true,
+	"fiction": true, "collection": true, "series": true,
+}
+
 // IsEditionWrapperSeriesRef reports whether the series ref a provider attached
 // to a book describes an edition wrapper rather than a series the book belongs
 // to: the ref's title names an edition, or the book is a wrapper of the series.
 func IsEditionWrapperSeriesRef(ref models.SeriesRef, bookTitle string) bool {
-	return IsEditionWrapperSeriesTitle(ref.Title) || IsEditionWrapperBook(ref.Title, bookTitle)
+	if IsEditionWrapperSeriesTitle(ref.Title) || IsEditionWrapperBook(ref.Title, bookTitle) {
+		return true
+	}
+	return volumeNamedSeriesWrapsBook(ref.Title, bookTitle)
+}
+
+// volumeNamedSeriesWrapsBook handles a series title ending in a volume marker
+// ("Dresden Files: Storm Front Volume II"). It is a wrapper only when the book
+// is that same volume under a shorter name: the book's title minus its volume
+// marker is a proper trailing part of the series title minus its marker
+// ("Storm Front, Volume 2"). A book whose base name equals the series base
+// ("Fate/Zero, Vol. 2" in "Fate/Zero Vol. 2") or that continues past it ("Star
+// Wars: Darth Vader (2015) Volume 1") keeps its series.
+func volumeNamedSeriesWrapsBook(seriesTitle, bookTitle string) bool {
+	loc := trailingVolumeSeriesRe.FindStringIndex(seriesTitle)
+	bloc := trailingVolumeSeriesRe.FindStringIndex(bookTitle)
+	if loc == nil || bloc == nil {
+		return false
+	}
+	sb := wrapperTokens(seriesTitle[:loc[0]])
+	bb := wrapperTokens(bookTitle[:bloc[0]])
+	if len(bb) == 0 || len(sb) <= len(bb) {
+		return false
+	}
+	off := len(sb) - len(bb)
+	for i, t := range bb {
+		if sb[off+i] != t {
+			return false
+		}
+	}
+	return true
 }
 
 // DropEditionWrapperSeriesRefs returns refs without the edition wrappers (see

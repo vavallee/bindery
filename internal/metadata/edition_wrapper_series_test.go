@@ -75,3 +75,76 @@ func TestDropEditionWrapperSeriesRefs(t *testing.T) {
 		t.Errorf("sole wrapper ref kept: %+v", got)
 	}
 }
+
+// Manga, comic and light novel shapes that are numbered members of a real
+// series. None may be dropped.
+func TestIsEditionWrapperSeriesRef_VolumeShapesStay(t *testing.T) {
+	cases := []struct{ series, book string }{
+		{"Naruto", "Naruto, Vol. 3"},
+		{"Naruto", "Naruto Vol 3"},
+		{"Naruto", "Vol. 03"},
+		{"Naruto", "Volume Three"},
+		{"Naruto", "Book 3"},
+		{"Naruto", "Part 2"},
+		{"Saga", "Saga, Volume 3"},
+		{"The Sandman", "The Sandman, Vol. 1"},
+		{"Fate/Zero", "Fate/Zero, Vol. 2"},
+		// Numbered omnibus and deluxe volumes of a real series are still
+		// members of it: the omnibus number is the position.
+		{"Naruto", "Naruto Omnibus 2 (3-in-1)"},
+		{"Attack on Titan", "Attack on Titan Omnibus 1"},
+		{"Berserk", "Berserk Deluxe Edition Volume 1"},
+		// The edition words are English only (documented): other scripts
+		// show up as series.
+		{"进击的巨人", "进击的巨人 全集"},
+		{"Метро 2033", "Метро 2033 Полное собрание"},
+		// One generic word is not a series name the edition rule can wrap.
+		{"Stories", "Collected Stories"},
+	}
+	for _, c := range cases {
+		if IsEditionWrapperSeriesRef(models.SeriesRef{Title: c.series}, c.book) {
+			t.Errorf("series %q book %q: must stay", c.series, c.book)
+		}
+	}
+}
+
+func TestIsEditionWrapperSeriesRef_BoxSetsConsistent(t *testing.T) {
+	cases := []struct{ series, book string }{
+		{"One Piece", "One Piece, Vol. 3 Box Set"},
+		{"One Piece", "One Piece Box Set 1: Volumes 1-23"},
+		{"One Piece", "One Piece Box Set"},
+		{"One Piece Box Set 1: Volumes 1-23", "One Piece, Vol. 1"},
+		{"Attack on Titan", "Attack on Titan Omnibus"},
+		{"Discworld", "Discworld Complete Collection"},
+		{"The Chronicles of Narnia", "The Complete Chronicles of Narnia"},
+	}
+	for _, c := range cases {
+		if !IsEditionWrapperSeriesRef(models.SeriesRef{Title: c.series}, c.book) {
+			t.Errorf("series %q book %q: want wrapper", c.series, c.book)
+		}
+	}
+}
+
+// A series title ending in a volume marker, or containing "box set", names a
+// real series unless the book is itself the wrapper.
+func TestIsEditionWrapperSeriesRef_SeriesTitleNeedsTheBook(t *testing.T) {
+	cases := []struct{ series, book string }{
+		{"Fate/Zero Vol. 2", "Fate/Zero, Vol. 2"},
+		{"Gundam: Volume 4", "Gundam: Volume 4"},
+		{"Rocky Vol. IV", "Rocky IV"},
+		{"Star Wars: Darth Vader (2015) Volume 1", "Star Wars: Darth Vader, Vol. 1"},
+		{"The Boxed Set Murders", "The Boxed Set Murders"},
+		{"The Box Set Murders", "A Body in the Box"},
+	}
+	for _, c := range cases {
+		if IsEditionWrapperSeriesRef(models.SeriesRef{Title: c.series}, c.book) {
+			t.Errorf("series %q book %q: must stay", c.series, c.book)
+		}
+	}
+	// Unambiguous markers still decide on the series title alone.
+	for _, s := range []string{"X (Single Issues)", "X Complete Collection", "X Coloring Book", "Foo Box Set", "Foo Boxed Set 2"} {
+		if !IsEditionWrapperSeriesRef(models.SeriesRef{Title: s}, "Anything") {
+			t.Errorf("series %q: want wrapper", s)
+		}
+	}
+}

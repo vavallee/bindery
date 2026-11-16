@@ -1547,6 +1547,14 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	if h.series != nil {
 		if existingIDs, serErr := h.series.GetSeriesIDsForBook(r.Context(), book.ID); serErr == nil {
 			for _, sid := range existingIDs {
+				// Keep a link when the new record is only an edition
+				// wrapper of that series (an omnibus of "The Liveship
+				// Traders"): the provider's ref for it was dropped (#3317),
+				// so relinking cannot restore it.
+				if old, gerr := h.series.GetByID(r.Context(), sid); gerr == nil && old != nil &&
+					metadata.IsEditionWrapperBook(old.Title, upstream.Title) {
+					continue
+				}
 				if err := h.series.UnlinkBook(r.Context(), sid, book.ID); err != nil {
 					// A failed unlink leaves stale series membership on the
 					// rebound book; the link ops below already Warn, so match.
