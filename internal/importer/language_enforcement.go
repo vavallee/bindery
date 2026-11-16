@@ -39,6 +39,14 @@ func withManualImport(ctx context.Context) context.Context {
 	return context.WithValue(ctx, manualImportKey{}, true)
 }
 
+// withManualFlag sets the manual import mark on ctx to manual, replacing
+// whatever the caller's context carried. A held pair gating release uses it to
+// take the mark from the held download instead of from the call that happens to
+// release it (#3945).
+func withManualFlag(ctx context.Context, manual bool) context.Context {
+	return context.WithValue(ctx, manualImportKey{}, manual)
+}
+
 // isManualImport reports whether withManualImport marked ctx.
 func isManualImport(ctx context.Context) bool {
 	v, _ := ctx.Value(manualImportKey{}).(bool)

@@ -766,6 +766,10 @@ File Naming (`import.ebook.content_check`, admin only):
   the file anyway and skips the check; **Retry import** runs it again.
 - **Off**: the check does not run and no file is opened for it.
 
+In External import mode with a drop folder the same check runs before the file is
+placed in the drop folder, with the same Warn and Block behaviour. With no drop
+folder nothing is placed and it does not run.
+
 Block is opt in because a wrongly refused download costs more than a missed
 mismatch. The check only runs for downloads Bindery grabbed for a book. A library
 scan, manual import, **Match to book** and a download matched to its book from
@@ -838,6 +842,10 @@ The setting is **Check audiobook contents** next to the ebook one
   stays Wanted. **Match to book** or manual import keeps the folder anyway and
   skips the check, and **Retry import** runs it again.
 - **Off**: no tag is read.
+
+In External import mode with a drop folder this check, and the audiobook language
+check, run before the audiobook is placed in the drop folder, with the same
+behaviour.
 
 Like the ebook check it applies only to downloads grabbed for a book, never to
 a library scan, manual import or **Match to book**, and it does not change the
