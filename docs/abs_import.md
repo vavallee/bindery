@@ -302,6 +302,19 @@ Covered behaviors:
 - idempotent reruns
 - checkpoint-aware resume behavior
 
+## Other Sources On The Same Engine
+
+The BookOrbit import (`internal/bookorbit`, [BookOrbit-Import.md](./BookOrbit-Import.md)) is a second `abs.Importer` fed from a different server. Four hooks make that possible, and none of them changes an Audiobookshelf run:
+
+- `WithEnumerator` replaces the Audiobookshelf library walk with a function that yields `NormalizedLibraryItem` values from somewhere else.
+- `WithRunSource` scopes `RunsPage` to one `source_id`, so each source lists only its own rows from the shared `abs_import_runs` table. The Audiobookshelf importer is scoped to `DefaultSourceID`.
+- `WithRunGate` shares one `RunGate` between importers. They write the same authors, books and series, so only one may run at a time. The loser gets `ErrOtherImportRunning`, which also matches `ErrAlreadyRunning`.
+- `NormalizedLibraryItem.ExtraEbookPaths` registers further ebook formats of the same book. Audiobookshelf items never set it.
+
+A source built this way must keep its library ids out of the Audiobookshelf id space (BookOrbit prefixes them with `bookorbit-`), because provenance and checkpoints are keyed by source id plus library id. It gets no checkpoint or resume: `ResumeInterrupted` only picks up runs that stored a checkpoint, which the built in enumerator alone does.
+
+A dry run counts a new author once however many of their books it sees, tracked per run in `ImportStats`.
+
 ## Contributor Notes
 
 When changing the ABS importer:
