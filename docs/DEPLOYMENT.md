@@ -58,6 +58,29 @@ Every ingress template is gated on `ingress.enabled`, which defaults to false, s
 
 For GitOps, [`argocd/application.example.yaml`](../argocd/application.example.yaml) is a starting point for an ArgoCD `Application`. Copy it into your own repo and replace the placeholder host, NFS server and media path. It uses `ingress.type: standard`, because the default Traefik `IngressRoute` carries a hardcoded `traefik-internal` ingress class annotation.
 
+### Sharing a volume with another app
+
+`extraVolumes`, `extraVolumeMounts` and `affinity` take plain Kubernetes syntax and are empty by default, so the rendered manifests are unchanged unless you set them. Use the first two to mount an existing claim that another app also mounts, for example one tree holding downloads, a drop folder and the library, so hardlinks and atomic renames work across all three:
+
+```yaml
+extraVolumes:
+  - name: shared
+    persistentVolumeClaim:
+      claimName: bookorbit-shared
+extraVolumeMounts:
+  - name: shared
+    mountPath: /data
+affinity:
+  podAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: bookorbit
+        topologyKey: kubernetes.io/hostname
+```
+
+A ReadWriteOnce claim only attaches on one node, so when another pod mounts the same claim, set `affinity` (here a pod affinity) so both pods land on the same node. Point the matching Bindery paths at the mount with `env`, for example `BINDERY_LIBRARY_DIR: /data/books` and `BINDERY_DOWNLOAD_DIR: /data/downloads`.
+
 ### Health checks
 
 Bindery answers `GET /api/v1/health` with 200 once it is serving. The container image declares its own Docker `HEALTHCHECK` that calls the binary's `healthcheck` subcommand against that endpoint, so `docker ps` shows a health column and Compose `depends_on: { bindery: { condition: service_healthy } }` works with no extra configuration. `GET /api/v1/health/ready` also runs a trivial query on Bindery's database connection and returns 503 when the connection is closed or unusable or the driver returns an error. It does not detect a damaged, deleted or unreadable database file, because that query does not read any table, so it cannot see truncation or deletion. Results are cached for one second. A database that is just busy (a library scan, a large import or a VACUUM holding Bindery's single connection past the two second check) still answers 200, with `"busy":true` in the body, so a long job never takes the pod out of the Service. Both routes need no credentials, and `/health/ready` returns only a status word, never the cause. The Helm chart's readiness probe uses `/health/ready`, so a pod whose database connection is broken drops out of the Service without being restarted. Its liveness probe stays on the static `/api/v1/health` (and its startup probe on a TCP check), because restarting the pod on a slow disk fixes nothing. The Docker `HEALTHCHECK` stays on `/api/v1/health` for the same reason. `hooks.postsyncSmoke` adds an ArgoCD PostSync job that fails the sync if the endpoint does not answer. Under `BINDERY_URL_BASE` the path moves under the prefix. The built in Docker `HEALTHCHECK` follows it, but update any probe you configure yourself.

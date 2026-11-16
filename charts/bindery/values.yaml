@@ -57,6 +57,25 @@ nfs:
   path: /volume1/MEDIA
   mountPath: /media
 
+# Extra volumes and mounts for the Bindery pod, in plain Kubernetes syntax.
+# Empty by default. Use them to mount an existing claim that another app
+# also mounts, such as one tree holding downloads, a drop folder and the
+# library, so hardlinks and atomic renames work across all three. Example:
+#   extraVolumes:
+#     - name: shared
+#       persistentVolumeClaim:
+#         claimName: bookorbit-shared
+#   extraVolumeMounts:
+#     - name: shared
+#       mountPath: /data
+extraVolumes: []
+extraVolumeMounts: []
+
+# Pod affinity rules, in plain Kubernetes syntax. Empty by default. A
+# ReadWriteOnce claim shared with another pod only attaches on one node, so
+# set podAffinity here (or on the other app) to keep both on the same node.
+affinity: {}
+
 env:
   BINDERY_PORT: "8787"
   BINDERY_DB_PATH: /config/bindery.db
