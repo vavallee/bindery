@@ -1,2 +1,0 @@
-### Fixed
-- **Move imports no longer fail when the download folder can't be cleaned up** (#3897, thanks chrisnlarsen): if Bindery copied a finished download into the library but couldn't delete the source (for example a SABnzbd job folder it can read but not write to), the import was marked blocked, the copy stayed in the library, and the retry made a second copy as "Title (2)". Now the import counts as done, the source folder is left alone, and a warning in the log says so.

@@ -1,2 +1,0 @@
-### Fixed
-- **Indexer daily query caps no longer forget requests after a database hiccup**: if Bindery couldn't read its stored query counts for a moment (for example "database is locked") and then could, the searches it had already counted in the meantime were thrown away, so an indexer could go over its daily limit by up to about 30 seconds of requests. Those requests now stay counted and still get saved.
