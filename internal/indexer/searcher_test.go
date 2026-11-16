@@ -2528,3 +2528,35 @@ func TestSearchBook_FindsDecomposedReleaseTitle(t *testing.T) {
 		t.Fatalf("SearchBook = %v, want the decomposed release", resultTitles(results))
 	}
 }
+
+func seedCount(n int) *int { return &n }
+
+// Seeders are a capped tie-breaker (#3953): equal quality ranks by swarm, a
+// reported zero loses to an unreported count, usenet is untouched, and a
+// well-seeded lower format never beats a higher format.
+func TestScoreResultSeeders(t *testing.T) {
+	c := MatchCriteria{Title: "Dune", Author: "Frank Herbert"}
+	mk := func(title, proto string, s *int) newznab.SearchResult {
+		return newznab.SearchResult{Title: title, Protocol: proto, Seeders: s}
+	}
+	score := func(r newznab.SearchResult) float64 { return scoreResult(r, c, nil) }
+
+	seeded := score(mk("Dune.epub", "torrent", seedCount(13)))
+	unknown := score(mk("Dune.epub", "torrent", nil))
+	dead := score(mk("Dune.epub", "torrent", seedCount(0)))
+	if !(seeded > unknown && unknown > dead) {
+		t.Errorf("want seeded %v > unknown %v > dead %v", seeded, unknown, dead)
+	}
+	if a, b := score(mk("Dune.epub", "usenet", nil)), unknown; a != b {
+		t.Errorf("usenet %v should score like unknown-seeder torrent %v", a, b)
+	}
+	if a, b := score(mk("Dune.epub", "usenet", seedCount(0))), score(mk("Dune.epub", "usenet", nil)); a != b {
+		t.Errorf("usenet must ignore Seeders, got %v vs %v", a, b)
+	}
+	if hi, lo := score(mk("Dune.epub", "torrent", seedCount(1))), score(mk("Dune.mobi", "torrent", seedCount(5000))); hi <= lo {
+		t.Errorf("a higher format with 1 seeder (%v) must beat a lower format with a huge swarm (%v)", hi, lo)
+	}
+	if a, b := score(mk("Dune.epub", "torrent", seedCount(25))), score(mk("Dune.epub", "torrent", seedCount(5000))); a != b {
+		t.Errorf("the seeders term must be capped, got %v vs %v", a, b)
+	}
+}
