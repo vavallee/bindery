@@ -109,6 +109,13 @@ describe('RenameFilesModal', () => {
       expect(button).toBeEnabled()
     })
 
+    it('falls back to the built in warning text when the server sends none', async () => {
+      previewMock.mockResolvedValue({ ...externalPreview, warning: undefined })
+      render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
+
+      expect(await screen.findByText(/another tool owns this layout/)).toBeInTheDocument()
+    })
+
     it('sends the confirmation with the apply request', async () => {
       previewMock.mockResolvedValue(externalPreview)
       applyMock.mockResolvedValue({
