@@ -1979,10 +1979,16 @@ func searchBool(value any) bool {
 // book. Mirrors searchSeriesRefs (Typesense) so list/shelf imports get the
 // same series linking the search path provides. book_series is ordered by
 // position asc, so the first valid entry is the primary series.
-func bookSeriesRefs(bs []hcBookSeries) []models.SeriesRef {
+//
+// An entry that is an edition wrapper for bookTitle is skipped, so the book's
+// next real series becomes the primary one (#3317).
+func bookSeriesRefs(bookTitle string, bs []hcBookSeries) []models.SeriesRef {
 	for _, s := range bs {
 		title := strings.TrimSpace(s.Series.Name)
 		if title == "" || s.Series.ID <= 0 {
+			continue
+		}
+		if metadata.IsEditionWrapperSeriesRef(models.SeriesRef{Title: title}, bookTitle) {
 			continue
 		}
 		return []models.SeriesRef{{
@@ -2103,7 +2109,15 @@ func (c *Client) toBook(b hcBook) models.Book {
 	}
 	seriesRefs := b.SeriesRefs
 	if len(seriesRefs) == 0 {
-		seriesRefs = bookSeriesRefs(b.BookSeries)
+		seriesRefs = bookSeriesRefs(b.Title, b.BookSeries)
+	}
+	// Hardcover files some editions (omnibus, boxed set, coloring book, single
+	// issues) as a series of one. Dropping the ref here keeps every consumer
+	// (author sync, list sync, add book, reconcile) from turning it into a
+	// series row (#3317).
+	if kept := metadata.DropEditionWrapperSeriesRefs(b.Title, seriesRefs); len(kept) != len(seriesRefs) {
+		slog.Debug("hardcover: dropped edition wrapper series ref", "book", b.Title, "refs", len(seriesRefs), "kept", len(kept))
+		seriesRefs = kept
 	}
 	bk := models.Book{
 		ForeignID:        idPrefix + slug,

@@ -1,0 +1,2 @@
+### Changed
+- **Edition wrappers no longer become series cards** (#3317). Hardcover sometimes files an omnibus, a boxed set, a coloring book or a run of single comic issues as a series of one, and Bindery used to show each one as a series. Those references are now skipped when books are synced, so the book just isn't linked to the fake series and keeps its real one if it has one. Series you already have stay until you merge or leave them. Thanks to condensed69 for the report.
