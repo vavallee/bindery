@@ -541,7 +541,7 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"UserRepo.List", func() error { _, err := NewUserRepo(closed).List(ctx); return err }},
 		{"UserRepo.OwnedRows", func() error { _, err := NewUserRepo(closed).OwnedRows(ctx, 1); return err }},
 		{"UserRepo.PromoteFirstUser", func() error { return NewUserRepo(closed).PromoteFirstUser(ctx) }},
-		{"UserRepo.SetRequestsAutoApprove", func() error { return NewUserRepo(closed).SetRequestsAutoApprove(ctx, 1, true) }},
+		{"UserRepo.SetRequestsAutoApprove", func() error { return NewUserRepo(closed).SetRequestsAutoApprove(ctx, 1, new(bool)) }},
 		{"UserRepo.SetRole", func() error { return NewUserRepo(closed).SetRole(ctx, 1, "x") }},
 		{"UserRepo.SetRoleUnguarded", func() error { return NewUserRepo(closed).SetRoleUnguarded(ctx, 1, "x") }},
 		{"UserRepo.UpdatePassword", func() error { return NewUserRepo(closed).UpdatePassword(ctx, 1, "x") }},

@@ -36,7 +36,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 
 function user(id: number, username: string, role: ManagedUser['role'] = 'user'): ManagedUser {
-  return { id, username, role, createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false }
+  return { id, username, role, createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false, autoApproveEffective: false }
 }
 
 const owned = {
@@ -145,10 +145,10 @@ describe('UsersPage coverage', () => {
   it('reports an auto-approve failure and leaves the box unticked', async () => {
     vi.mocked(api.setUserAutoApprove).mockRejectedValue(new Error('nope'))
     render(<UsersPage />)
-    const box = await screen.findByRole('checkbox', { name: 'users.autoApproveFor:guest' })
-    fireEvent.click(box)
+    const box = await screen.findByRole('combobox', { name: 'users.autoApproveFor:guest' })
+    fireEvent.change(box, { target: { value: 'always' } })
     expect(await screen.findByText('nope')).toBeInTheDocument()
-    expect(box).not.toBeChecked()
+    expect(box).toHaveValue('never')
   })
 
   it('deletes a user who owns nothing after confirmation', async () => {

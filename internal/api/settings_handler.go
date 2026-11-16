@@ -1197,6 +1197,13 @@ func validateSettingValue(key, value string) error {
 		if err != nil || id <= 0 {
 			return fmt.Errorf("%s %q must be a quality profile id or empty", key, value)
 		}
+	case SettingRequestsAutoApproveDefault:
+		// Only the two canonical values (or empty, meaning off), so a typo
+		// cannot be misread as truthy.
+		if value == "" || value == "true" || value == "false" {
+			return nil
+		}
+		return fmt.Errorf("requests.auto_approve_default %q is not one of: true, false", value)
 	case SettingRequestsMaxPendingPerUser:
 		if value == "" {
 			return nil

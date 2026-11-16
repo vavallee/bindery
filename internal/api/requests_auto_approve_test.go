@@ -22,7 +22,7 @@ import (
 
 func setAutoApprove(t *testing.T, f *requestsFixture, userID int64, enabled bool) {
 	t.Helper()
-	if err := f.users.SetRequestsAutoApprove(context.Background(), userID, enabled); err != nil {
+	if err := f.users.SetRequestsAutoApprove(context.Background(), userID, &enabled); err != nil {
 		t.Fatalf("set auto approve: %v", err)
 	}
 }
@@ -331,7 +331,7 @@ func TestUserMgmt_SetAutoApprove(t *testing.T) {
 		t.Fatalf("SetAutoApprove status=%d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	got, _ := users.GetByID(ctx, u.ID)
-	if got == nil || !got.RequestsAutoApprove {
+	if got == nil || got.RequestsAutoApprove == nil || !*got.RequestsAutoApprove {
 		t.Fatalf("auto approve not persisted, got %+v", got)
 	}
 
@@ -344,7 +344,7 @@ func TestUserMgmt_SetAutoApprove(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || !listed[0].AutoApproveRequests {
+	if len(listed) != 1 || listed[0].AutoApproveRequests == nil || !*listed[0].AutoApproveRequests || !listed[0].AutoApproveEffective {
 		t.Fatalf("users list did not report auto approve: %+v", listed)
 	}
 
@@ -353,7 +353,7 @@ func TestUserMgmt_SetAutoApprove(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("SetAutoApprove off status=%d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if got, _ = users.GetByID(ctx, u.ID); got.RequestsAutoApprove {
+	if got, _ = users.GetByID(ctx, u.ID); got.RequestsAutoApprove == nil || *got.RequestsAutoApprove {
 		t.Fatal("auto approve still on after being turned off")
 	}
 }

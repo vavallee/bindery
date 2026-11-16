@@ -192,6 +192,7 @@ const authCases: Case[] = [
   ],
   ['setUserRole', () => authApi.setUserRole(4, 'requester'), 'PUT', '/auth/users/4/role', { role: 'requester' }],
   ['setUserAutoApprove', () => authApi.setUserAutoApprove(4, true), 'PUT', '/auth/users/4/auto-approve', { enabled: true }],
+  ['setUserAutoApprove null', () => authApi.setUserAutoApprove(4, null), 'PUT', '/auth/users/4/auto-approve', { enabled: null }],
   ['resetUserPassword', () => authApi.resetUserPassword(4, 'pw2'), 'PUT', '/auth/users/4/reset-password', { password: 'pw2' }],
 ]
 
