@@ -73,3 +73,44 @@ func TestImportCSVAuthors_HonoursDefaultMonitorMode(t *testing.T) {
 		})
 	}
 }
+
+// A CSV import names no monitor new items policy, so it takes the install wide
+// default (#3958), the same as it does for the monitor mode.
+func TestImportCSVAuthors_HonoursDefaultMonitorNewItems(t *testing.T) {
+	for _, tc := range []struct{ setting, want string }{
+		{"none", models.AuthorMonitorNewItemsNone},
+		{"all", models.AuthorMonitorNewItemsAll},
+		{"", models.AuthorMonitorNewItemsAll},
+	} {
+		t.Run("default "+tc.setting, func(t *testing.T) {
+			database := newTestDB(t)
+			repo := db.NewAuthorRepo(database)
+			settings := db.NewSettingsRepo(database)
+			ctx := context.Background()
+			if tc.setting != "" {
+				if err := settings.Set(ctx, db.SettingAuthorDefaultMonitorNewItems, tc.setting); err != nil {
+					t.Fatal(err)
+				}
+			}
+			agg := metadata.NewAggregator(&stubProvider{
+				searchAuthorsFn: func(_ context.Context, q string) ([]models.Author, error) {
+					return []models.Author{{Name: q, SortName: q, ForeignID: "OL-" + q}}, nil
+				},
+				getAuthorFn: func(_ context.Context, id string) (*models.Author, error) {
+					return &models.Author{Name: "Andy Weir", SortName: "Weir, Andy", ForeignID: id}, nil
+				},
+			})
+			res, err := ImportCSVAuthors(ctx, strings.NewReader("Andy Weir,true\n"), repo, settings, agg, nil)
+			if err != nil || res.Added != 1 {
+				t.Fatalf("import: %v added=%d %v", err, res.Added, res.Failures)
+			}
+			authors, err := repo.List(ctx)
+			if err != nil || len(authors) != 1 {
+				t.Fatalf("authors = %d, err %v", len(authors), err)
+			}
+			if got := authors[0].MonitorNewItems; got != tc.want {
+				t.Errorf("MonitorNewItems = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

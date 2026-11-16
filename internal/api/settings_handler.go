@@ -56,6 +56,9 @@ const SettingDefaultMediaTypeStrict = "default.media_type_strict"
 const (
 	SettingAuthorDefaultMonitorMode        = db.SettingAuthorDefaultMonitorMode
 	SettingAuthorDefaultMonitorLatestCount = db.SettingAuthorDefaultMonitorLatestCount
+	// SettingAuthorDefaultMonitorNewItems is the "Monitor newly discovered
+	// books" policy, all or none, for authors created without one (#3958).
+	SettingAuthorDefaultMonitorNewItems = db.SettingAuthorDefaultMonitorNewItems
 )
 
 // SettingAuthorDefaultQualityProfileID is the quality profile given to authors
@@ -636,7 +639,8 @@ const SettingRecommendationsEnabled = "recommendations.enabled"
 //   - metadata.primary_provider: AddToLibraryModal, for the provider notice.
 //   - library.defaultRootFolderId, library.defaultAudiobookRootFolderId,
 //     default.media_type, author.default_monitor_mode and
-//     author.default_monitor_latest_count: authorAddDefaults, which preselects
+//     author.default_monitor_latest_count and author.default_monitor_new_items:
+//     authorAddDefaults, which preselects
 //     the add author dialog. Root folder ids are numbers, not paths; the paths
 //     themselves live behind GET /rootfolder.
 //   - author.default_quality_profile_id: authorAddDefaults again, for the
@@ -655,6 +659,7 @@ var nonAdminReadableSettings = map[string]bool{
 	SettingDefaultMediaType:                true,
 	SettingAuthorDefaultMonitorMode:        true,
 	SettingAuthorDefaultMonitorLatestCount: true,
+	SettingAuthorDefaultMonitorNewItems:    true,
 	SettingAuthorDefaultQualityProfileID:   true,
 }
 
@@ -1178,6 +1183,13 @@ func validateSettingValue(key, value string) error {
 		// here even though IsAuthorMonitorModeValid accepts it.
 		if !models.IsAuthorMonitorModeValidAsGlobalDefault(value) {
 			return fmt.Errorf("author.default_monitor_mode %q is not one of: all, future, latest, none (series is per-author only)", value)
+		}
+	case SettingAuthorDefaultMonitorNewItems:
+		if value == "" {
+			return nil
+		}
+		if !models.IsAuthorMonitorNewItemsValid(value) {
+			return fmt.Errorf("author.default_monitor_new_items %q is not one of: all, none", value)
 		}
 	case SettingAuthorDefaultMonitorLatestCount:
 		if value == "" {
