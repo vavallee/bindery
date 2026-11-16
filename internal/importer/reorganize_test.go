@@ -807,3 +807,97 @@ func TestReorganize_SingleFileAudiobookLeavesNoOrphanSidecar(t *testing.T) {
 		t.Errorf("old folder should be pruned once its stale sidecar is removed, stat err = %v", err)
 	}
 }
+
+func TestExternalImportFormats(t *testing.T) {
+	cases := []struct {
+		name, ebook, audio string
+		want               string
+	}{
+		{"unset", "", "", ""},
+		{"auto", "auto", "", ""},
+		{"unrecognised value", "bogus", "", ""},
+		{"managed", "copy", "hardlink", ""},
+		{"ebooks external, audiobooks follow", "external", "", "ebook,audiobook"},
+		{"ebooks external, audiobooks copy", "external", "copy", "ebook"},
+		{"ebooks external, audiobooks auto", "external", "auto", "ebook"},
+		{"ebooks external, bogus audiobook override falls back", "external", "bogus", "ebook,audiobook"},
+		{"ebooks copy, audiobooks external", "copy", "external", "audiobook"},
+		{"whitespace in audiobook override", "copy", " external ", "audiobook"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env, _, _, ctx := reorgFixture(t)
+			if c.ebook != "" {
+				if err := env.s.settings.Set(ctx, "import.mode", c.ebook); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if c.audio != "" {
+				if err := env.s.settings.Set(ctx, "import.audiobook.mode", c.audio); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := strings.Join(env.s.ExternalImportFormats(ctx), ","); got != c.want {
+				t.Errorf("ExternalImportFormats = %q, want %q", got, c.want)
+			}
+		})
+	}
+	t.Run("no settings repo means no external format", func(t *testing.T) {
+		env, _, _, ctx := reorgFixture(t)
+		env.s.settings = nil
+		if got := env.s.ExternalImportFormats(ctx); len(got) != 0 {
+			t.Errorf("got %v, want none", got)
+		}
+	})
+}
+
+func TestReorganizeFileFormats(t *testing.T) {
+	env, libraryDir, audiobookDir, ctx := reorgFixture(t)
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+	other := env.seed(t, ctx, "John Roe", "Other Book")
+
+	eb1 := filepath.Join(libraryDir, "a", "one.epub")
+	eb2 := filepath.Join(libraryDir, "b", "two.epub")
+	ab := filepath.Join(audiobookDir, "c", "audio")
+	writeFileAt(t, eb1)
+	writeFileAt(t, eb2)
+	writeFileAt(t, filepath.Join(ab, "part1.mp3"))
+	for _, a := range []struct {
+		id     int64
+		format string
+		path   string
+	}{{book.ID, models.MediaTypeEbook, eb1}, {other.ID, models.MediaTypeEbook, eb2}, {book.ID, models.MediaTypeAudiobook, ab}} {
+		if err := env.books.AddBookFile(ctx, a.id, a.format, a.path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var ebookIDs []int64
+	var audioID int64
+	for _, b := range []*models.Book{book, other} {
+		files, err := env.books.ListBookFiles(ctx, b.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			if f.Format == models.MediaTypeAudiobook {
+				audioID = f.ID
+			} else {
+				ebookIDs = append(ebookIDs, f.ID)
+			}
+		}
+	}
+
+	if got := env.s.ReorganizeFileFormats(ctx, nil); len(got) != 0 {
+		t.Errorf("empty plan: got %v", got)
+	}
+	if got := env.s.ReorganizeFileFormats(ctx, []int64{99999}); len(got) != 0 {
+		t.Errorf("unknown id: got %v", got)
+	}
+	if got := strings.Join(env.s.ReorganizeFileFormats(ctx, ebookIDs), ","); got != "ebook" {
+		t.Errorf("two ebooks should collapse to one format, got %q", got)
+	}
+	got := strings.Join(env.s.ReorganizeFileFormats(ctx, []int64{ebookIDs[0], 99999, audioID, ebookIDs[1]}), ",")
+	if got != "ebook,audiobook" {
+		t.Errorf("mixed with an unknown id: got %q, want ebook,audiobook", got)
+	}
+}

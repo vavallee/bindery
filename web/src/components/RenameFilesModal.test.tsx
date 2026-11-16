@@ -2,6 +2,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RenameFilesModal from './RenameFilesModal'
 import { reorganizeApi } from '../api/reorganize'
+import { ApiError } from '../api/core'
 import '../i18n'
 
 vi.mock('../api/reorganize', () => ({
@@ -87,5 +88,85 @@ describe('RenameFilesModal', () => {
     await waitFor(() => expect(screen.getByText(/0 of 1 will move/)).toBeInTheDocument())
     expect(previewMock).toHaveBeenCalledWith('library', undefined)
     expect(screen.queryByRole('button', { name: /Rename 0 files/ })).toBeDisabled()
+  })
+
+  describe('External import mode (#3946)', () => {
+    const externalPreview = {
+      moves: sampleMoves,
+      summary: { total: 2, toMove: 1, noop: 1, collision: 0, missing: 0, errored: 0, moved: 0, failed: 0 },
+      externalMode: true,
+      externalFormats: ['ebook'],
+      warning: 'Import mode is External for ebook, so another tool owns that layout.',
+    }
+
+    it('shows the warning and keeps apply disabled until confirmed', async () => {
+      previewMock.mockResolvedValue(externalPreview)
+      render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
+
+      expect(await screen.findByText(/another tool owns this layout/)).toBeInTheDocument()
+      const button = screen.getByRole('button', { name: /Rename 1 file/ })
+      expect(button).toBeDisabled()
+      fireEvent.click(screen.getByRole('checkbox'))
+      expect(button).toBeEnabled()
+    })
+
+    it('ignores the server English warning and shows the translated one', async () => {
+      previewMock.mockResolvedValue(externalPreview)
+      render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
+
+      await screen.findByText(/another tool owns this layout/)
+      expect(screen.queryByText(/Import mode is External for ebook/)).toBeNull()
+    })
+
+    it('asks for confirmation when apply answers 409 after the mode flipped', async () => {
+      previewMock.mockResolvedValue({
+        moves: sampleMoves,
+        summary: { total: 2, toMove: 1, noop: 1, collision: 0, missing: 0, errored: 0, moved: 0, failed: 0 },
+      })
+      applyMock.mockRejectedValueOnce(
+        new ApiError(409, { error: 'Import mode is External for ebook, raw english', code: 'reorganize_external_mode' }, 'Conflict'),
+      )
+      applyMock.mockResolvedValueOnce({
+        moves: [{ ...sampleMoves[0], status: 'moved' }],
+        summary: { total: 1, toMove: 0, noop: 0, collision: 0, missing: 0, errored: 0, moved: 1, failed: 0 },
+      })
+      render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /Rename 1 file/ }))
+      expect(await screen.findByText(/another tool owns this layout/)).toBeInTheDocument()
+      expect(screen.queryByText(/raw english/)).toBeNull()
+      const button = screen.getByRole('button', { name: /Rename 1 file/ })
+      expect(button).toBeDisabled()
+      fireEvent.click(screen.getByRole('checkbox'))
+      fireEvent.click(button)
+      await waitFor(() => expect(applyMock).toHaveBeenLastCalledWith([10], true))
+    })
+
+    it('sends the confirmation with the apply request', async () => {
+      previewMock.mockResolvedValue(externalPreview)
+      applyMock.mockResolvedValue({
+        moves: [{ ...sampleMoves[0], status: 'moved' }],
+        summary: { total: 1, toMove: 0, noop: 0, collision: 0, missing: 0, errored: 0, moved: 1, failed: 0 },
+      })
+      render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
+
+      await screen.findByText(/another tool owns this layout/)
+      fireEvent.click(screen.getByRole('checkbox'))
+      fireEvent.click(screen.getByRole('button', { name: /Rename 1 file/ }))
+      await waitFor(() => expect(applyMock).toHaveBeenCalledWith([10], true))
+    })
+
+    it('shows no warning or checkbox in a managed mode', async () => {
+      previewMock.mockResolvedValue({
+        moves: sampleMoves,
+        summary: { total: 2, toMove: 1, noop: 1, collision: 0, missing: 0, errored: 0, moved: 0, failed: 0 },
+        externalMode: false,
+      })
+      render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
+
+      expect(await screen.findByRole('button', { name: /Rename 1 file/ })).toBeEnabled()
+      expect(screen.queryByRole('checkbox')).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
   })
 })

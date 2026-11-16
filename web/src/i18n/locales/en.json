@@ -1333,6 +1333,7 @@
       "calibre": "Calibre",
       "abs": "Audiobookshelf",
       "grimmory": "Grimmory",
+      "bookorbit": "BookOrbit",
       "blocklist": "Blocklist",
       "apiKeys": "API Keys",
       "about": "About",
@@ -2686,6 +2687,72 @@
         "totalLast_other": "{{count}} files pushed so far, last at {{last}}."
       }
     },
+    "bookorbit": {
+      "intro": "Learn what you already own from a <site>BookOrbit</site> library. Bindery reads the books, authors, series and file paths BookOrbit holds and registers each file where it already sits. It <b>never writes to BookOrbit</b> and never moves, renames or deletes a file.",
+      "fields": {
+        "serverUrl": "Server URL",
+        "apiKey": "API key",
+        "configured": "(configured, leave blank to keep)",
+        "apiKeyHint": "Create a key in BookOrbit under Settings, You, API keys. Keep its access at <b>Read</b>, give it no permissions, and limit it to the libraries you import. Bindery stores it and never shows it again.",
+        "pathRemap": "BookOrbit path remap",
+        "pathRemapHelp": "BookOrbit reports paths as its own container sees them. Rewrite them to where Bindery sees the same files, under one of its library or root folders."
+      },
+      "testConnection": "Test connection",
+      "testOk_one": "Connected as {{username}}. The key can see {{count}} library.",
+      "testOk_other": "Connected as {{username}}. The key can see {{count}} libraries.",
+      "saveUrlFirst": "Save the server URL before testing: the test always uses the saved address.",
+      "errors": {
+        "save": "Save failed",
+        "test": "Test failed",
+        "libraries": "Could not list libraries",
+        "start": "The import could not start"
+      },
+      "libraries": {
+        "heading": "Libraries to import",
+        "hint": "Only ticked libraries are read. Load the list from BookOrbit, tick the ones Bindery should learn from, then save.",
+        "load": "Load libraries",
+        "none": "No library is selected yet. Load the list from BookOrbit to choose.",
+        "unnamed": "Library {{id}}"
+      },
+      "import": {
+        "heading": "Import",
+        "hint": "Preview first. A preview reads BookOrbit and reports what an import would do without changing anything. An import matches or creates each author and book, links series, and registers every file Bindery can see at its remapped path. Files it cannot see are counted and left alone. Running it again is safe.",
+        "preview": "Preview changes",
+        "run": "Import libraries",
+        "running": "Running…",
+        "working": "Working…",
+        "processed_one": "{{count}} book processed",
+        "processed_other": "{{count}} books processed",
+        "saveFirst": "Save your changes before starting, so the run uses the saved settings.",
+        "configureFirst": "Save a server URL, an API key and at least one library first.",
+        "dryRunFailed": "Preview failed: {{error}}",
+        "failed": "Import failed: {{error}}",
+        "dryRunComplete": "Preview complete. Nothing was changed.",
+        "complete": "Import complete.",
+        "sample_one": "Last book",
+        "sample_other": "Last {{count}} books"
+      },
+      "stats": {
+        "itemsSeen": "Books listed by BookOrbit",
+        "booksCreated": "Books created",
+        "booksLinked": "Books matched",
+        "booksUpdated": "Books already imported",
+        "authorsCreated": "Authors created",
+        "seriesCreated": "Series created",
+        "ownedMarked": "Files registered",
+        "ownedMarkedDryRun": "Files to register",
+        "pendingManual": "Files not found",
+        "failed": "Books failed"
+      },
+      "runs": {
+        "heading": "Run history",
+        "empty": "No BookOrbit import has run yet.",
+        "dryRun": "Preview",
+        "import": "Import",
+        "newer": "Newer",
+        "older": "Older"
+      }
+    },
     "rootFolders": {
       "addFailed": "Failed to add folder"
     },
@@ -3377,6 +3444,8 @@
     "both": "Ebook + Audiobook"
   },
   "renameFiles": {
+    "externalWarning": "Import mode is External, so another tool owns this layout. Renaming here can fight that tool.",
+    "externalConfirm": "I understand, rename these files anyway",
     "status": {
       "move": "Will move",
       "moved": "Moved",

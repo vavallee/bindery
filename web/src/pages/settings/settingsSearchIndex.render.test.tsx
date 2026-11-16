@@ -60,6 +60,7 @@ const TABS: Record<SettingsTabId, () => Promise<{ default: ComponentType<Record<
   rootfolders: () => import('./RootFoldersTab'),
   calibre: () => import('./CalibreTab'),
   abs: () => import('./ABSTab'),
+  bookorbit: () => import('./BookOrbitTab'),
   grimmory: () => import('./GrimmoryTab'),
   'api-keys': () => import('./ApiKeysTab'),
   import: () => import('./ImportTab'),

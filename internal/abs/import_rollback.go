@@ -62,6 +62,9 @@ func (i *Importer) RunsPage(ctx context.Context, limit, offset int) ([]models.AB
 	if i.runs == nil {
 		return nil, nil
 	}
+	if i.runSourceID != "" {
+		return i.runs.ListPageBySource(ctx, i.runSourceID, limit, offset)
+	}
 	return i.runs.ListPage(ctx, limit, offset)
 }
 

@@ -24,6 +24,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	oidcauth "github.com/vavallee/bindery/internal/auth/oidc"
 	"github.com/vavallee/bindery/internal/bookhydrate"
+	"github.com/vavallee/bindery/internal/bookorbit"
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/covers"
@@ -490,6 +491,10 @@ func main() {
 			slog.Warn("calibre cover repair failed", "error", err)
 		}
 	})
+	// One gate for every importer built on the Audiobookshelf engine: each
+	// run matches against an author list loaded once, so two at a time could
+	// each create the author the other just made.
+	importRunGate := abs.NewRunGate()
 	absImporter := abs.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, seriesRepo, settingsRepo, absImportRunRepo, absImportRunEntityRepo, absProvenanceRepo, absReviewRepo, absConflictRepo).
 		WithVersion(version).
 		WithStoragePaths(cfg.LibraryDir, cfg.AudiobookDir, rootFolderRepo).
@@ -498,7 +503,22 @@ func main() {
 		WithEnhancedHardcoverSeriesEnabled(func(ctx context.Context) bool {
 			return api.HardcoverFeatureStateFor(ctx, settingsRepo, cfg.EnhancedHardcoverAPI).EnhancedHardcoverAPI
 		}).
-		WithJobs(bgJobs) // drain in-flight imports on shutdown (#1458)
+		WithJobs(bgJobs). // drain in-flight imports on shutdown (#1458)
+		WithRunGate(importRunGate).
+		WithRunSource(abs.DefaultSourceID)
+	// The BookOrbit importer (#1927) drives a second instance of the same
+	// engine, so authors, books and series dedupe exactly as they do for
+	// Audiobookshelf. It gets no review queue and no conflict store: both
+	// screens act on Audiobookshelf's configuration. An ambiguous match is
+	// reported on the run instead.
+	bookOrbitImporter := bookorbit.NewImporter(
+		abs.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, seriesRepo, settingsRepo, absImportRunRepo, absImportRunEntityRepo, absProvenanceRepo, nil, nil).
+			WithVersion(version).
+			WithStoragePaths(cfg.LibraryDir, cfg.AudiobookDir, rootFolderRepo).
+			WithMetadata(metaAgg).
+			WithJobs(bgJobs).
+			WithRunGate(importRunGate),
+	).WithUserAgent(abs.UserAgent(version))
 	storedABS := api.LoadABSConfig(ctxBoot, settingsRepo)
 	resumeCfg := abs.ImportConfig{
 		SourceID:   abs.DefaultSourceID,
@@ -844,6 +864,7 @@ func main() {
 	grimmorySyncHandler := api.NewGrimmorySyncHandler(grimmorySyncer, grimmoryLoadPushCfg).
 		WithLastPush(grimmoryPushRepo.LastPush)
 	absHandler := api.NewABSHandler(settingsRepo).WithVersion(version)
+	bookOrbitHandler := api.NewBookOrbitHandler(settingsRepo, bookOrbitImporter).WithUserAgent(abs.UserAgent(version))
 	absConflictHandler := api.NewABSConflictHandler(absConflictRepo, authorRepo, bookRepo)
 	absImportHandler := api.NewABSImportHandler(absImporter, func(ctx context.Context) api.ABSStoredConfig {
 		return api.LoadABSConfig(ctx, settingsRepo)
@@ -1272,6 +1293,8 @@ func main() {
 		// Grimmory integration — GetConfig open (redacts the key), writes admin.
 		// See registerGrimmoryRoutes.
 		registerGrimmoryRoutes(r, grimmoryHandler)
+		// BookOrbit import (#1927): admin only. See registerBookOrbitRoutes.
+		registerBookOrbitRoutes(r, bookOrbitHandler)
 		registerGrimmorySyncRoutes(r, grimmorySyncHandler)
 
 		// Calibre integration (probe + library import + bulk push) — all

@@ -541,6 +541,28 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateInert,
 	},
 
+	// BookOrbit import.
+	{
+		Key: SettingBookOrbitBaseURL, Type: SettingTypeString, Default: "",
+		Description: "Base URL of the BookOrbit server to import from.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingBookOrbitAPIKey, Type: SettingTypeString, Default: "",
+		Description: "BookOrbit API key. Written by the BookOrbit import screen, never returned.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingBookOrbitLibraryIDs, Type: SettingTypeString, Default: "[]",
+		Description: "JSON array of the BookOrbit library IDs to import from.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingBookOrbitPathRemap, Type: SettingTypeString, Default: "",
+		Description: "Path rewrites applied to BookOrbit file paths, in from:to[,from:to] form.",
+		State:       SettingStateActive,
+	},
+
 	// Hardcover.
 	{
 		Key: SettingHardcoverAPIToken, Type: SettingTypeString, Default: "",

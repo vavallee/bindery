@@ -9,6 +9,7 @@ import {
 import { useModal } from './useModal'
 import RichText from './RichText'
 import { errorText } from '../util/errorText'
+import { ApiError } from '../api/core'
 
 interface Props {
   scope: ReorganizeScope
@@ -49,6 +50,10 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
   const [applying, setApplying] = useState(false)
   const [applied, setApplied] = useState<ReorganizeResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [confirmExternal, setConfirmExternal] = useState(false)
+  // Set when apply answers 409 reorganize_external_mode: the mode flipped after
+  // the preview loaded, so the confirmation is needed now.
+  const [externalRefused, setExternalRefused] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -70,17 +75,26 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
   }, [scope, id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const movable = (preview?.moves ?? []).filter(m => m.status === 'move')
+  const externalMode = preview?.externalMode === true || externalRefused
 
   const apply = async () => {
     if (movable.length === 0) return
     setApplying(true)
     setError(null)
     try {
-      const res = await reorganizeApi.apply(movable.map(m => m.fileId))
+      const ids = movable.map(m => m.fileId)
+      const res = externalMode && confirmExternal
+        ? await reorganizeApi.apply(ids, true)
+        : await reorganizeApi.apply(ids)
       setApplied(res)
       if (res.summary.moved > 0) onApplied?.()
     } catch (err) {
-      setError(errorText(err, t('renameFiles.renameFailed', 'Rename failed')))
+      if (err instanceof ApiError && err.status === 409 && err.body?.code === 'reorganize_external_mode') {
+        setExternalRefused(true)
+        setConfirmExternal(false)
+      } else {
+        setError(errorText(err, t('renameFiles.renameFailed', 'Rename failed')))
+      }
     } finally {
       setApplying(false)
     }
@@ -105,6 +119,21 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
             components={{ label: <span className="font-medium text-slate-700 dark:text-zinc-200" /> }}
           />
         </p>
+
+        {externalMode && !applied && (
+          <div role="alert" className="mb-3 p-3 rounded border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/40 text-xs text-amber-900 dark:text-amber-200">
+            <p>{t('renameFiles.externalWarning', 'Import mode is External, so another tool owns this layout. Renaming here can fight that tool.')}</p>
+            <label className="mt-2 flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={confirmExternal}
+                onChange={e => setConfirmExternal(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>{t('renameFiles.externalConfirm', 'I understand, rename these files anyway')}</span>
+            </label>
+          </div>
+        )}
 
         {loading ? (
           <p className="text-sm text-fg-muted">{t('renameFiles.computing', 'Computing changes…')}</p>
@@ -144,7 +173,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
               <button
                 type="button"
                 onClick={apply}
-                disabled={applying || movable.length === 0}
+                disabled={applying || movable.length === 0 || (externalMode && !confirmExternal)}
                 className="px-4 py-1.5 text-sm rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-40 font-medium text-white"
               >
                 {applying ? t('renameFiles.renaming', 'Renaming…') : t('renameFiles.apply', { count: movable.length })}

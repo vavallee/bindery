@@ -119,6 +119,7 @@ If you want to keep running Readarr itself, Readarr Redux and Bookshelf are the 
 | [Audiobookshelf](https://github.com/advplyr/audiobookshelf) | Audiobook server and player with mobile apps and progress sync | Bindery imports an existing Audiobookshelf library and asks it to rescan after every audiobook import |
 | [Calibre](https://calibre-ebook.com) | Desktop ebook manager and converter | Each import is registered through `calibredb` or the [Bindery Bridge plugin](https://github.com/vavallee/bindery-plugins), even with Calibre on another machine |
 | [Calibre-Web Automated](https://github.com/crocodilestick/Calibre-Web-Automated) | Web library and reader with Kobo and KOReader sync | Bindery copies each ebook into its ingest folder |
+| [BookOrbit](https://github.com/bookorbit/bookorbit) | Self hosted library for ebooks and audiobooks | Bindery imports an existing BookOrbit library and registers its files as owned, read only ([guide](docs/BookOrbit-Import.md)) |
 | [Grimmory](https://grimmory.org) | Web library for ebooks, comics and audiobooks | Bindery pushes imports to its BookDrop inbox (preview) |
 | [Kavita](https://github.com/Kareadita/Kavita), [Komga](https://github.com/gotson/komga) | Reading servers | Point them at Bindery's ebook folder |
 | [Shelfmark](https://github.com/calibrain/shelfmark) | On demand search and download across many sources | A different shape: Shelfmark for one off finds, Bindery for the authors you follow |
@@ -262,7 +263,7 @@ The full reference, including path remapping, API key seeding, trusted proxies a
 | **Usenet clients** | SABnzbd, NZBGet |
 | **Torrent clients** | qBittorrent, Transmission, Deluge, rTorrent and ruTorrent (XML-RPC over HTTP or SCGI) |
 | **Indexers** | Newznab and Torznab, with per indexer categories; Prowlarr indexer sync |
-| **Lists and imports** | Hardcover lists (synced), Goodreads CSV, Readarr database, Calibre `metadata.db`, Audiobookshelf |
+| **Lists and imports** | Hardcover lists (synced), Goodreads CSV, Readarr database, Calibre `metadata.db`, Audiobookshelf, BookOrbit |
 | **Library tools** | Calibre (`calibredb` or the Bindery Bridge plugin), Calibre-Web Automated ingest, Grimmory (preview), a post import drop folder for anything that watches one ([guide](docs/Calibre-Integration-Wiki.md)) |
 | **Notifications** | Webhooks for Apprise, ntfy, Home Assistant, Slack and Discord |
 | **Authentication** | Local accounts, API keys, OIDC, forward auth proxy |
@@ -321,6 +322,7 @@ Endpoints, authentication and integration examples are in **[docs/API.md](docs/A
 | **Calibre and CWA**: the hand off options and troubleshooting | [docs/Calibre-Integration-Wiki.md](docs/Calibre-Integration-Wiki.md) |
 | **Calibre on a Windows desktop**: plugin install, pull mode, push with a share | [docs/Calibre-Windows-Desktop-Wiki.md](docs/Calibre-Windows-Desktop-Wiki.md) |
 | **Audiobookshelf import**: what comes across, review queue, rollback | [docs/ABS-Import-Wiki.md](docs/ABS-Import-Wiki.md) |
+| **BookOrbit import**: read only key, path remap, what comes across, known limits | [docs/BookOrbit-Import.md](docs/BookOrbit-Import.md) |
 | **Hardcover series**: token setup, series linking, missing books | [docs/Hardcover-Series-Wiki.md](docs/Hardcover-Series-Wiki.md) |
 | **Metadata editing**: manual edits, field locks, genre overrides | [docs/Metadata-Editing-Wiki.md](docs/Metadata-Editing-Wiki.md) |
 | **Multi user and requests**: roles, isolation, requesters | [docs/multi-user.md](docs/multi-user.md) |

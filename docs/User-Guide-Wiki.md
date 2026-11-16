@@ -927,6 +927,7 @@ matches where your metadata lives, then scan:
 | A Calibre library | Settings → Calibre → **Library import** (reads `metadata.db`, creates authors + books) |
 | A Readarr install | Settings → Import / Migrate → upload `readarr.db` ([guide](Migrating-From-Readarr-Wiki.md)) |
 | An Audiobookshelf server | Settings → Audiobookshelf → configure + **Import** ([guide](ABS-Import-Wiki.md)) |
+| A BookOrbit server | Settings → BookOrbit → configure + **Import libraries** ([guide](BookOrbit-Import.md)) |
 | A Goodreads account | Settings → Import / Migrate → **Goodreads CSV** (export, filter by shelf, preview, commit) |
 | Just a list of authors | Settings → Import / Migrate → **Upload CSV**, one author name per line |
 | Only folders of files | Scan the library, then adopt on **Import → In your library**; or use **Import → From a folder** for files outside the library |
@@ -1308,6 +1309,10 @@ Three scopes, all the same preview:
 | One book | the book page, **More** → Rename files |
 | One author | the author page, **More** → Rename files |
 | Your whole library | Settings → General → Library → **Reorganize Library** (#2296) |
+
+**External import mode.** If ebooks or audiobooks are in External import mode, another
+tool owns that layout, so the dialog shows a warning and the Rename button stays off
+until you tick a confirmation. Only files of those formats are affected.
 
 **Run Scan library first.** Reorganize only knows about files already attached
 to a book, so anything sitting in your library that no scan has matched is
