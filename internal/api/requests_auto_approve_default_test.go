@@ -36,7 +36,7 @@ func TestEffectiveAutoApprove_Table(t *testing.T) {
 	settings := db.NewSettingsRepo(database)
 	ctx := context.Background()
 
-	if effectiveAutoApprove(ctx, settings, nil) {
+	if effectiveAutoApprove(ctx, settings, auth.RoleRequester, nil) {
 		t.Fatal("an unset account with no default stored must not auto approve")
 	}
 	for _, tc := range []struct {
@@ -54,7 +54,7 @@ func TestEffectiveAutoApprove_Table(t *testing.T) {
 		{"garbage", nil, false},
 	} {
 		setAutoApproveDefault(t, settings, tc.def)
-		if got := effectiveAutoApprove(ctx, settings, tc.own); got != tc.want {
+		if got := effectiveAutoApprove(ctx, settings, auth.RoleRequester, tc.own); got != tc.want {
 			t.Errorf("default %q own %v: got %v, want %v", tc.def, tc.own, got, tc.want)
 		}
 	}
@@ -79,16 +79,16 @@ func TestEffectiveAutoApprove_FailsClosed(t *testing.T) {
 	database.Close()
 
 	ctx := context.Background()
-	if effectiveAutoApprove(ctx, brokenSettings, nil) {
+	if effectiveAutoApprove(ctx, brokenSettings, auth.RoleRequester, nil) {
 		t.Fatal("an unreadable default auto approved an unset account")
 	}
-	if effectiveAutoApprove(ctx, nil, nil) {
+	if effectiveAutoApprove(ctx, nil, auth.RoleRequester, nil) {
 		t.Fatal("a missing settings repo auto approved an unset account")
 	}
-	if !effectiveAutoApprove(ctx, brokenSettings, bptr(true)) {
+	if !effectiveAutoApprove(ctx, brokenSettings, auth.RoleRequester, bptr(true)) {
 		t.Fatal("an explicit Always was lost to a settings read error")
 	}
-	if effectiveAutoApprove(ctx, brokenSettings, bptr(false)) {
+	if effectiveAutoApprove(ctx, brokenSettings, auth.RoleRequester, bptr(false)) {
 		t.Fatal("an explicit Never was lost to a settings read error")
 	}
 }
@@ -212,6 +212,16 @@ func TestUserMgmt_List_ShowsOwnAndEffective(t *testing.T) {
 	unset, _ := users.Create(ctx, "unset", "h")
 	always, _ := users.Create(ctx, "always", "h")
 	never, _ := users.Create(ctx, "never", "h")
+	unsetUser, _ := users.Create(ctx, "unsetuser", "h")
+	unsetAdmin, _ := users.Create(ctx, "unsetadmin", "h")
+	for _, id := range []int64{unset.ID, always.ID, never.ID} {
+		if err := users.SetRole(ctx, id, auth.RoleRequester); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := users.SetRole(ctx, unsetAdmin.ID, auth.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
 	if err := users.SetRequestsAutoApprove(ctx, always.ID, bptr(true)); err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +254,12 @@ func TestUserMgmt_List_ShowsOwnAndEffective(t *testing.T) {
 		}
 		if got[unset.ID]["autoApproveEffective"] != def {
 			t.Errorf("default %v: unset effective = %v", def, got[unset.ID]["autoApproveEffective"])
+		}
+		// The default never reaches a user or admin account with no value.
+		for _, id := range []int64{unsetUser.ID, unsetAdmin.ID} {
+			if got[id]["autoApproveEffective"] != false {
+				t.Errorf("default %v: non requester %d effective = %v, want false", def, id, got[id]["autoApproveEffective"])
+			}
 		}
 		if got[always.ID]["autoApproveRequests"] != true || got[always.ID]["autoApproveEffective"] != true {
 			t.Errorf("default %v: Always row = %v", def, got[always.ID])
@@ -298,5 +314,126 @@ func TestSettings_AutoApproveDefaultIsAdminOnly(t *testing.T) {
 	h.Set(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("admin write false = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The role matrix (#3900): the system default reaches a requester only. An
+// explicit Always or Never is honoured on any role.
+func TestRequestsCreate_RoleMatrix(t *testing.T) {
+	owns := map[string]*bool{"null": nil, "always": bptr(true), "never": bptr(false)}
+	for _, role := range []string{auth.RoleRequester, auth.RoleUser, auth.RoleAdmin} {
+		for ownName, own := range owns {
+			for _, def := range []string{"true", "false"} {
+				name := role + "/" + ownName + "/default " + def
+				t.Run(name, func(t *testing.T) {
+					adder := &fakeAdder{}
+					f := newRequestsFixture(t, wellsRequestStub(), adder)
+					ctx := context.Background()
+					acct, err := f.users.Create(ctx, "acct", "x")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := f.users.SetRole(ctx, acct.ID, role); err != nil {
+						t.Fatal(err)
+					}
+					acct.Role = role
+					setAutoApproveDefault(t, f.settings, def)
+					if err := f.users.SetRequestsAutoApprove(ctx, acct.ID, own); err != nil {
+						t.Fatal(err)
+					}
+					want := false
+					switch {
+					case own != nil:
+						want = *own
+					case role == auth.RoleRequester:
+						want = def == "true"
+					}
+					rec := f.create(t, acct, `{"kind":"book","foreignId":"OL27482W"}`)
+					if rec.Code != http.StatusCreated {
+						t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+					}
+					wantStatus := models.RequestStatusPending
+					wantCalls := int32(0)
+					if want {
+						wantStatus, wantCalls = models.RequestStatusApproved, 1
+					}
+					if got := decodeRequest(t, rec); got.Status != wantStatus {
+						t.Fatalf("status %q, want %q", got.Status, wantStatus)
+					}
+					if n := adder.calls.Load(); n != wantCalls {
+						t.Fatalf("add core ran %d times, want %d", n, wantCalls)
+					}
+				})
+			}
+		}
+	}
+}
+
+// With the default on, an integration using the API key makes its requests as
+// the first admin, and they queue, whether made for the admin or for another
+// account that follows the default as a non requester.
+func TestRequestsCreate_APIKeyAsAdminQueuesWithDefaultOn(t *testing.T) {
+	adder := &fakeAdder{}
+	f := newRequestsFixture(t, wellsRequestStub(), adder)
+	setAutoApproveDefault(t, f.settings, "true")
+
+	rec := f.createWithKey(t, `{"kind":"book","foreignId":"OL27482W"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create with key: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := decodeRequest(t, rec); got.Status != models.RequestStatusPending {
+		t.Fatalf("first admin via API key: status %q, want pending", got.Status)
+	}
+	if n := adder.calls.Load(); n != 0 {
+		t.Fatalf("add core ran %d times for an admin's request, want 0", n)
+	}
+}
+
+// forUser naming an admin account with no setting queues with the default on.
+func TestRequestsCreate_ForUserAdminQueuesWithDefaultOn(t *testing.T) {
+	adder := &fakeAdder{}
+	f := newRequestsFixture(t, wellsRequestStub(), adder)
+	setAutoApproveDefault(t, f.settings, "true")
+	rec := f.createWithKey(t, forUserBody("OL27482W", f.admin.ID))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := decodeRequest(t, rec); got.Status != models.RequestStatusPending {
+		t.Fatalf("status %q, want pending", got.Status)
+	}
+	if n := adder.calls.Load(); n != 0 {
+		t.Fatalf("add core ran %d times, want 0", n)
+	}
+}
+
+// A service account admin set to Always keeps working, with the default off
+// or on, through the API key and forUser.
+func TestRequestsCreate_ServiceAccountAdminAlwaysAutoApproves(t *testing.T) {
+	for _, def := range []string{"false", "true"} {
+		t.Run("default "+def, func(t *testing.T) {
+			adder := &fakeAdder{}
+			f := newRequestsFixture(t, wellsRequestStub(), adder)
+			setAutoApproveDefault(t, f.settings, def)
+			svc, err := f.users.Create(context.Background(), "seerr", "x")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.users.SetRole(context.Background(), svc.ID, auth.RoleAdmin); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.users.SetRequestsAutoApprove(context.Background(), svc.ID, bptr(true)); err != nil {
+				t.Fatal(err)
+			}
+			rec := f.createWithKey(t, forUserBody("OL27482W", svc.ID))
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+			}
+			if got := decodeRequest(t, rec); got.Status != models.RequestStatusApproved {
+				t.Fatalf("status %q, want approved", got.Status)
+			}
+			if n := adder.calls.Load(); n != 1 {
+				t.Fatalf("add core ran %d times, want 1", n)
+			}
+		})
 	}
 }

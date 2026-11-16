@@ -74,9 +74,10 @@ type userResponse struct {
 }
 
 // toUserResponse shapes a user row. autoDefault is the system default,
-// read once by the caller so a list does not read the setting per row.
+// read once by the caller so a list does not read the setting per row. The
+// default only counts for a requester; see effectiveAutoApprove.
 func toUserResponse(u db.User, autoDefault bool) userResponse {
-	effective := autoDefault
+	effective := autoDefault && u.Role == auth.RoleRequester
 	if u.RequestsAutoApprove != nil {
 		effective = *u.RequestsAutoApprove
 	}
