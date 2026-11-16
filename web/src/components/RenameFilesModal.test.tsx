@@ -2,6 +2,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RenameFilesModal from './RenameFilesModal'
 import { reorganizeApi } from '../api/reorganize'
+import { ApiError } from '../api/core'
 import '../i18n'
 
 vi.mock('../api/reorganize', () => ({
@@ -102,18 +103,43 @@ describe('RenameFilesModal', () => {
       previewMock.mockResolvedValue(externalPreview)
       render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
 
-      expect(await screen.findByText(/another tool owns that layout/)).toBeInTheDocument()
+      expect(await screen.findByText(/another tool owns this layout/)).toBeInTheDocument()
       const button = screen.getByRole('button', { name: /Rename 1 file/ })
       expect(button).toBeDisabled()
       fireEvent.click(screen.getByRole('checkbox'))
       expect(button).toBeEnabled()
     })
 
-    it('falls back to the built in warning text when the server sends none', async () => {
-      previewMock.mockResolvedValue({ ...externalPreview, warning: undefined })
+    it('ignores the server English warning and shows the translated one', async () => {
+      previewMock.mockResolvedValue(externalPreview)
       render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
 
+      await screen.findByText(/another tool owns this layout/)
+      expect(screen.queryByText(/Import mode is External for ebook/)).toBeNull()
+    })
+
+    it('asks for confirmation when apply answers 409 after the mode flipped', async () => {
+      previewMock.mockResolvedValue({
+        moves: sampleMoves,
+        summary: { total: 2, toMove: 1, noop: 1, collision: 0, missing: 0, errored: 0, moved: 0, failed: 0 },
+      })
+      applyMock.mockRejectedValueOnce(
+        new ApiError(409, { error: 'Import mode is External for ebook, raw english', code: 'reorganize_external_mode' }, 'Conflict'),
+      )
+      applyMock.mockResolvedValueOnce({
+        moves: [{ ...sampleMoves[0], status: 'moved' }],
+        summary: { total: 1, toMove: 0, noop: 0, collision: 0, missing: 0, errored: 0, moved: 1, failed: 0 },
+      })
+      render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /Rename 1 file/ }))
       expect(await screen.findByText(/another tool owns this layout/)).toBeInTheDocument()
+      expect(screen.queryByText(/raw english/)).toBeNull()
+      const button = screen.getByRole('button', { name: /Rename 1 file/ })
+      expect(button).toBeDisabled()
+      fireEvent.click(screen.getByRole('checkbox'))
+      fireEvent.click(button)
+      await waitFor(() => expect(applyMock).toHaveBeenLastCalledWith([10], true))
     })
 
     it('sends the confirmation with the apply request', async () => {
@@ -124,7 +150,7 @@ describe('RenameFilesModal', () => {
       })
       render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
 
-      await screen.findByText(/another tool owns that layout/)
+      await screen.findByText(/another tool owns this layout/)
       fireEvent.click(screen.getByRole('checkbox'))
       fireEvent.click(screen.getByRole('button', { name: /Rename 1 file/ }))
       await waitFor(() => expect(applyMock).toHaveBeenCalledWith([10], true))

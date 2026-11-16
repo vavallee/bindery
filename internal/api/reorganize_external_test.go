@@ -296,3 +296,26 @@ func TestReorganize_NonAdminForbidden(t *testing.T) {
 		t.Error("file moved despite 403")
 	}
 }
+
+// A confirmation that is not a JSON boolean is a malformed request, not a
+// confirmation: it must 400 and leave the files alone.
+func TestReorganizeApply_NonBooleanConfirmationRejected(t *testing.T) {
+	for _, v := range []string{`"true"`, `1`, `null`, `"yes"`, `[]`} {
+		t.Run(v, func(t *testing.T) {
+			e := newReorgExternalEnv(t)
+			e.mode(t, "external", "")
+			code, _ := e.apply(t, `{"fileIds":`+idList(e.ebookID)+`,"confirmExternalMode":`+v+`}`)
+			if v == `null` {
+				// JSON null decodes to the zero value, so it is an absent confirmation: refused, not applied.
+				if code != http.StatusConflict {
+					t.Fatalf("null: code = %d, want 409", code)
+				}
+			} else if code != http.StatusBadRequest {
+				t.Fatalf("code = %d, want 400", code)
+			}
+			if !fileExists(e.ebookOld) {
+				t.Error("file moved without a valid confirmation")
+			}
+		})
+	}
+}
