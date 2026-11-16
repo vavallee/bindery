@@ -32,7 +32,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -o /bindery ./cmd/bindery
 
 # Stage 3: Minimal runtime
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 # OCI image metadata so registries and `docker inspect` surface the MIT license
 # and source, matching the repo's LICENSE.
 LABEL org.opencontainers.image.title="Bindery" \
