@@ -168,7 +168,7 @@ func foldForSigWordMatch(s string) string {
 	s = strings.ToLower(norm.NFC.String(s))
 	s = strings.ReplaceAll(s, "'", "")
 	s = strings.ReplaceAll(s, "’", "")
-	return textutil.TransliterateUmlauts(s)
+	return textutil.FoldLatinAccents(textutil.TransliterateUmlauts(s))
 }
 
 // queryUmlautReplacer expands German umlauts (both cases, plus ß/ẞ) to the

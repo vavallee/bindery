@@ -22,7 +22,7 @@ func TestFoldForTitleMatch(t *testing.T) {
 		{"already-expanded form is stable", "Die Hoehle", "die hoehle"},
 		{"keeps cjk", "三体", "三体"},
 		{"keeps cyrillic", "Преступление и наказание", "преступление и наказание"},
-		{"keeps interior diacritics", "Perdido Street Station by China Miéville", "perdido street station by china miéville"},
+		{"folds interior latin diacritics (#3952)", "Perdido Street Station by China Miéville", "perdido street station by china mieville"},
 		{"trims and collapses whitespace", "  a   b  ", "a b"},
 		{"empty stays empty", "", ""},
 		{"punctuation only reduces to empty", "--- !!! ---", ""},
@@ -133,7 +133,7 @@ func TestFoldForTitleMatchMatchesLegacyPipeline(t *testing.T) {
 	}
 	for _, in := range []string{
 		"Ender's Game", "The Hobbit (1937) [EPUB]", "Die Höhle", "Der Prozeß",
-		"Foundation & Empire", "1984", "Guards! Guards!", "Åsa Larsson - Solstorm",
+		"Foundation & Empire", "1984", "Guards! Guards!",
 	} {
 		if got, want := FoldForTitleMatch(in), legacy(in); got != want {
 			t.Errorf("FoldForTitleMatch(%q) = %q, legacy pipeline gave %q", in, got, want)

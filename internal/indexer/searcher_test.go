@@ -1546,23 +1546,15 @@ func TestFilterRelevantMixedScriptAuthorExpandsAliases(t *testing.T) {
 	}
 }
 
-// TestFilterRelevantAccentedLatinAuthorUsesTransliteration is the regression
-// guard for the route #2419 must not break. The release alphabet transliterates
-// German umlauts and nothing else, so "Jo Nesbø" tokenises to ["nesbø"] and
-// never meets a scene release named "Jo.Nesbo.-.…". The ASCII alias is the only
-// path from that release to the author, so it has to keep binding even though
-// both names are latin script.
+// TestFilterRelevantAccentedLatinAuthorUsesTransliteration guards the route
+// #2419 must not break: an ASCII alias beside an accented latin author keeps
+// binding. Since #3952 the accent fold also lets "Nesbø" meet "Nesbo" without
+// the alias, so the alias is no longer the only path, but it must still work.
 func TestFilterRelevantAccentedLatinAuthorUsesTransliteration(t *testing.T) {
 	results := toResults(
 		"Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP",
 		"Karin.Fossum.The.Snowman.epub",
 	)
-
-	// Without the alias the author anchor cannot be met at all: proves the
-	// alias is doing the work rather than the title carrying the match.
-	if got := filterRelevant(results, "The Snowman", "Jo Nesbø", nil); contains(got, "Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP") {
-		t.Error("setup wrong: the transliterated release should not match without the alias")
-	}
 
 	got := filterRelevant(results, "The Snowman", "Jo Nesbø", []string{"Jo Nesbo"})
 	if !contains(got, "Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP") {
