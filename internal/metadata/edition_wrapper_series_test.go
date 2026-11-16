@@ -130,6 +130,13 @@ func TestIsEditionWrapperSeriesRef_BoxSetsConsistent(t *testing.T) {
 		{"Foo", "Foo Omnibus"},
 		{"Foo", "Foo Ultimate Collection"},
 		{"Foo Ultimate Collection", "Foo, Vol. 1"},
+		{"Foo Complete Collection", "Foo, Vol. 1"},
+		{"Foo Ultimate Collection Omnibus", "Foo, Vol. 1"},
+		{"Foo Complete Collection Volume 2", "Foo, Vol. 1"},
+		{"Dresden Files: Storm Front Volume XI", "Storm Front, Volume 11"},
+		{"Dresden Files: Storm Front Volume XIV", "Storm Front, Volume 14"},
+		{"Dresden Files: Storm Front Volume XIX", "Storm Front, Volume 19"},
+		{"Dresden Files: Storm Front Volume XXI", "Storm Front, Volume 21"},
 		{"Dresden Files: Storm Front Volume II", "Storm Front, Volume 2"},
 		{"The Chronicles of Narnia", "The Complete Chronicles of Narnia"},
 	}
@@ -150,6 +157,11 @@ func TestIsEditionWrapperSeriesRef_SeriesTitleNeedsTheBook(t *testing.T) {
 		{"Star Wars: Darth Vader (2015) Volume 1", "Star Wars: Darth Vader, Vol. 1"},
 		{"The Boxed Set Murders", "The Boxed Set Murders"},
 		{"The Box Set Murders", "A Body in the Box"},
+		{"The Ultimate Collection of X", "The Ultimate Collection of X, Vol. 3"},
+		{"The Ultimate Collection of X", "Hero Tale"},
+		{"The Complete Collection of Y", "The Complete Collection of Y, Vol. 3"},
+		{"The Complete Collection of Y", "Hero Tale"},
+		{"Dresden Files: Storm Front Volume XI", "Storm Front, Volume 12"},
 		{"Dresden Files: Storm Front Volume II", "Storm Front, Volume 3"},
 	}
 	for _, c := range cases {

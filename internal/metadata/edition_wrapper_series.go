@@ -37,7 +37,10 @@ import (
 // title, the shape of an edition ("Storm Front Volume II"), never mid title.
 var wrapperSeriesTitleRe = regexp.MustCompile(`(?i)` +
 	`\bsingle\s+issues?\b` +
-	`|\b(?:complete|ultimate)\s+collection\b` +
+	// "Complete/Ultimate Collection" only as the trailing marker (optionally
+	// followed by an edition or volume suffix): "The Ultimate Collection of X"
+	// is a series name.
+	`|\b(?:complete|ultimate)\s+collection\b(?:[\s,:(-]*(?:omnibus|edition|(?:volume|vol\.?)\s*(?:\d{1,3}|[ivx]{1,5})))*\s*\)?\s*$` +
 	`|\bcolou?ring\s+book\b` +
 	`|\bomnibus\s*(?:edition\s*)?\)?\s*$` +
 	`|\(\s*omnibus\s*\)` +
@@ -282,10 +285,43 @@ func volumeMarkerNumber(marker string) int {
 	if n, err := strconv.Atoi(last); err == nil {
 		return n
 	}
-	for n, r := range []string{"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"} {
-		if last == r {
-			return n + 1
-		}
+	if n := romanValue(last); n > 0 {
+		return n
 	}
 	return 0
+}
+
+// romanValue reads a canonical roman numeral from 1 to 39 and returns 0 for
+// anything else, so a malformed token never matches a volume.
+func romanValue(tok string) int {
+	total := 0
+	for i := 0; i < len(tok); i++ {
+		v := map[byte]int{'i': 1, 'v': 5, 'x': 10}[tok[i]]
+		if v == 0 {
+			return 0
+		}
+		if i+1 < len(tok) && v < map[byte]int{'i': 1, 'v': 5, 'x': 10}[tok[i+1]] {
+			total -= v
+		} else {
+			total += v
+		}
+	}
+	if total < 1 || total > 39 || toRoman(total) != tok {
+		return 0
+	}
+	return total
+}
+
+func toRoman(n int) string {
+	var b strings.Builder
+	for _, p := range []struct {
+		v int
+		s string
+	}{{10, "x"}, {9, "ix"}, {5, "v"}, {4, "iv"}, {1, "i"}} {
+		for n >= p.v {
+			b.WriteString(p.s)
+			n -= p.v
+		}
+	}
+	return b.String()
 }
