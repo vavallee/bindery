@@ -1,0 +1,81 @@
+suite: extra volumes and affinity
+templates:
+  - deployment.yaml
+
+tests:
+  - it: renders no extra volumes, mounts or affinity by default
+    asserts:
+      - isNull:
+          path: spec.template.spec.affinity
+      - lengthEqual:
+          path: spec.template.spec.volumes
+          count: 2
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 2
+
+  - it: appends extraVolumes and extraVolumeMounts after the built in ones
+    set:
+      extraVolumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: bookorbit-shared
+      extraVolumeMounts:
+        - name: shared
+          mountPath: /data
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.volumes
+          count: 3
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: shared
+            persistentVolumeClaim:
+              claimName: bookorbit-shared
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: shared
+            mountPath: /data
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: tmp
+            mountPath: /tmp
+
+  - it: keeps the config and NFS mounts when extras are set
+    set:
+      nfs:
+        enabled: true
+        server: nas.example.com
+      extraVolumes:
+        - name: shared
+          emptyDir: {}
+      extraVolumeMounts:
+        - name: shared
+          mountPath: /data
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.volumes
+          count: 4
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 4
+
+  - it: renders affinity when set
+    set:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: bookorbit
+              topologyKey: kubernetes.io/hostname
+    asserts:
+      - equal:
+          path: spec.template.spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].topologyKey
+          value: kubernetes.io/hostname
+      - equal:
+          path: spec.template.spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution[0].labelSelector.matchLabels["app.kubernetes.io/name"]
+          value: bookorbit
