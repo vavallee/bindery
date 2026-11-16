@@ -92,6 +92,17 @@ func TestIsEditionWrapperSeriesRef_VolumeShapesStay(t *testing.T) {
 		// Numbered omnibus and deluxe volumes of a real series are still
 		// members of it: the omnibus number is the position.
 		{"Naruto", "Naruto Omnibus 2 (3-in-1)"},
+		{"Foo", "Foo Omnibus Vol. 2"},
+		{"Foo", "Foo Omnibus, Volume 2"},
+		{"Foo", "Foo Omnibus (Volume 2)"},
+		{"Foo", "Foo: Omnibus Edition Volume 1"},
+		{"Foo", "Foo Omnibus Volume 2"},
+		{"Foo", "Foo Vol. 2 Omnibus"},
+		{"Foo", "Foo Omnibus 2"},
+		{"Foo", "Foo Omnibus Book 2"},
+		{"Foo", "Foo Omnibus #2"},
+		{"Foo", "Foo Deluxe Edition Volume 1"},
+		{"Set", "Set Complete"},
 		{"Attack on Titan", "Attack on Titan Omnibus 1"},
 		{"Berserk", "Berserk Deluxe Edition Volume 1"},
 		// The edition words are English only (documented): other scripts
@@ -116,6 +127,10 @@ func TestIsEditionWrapperSeriesRef_BoxSetsConsistent(t *testing.T) {
 		{"One Piece Box Set 1: Volumes 1-23", "One Piece, Vol. 1"},
 		{"Attack on Titan", "Attack on Titan Omnibus"},
 		{"Discworld", "Discworld Complete Collection"},
+		{"Foo", "Foo Omnibus"},
+		{"Foo", "Foo Ultimate Collection"},
+		{"Foo Ultimate Collection", "Foo, Vol. 1"},
+		{"Dresden Files: Storm Front Volume II", "Storm Front, Volume 2"},
 		{"The Chronicles of Narnia", "The Complete Chronicles of Narnia"},
 	}
 	for _, c := range cases {
@@ -135,6 +150,7 @@ func TestIsEditionWrapperSeriesRef_SeriesTitleNeedsTheBook(t *testing.T) {
 		{"Star Wars: Darth Vader (2015) Volume 1", "Star Wars: Darth Vader, Vol. 1"},
 		{"The Boxed Set Murders", "The Boxed Set Murders"},
 		{"The Box Set Murders", "A Body in the Box"},
+		{"Dresden Files: Storm Front Volume II", "Storm Front, Volume 3"},
 	}
 	for _, c := range cases {
 		if IsEditionWrapperSeriesRef(models.SeriesRef{Title: c.series}, c.book) {

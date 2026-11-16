@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -36,7 +37,7 @@ import (
 // title, the shape of an edition ("Storm Front Volume II"), never mid title.
 var wrapperSeriesTitleRe = regexp.MustCompile(`(?i)` +
 	`\bsingle\s+issues?\b` +
-	`|\bcomplete\s+collection\b` +
+	`|\b(?:complete|ultimate)\s+collection\b` +
 	`|\bcolou?ring\s+book\b` +
 	`|\bomnibus\s*(?:edition\s*)?\)?\s*$` +
 	`|\(\s*omnibus\s*\)` +
@@ -73,7 +74,7 @@ var wrapperWords = map[string]bool{
 	"collections": true, "collected": true, "trilogy": true, "omnibus": true,
 	"series": true, "box": true, "boxed": true, "set": true, "coloring": true,
 	"colouring": true, "book": true, "books": true, "volume": true, "vol": true,
-	"edition": true, "and": true,
+	"edition": true, "and": true, "ultimate": true,
 }
 
 // strongWrapperWords are the words that make a book a wrapper. "The", "series"
@@ -157,11 +158,17 @@ func IsEditionWrapperBook(seriesTitle, bookTitle string) bool {
 	for i, tok := range rest {
 		switch {
 		case tok == "omnibus":
-			// A numbered omnibus ("Omnibus 2") is a volume of the real
-			// series and stays in it; a bare "Omnibus" is the single
-			// wrapper edition.
-			if i+1 < len(rest) && isVolumeNumber(rest[i+1]) {
-				return false
+			// An omnibus carrying a number anywhere ("Omnibus 2", "Omnibus
+			// Vol. 2", "Omnibus Book 2", "Vol. 2 Omnibus") is a volume of the
+			// real series and stays in it; a bare "Omnibus" is the single
+			// wrapper edition. Box sets number their own volumes, so they
+			// are left to the box set rule.
+			if !boxSet {
+				for _, o := range rest {
+					if isVolumeNumber(o) {
+						return false
+					}
+				}
 			}
 			strong = true
 		case strongWrapperWords[tok]:
@@ -187,7 +194,7 @@ func IsEditionWrapperBook(seriesTitle, bookTitle string) bool {
 var genericSeriesWords = map[string]bool{
 	"stories": true, "novels": true, "books": true, "tales": true,
 	"works": true, "essays": true, "poems": true, "writings": true,
-	"fiction": true, "collection": true, "series": true,
+	"fiction": true, "collection": true, "series": true, "set": true,
 }
 
 // IsEditionWrapperSeriesRef reports whether the series ref a provider attached
@@ -216,6 +223,9 @@ func volumeNamedSeriesWrapsBook(seriesTitle, bookTitle string) bool {
 	sb := wrapperTokens(seriesTitle[:loc[0]])
 	bb := wrapperTokens(bookTitle[:bloc[0]])
 	if len(bb) == 0 || len(sb) <= len(bb) {
+		return false
+	}
+	if volumeMarkerNumber(seriesTitle[loc[0]:]) != volumeMarkerNumber(bookTitle[bloc[0]:]) {
 		return false
 	}
 	off := len(sb) - len(bb)
@@ -259,4 +269,23 @@ func DropEditionWrapperSeriesRefs(bookTitle string, refs []models.SeriesRef) []m
 		kept[0].Primary = true
 	}
 	return kept
+}
+
+// volumeMarkerNumber returns the number in a trailing volume marker ("Volume
+// II", "Vol. 3"), or 0 when it cannot be read.
+func volumeMarkerNumber(marker string) int {
+	toks := wrapperTokens(marker)
+	if len(toks) == 0 {
+		return 0
+	}
+	last := toks[len(toks)-1]
+	if n, err := strconv.Atoi(last); err == nil {
+		return n
+	}
+	for n, r := range []string{"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"} {
+		if last == r {
+			return n + 1
+		}
+	}
+	return 0
 }
