@@ -15,7 +15,11 @@ vi.mock('react-i18next', () => ({
         'users.roleUser': 'User',
         'users.roleRequester': 'Requester',
         'users.fieldRole': 'Role',
-        'users.autoApprove': 'Auto',
+        'users.autoApproveDefault': 'Use default',
+        'users.autoApproveAlways': 'Always',
+        'users.autoApproveNever': 'Never',
+        'users.autoApproveEffectiveOn': 'Approves on its own',
+        'users.autoApproveEffectiveOff': 'Waits for an admin',
         'users.autoApproveFor': 'Auto-approve requests for {{username}}',
       }
       const s = strings[key] ?? key
@@ -45,7 +49,7 @@ describe('UsersPage roles', () => {
     vi.mocked(api.listUsers).mockResolvedValue([
       { id: 1, username: 'admin', role: 'admin', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false },
       { id: 2, username: 'reader', role: 'user', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false },
-      { id: 3, username: 'guest', role: 'requester', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: false },
+      { id: 3, username: 'guest', role: 'requester', createdAt: '2026-01-01T00:00:00Z', autoApproveRequests: null, autoApproveEffective: false },
     ])
     vi.mocked(api.setUserRole).mockResolvedValue({ ok: true })
     vi.mocked(api.setUserAutoApprove).mockResolvedValue({ ok: true })
@@ -80,20 +84,34 @@ describe('UsersPage roles', () => {
   })
 
   // The auto-approve toggle is per account and only shown for requesters.
-  it('toggles auto-approve for a requester', async () => {
+  it('offers Use default, Always and Never for a requester', async () => {
     render(<UsersPage />)
-    const box = await screen.findByRole('checkbox', { name: 'Auto-approve requests for guest' })
-    expect(box).not.toBeChecked()
+    const select = await screen.findByRole('combobox', { name: 'Auto-approve requests for guest' })
+    expect(within(select).getAllByRole('option').map(o => (o as HTMLOptionElement).value)).toEqual(['default', 'always', 'never'])
+    // An account with no setting of its own shows Use default and its effective result.
+    expect(select).toHaveValue('default')
+    expect(screen.getByTestId('auto-approve-effective-3')).toHaveTextContent('Waits for an admin')
 
-    fireEvent.click(box)
+    fireEvent.change(select, { target: { value: 'always' } })
     await waitFor(() => expect(api.setUserAutoApprove).toHaveBeenCalledWith(3, true))
-    expect(box).toBeChecked()
+    expect(select).toHaveValue('always')
+
+    fireEvent.change(select, { target: { value: 'never' } })
+    await waitFor(() => expect(api.setUserAutoApprove).toHaveBeenCalledWith(3, false))
+    expect(select).toHaveValue('never')
+
+    // Back to the default sends null, not false.
+    vi.mocked(api.setUserAutoApprove).mockResolvedValue({ ok: true, autoApproveRequests: null, autoApproveEffective: true })
+    fireEvent.change(select, { target: { value: 'default' } })
+    await waitFor(() => expect(api.setUserAutoApprove).toHaveBeenLastCalledWith(3, null))
+    expect(select).toHaveValue('default')
+    await waitFor(() => expect(screen.getByTestId('auto-approve-effective-3')).toHaveTextContent('Approves on its own'))
   })
 
   it('does not offer auto-approve for an admin', async () => {
     render(<UsersPage />)
     await screen.findByRole('combobox', { name: 'Role for admin' })
-    expect(screen.queryByRole('checkbox', { name: 'Auto-approve requests for admin' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Auto-approve requests for admin' })).not.toBeInTheDocument()
   })
 })
 

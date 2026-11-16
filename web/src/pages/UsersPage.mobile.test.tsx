@@ -68,7 +68,7 @@ describe('UsersPage below sm', () => {
     const kid = items[1]
     expect(within(kid).getByText('kid')).toBeInTheDocument()
     expect(within(kid).getByRole('combobox', { name: 'users.roleFor' })).toHaveValue('requester')
-    expect(within(kid).getByRole('checkbox', { name: 'users.autoApproveFor' })).toBeChecked()
+    expect(within(kid).getByRole('combobox', { name: 'users.autoApproveFor' })).toHaveValue('always')
     expect(within(kid).getByRole('button', { name: 'users.resetPassword' })).toBeInTheDocument()
     expect(within(kid).getByRole('button', { name: 'common.delete' })).toBeInTheDocument()
     // The signed in admin is marked as you.

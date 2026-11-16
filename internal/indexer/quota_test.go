@@ -582,3 +582,150 @@ func TestQuota_FailedWriteIsRetried(t *testing.T) {
 		t.Errorf("stored %d of 4 requests; the failed delta was not retried", got)
 	}
 }
+
+// TestQuota_FailedLoadThenSuccessKeepsInMemoryCounts: a load that failed and
+// then succeeded replaced the tally with the stored buckets, forgetting every
+// request counted while it was failing.
+func TestQuota_FailedLoadThenSuccessKeepsInMemoryCounts(t *testing.T) {
+	store := newFakeQuotaStore()
+	now := time.Date(2026, 9, 3, 10, 5, 0, 0, time.UTC)
+	hour := now.Truncate(time.Hour)
+	store.counts[11] = map[time.Time]int{hour: 4}
+	store.loadErr = errors.New("database is locked")
+	q := &indexerQuota{store: store, now: func() time.Time { return now }}
+
+	idx := capped(10)
+	budget := q.budget(idx)
+	for range 3 {
+		if !budget.Take() {
+			t.Fatal("take refused while the load was failing")
+		}
+	}
+
+	store.mu.Lock()
+	store.loadErr = nil
+	store.mu.Unlock()
+
+	if reason, held := q.hold(context.Background(), idx); held {
+		t.Fatalf("held too early: %s", reason)
+	}
+	q.mu.Lock()
+	used := q.usedLocked(idx.ID, now)
+	q.mu.Unlock()
+	if used != 7 {
+		t.Fatalf("used = %d, want 7 (4 stored + 3 counted during the failed load)", used)
+	}
+
+	// The unflushed 3 must still be owed, and the stored 4 must not be sent twice.
+	q.flush(context.Background(), idx, true)
+	if got := store.total(idx.ID); got != 7 {
+		t.Errorf("stored %d, want 7", got)
+	}
+}
+
+// TestQuota_FailedLoadThenSuccessCapIsExact: the user-visible symptom, the cap
+// admitting more than its limit in total.
+func TestQuota_FailedLoadThenSuccessCapIsExact(t *testing.T) {
+	store := newFakeQuotaStore()
+	store.loadErr = errors.New("database is locked")
+	now := time.Date(2026, 9, 3, 10, 5, 0, 0, time.UTC)
+	q := &indexerQuota{store: store, now: func() time.Time { return now }}
+	idx := capped(5)
+	budget := q.budget(idx)
+	admitted := 0
+	for range 3 {
+		if budget.Take() {
+			admitted++
+		}
+	}
+	store.mu.Lock()
+	store.loadErr = nil
+	store.mu.Unlock()
+	for range 10 {
+		if budget.Take() {
+			admitted++
+		}
+	}
+	if admitted != 5 {
+		t.Errorf("admitted %d requests under a cap of 5", admitted)
+	}
+}
+
+// TestQuota_FirstLoadSuccessIsUnchanged: the ordinary path seeds straight from
+// the store and owes nothing.
+func TestQuota_FirstLoadSuccessIsUnchanged(t *testing.T) {
+	store := newFakeQuotaStore()
+	now := time.Date(2026, 9, 3, 10, 5, 0, 0, time.UTC)
+	store.counts[11] = map[time.Time]int{now.Truncate(time.Hour): 6}
+	q := &indexerQuota{store: store, now: func() time.Time { return now }}
+	idx := capped(10)
+	budget := q.budget(idx)
+	admitted := 0
+	for range 10 {
+		if budget.Take() {
+			admitted++
+		}
+	}
+	if admitted != 4 {
+		t.Errorf("admitted %d, want 4 (6 of 10 already stored)", admitted)
+	}
+	q.flush(context.Background(), idx, true)
+	if got := store.total(idx.ID); got != 10 {
+		t.Errorf("stored %d, want 10", got)
+	}
+}
+
+// TestQuota_FailedLoadThenRolloverDropsAgedBuckets: counts made during the
+// failed load age out of the window like any others after the merge.
+func TestQuota_FailedLoadThenRolloverDropsAgedBuckets(t *testing.T) {
+	store := newFakeQuotaStore()
+	store.loadErr = errors.New("database is locked")
+	now := time.Date(2026, 9, 3, 23, 30, 0, 0, time.UTC)
+	q := &indexerQuota{store: store, now: func() time.Time { return now }}
+	idx := capped(5)
+	budget := q.budget(idx)
+	for range 5 {
+		budget.Take()
+	}
+	store.mu.Lock()
+	store.loadErr = nil
+	store.mu.Unlock()
+	if _, held := q.hold(context.Background(), idx); !held {
+		t.Fatal("cap should be held right after the merge")
+	}
+	now = now.Add(26 * time.Hour)
+	if reason, held := q.hold(context.Background(), idx); held {
+		t.Errorf("still held after the window rolled: %s", reason)
+	}
+}
+
+// TestQuota_CountingDuringLoadIsRaceFree runs under -race.
+func TestQuota_CountingDuringLoadIsRaceFree(t *testing.T) {
+	store := newFakeQuotaStore()
+	store.loadErr = errors.New("database is locked")
+	now := time.Date(2026, 9, 3, 10, 5, 0, 0, time.UTC)
+	q := &indexerQuota{store: store, now: func() time.Time { return now }}
+	idx := capped(1000)
+	budget := q.budget(idx)
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 50 {
+				budget.Take()
+				q.hold(context.Background(), idx)
+				q.flush(context.Background(), idx, true)
+			}
+		}()
+	}
+	store.mu.Lock()
+	store.loadErr = nil
+	store.mu.Unlock()
+	wg.Wait()
+	q.flush(context.Background(), idx, true)
+	if got := store.total(idx.ID); got != 200 {
+		t.Errorf("stored %d, want 200", got)
+	}
+}
