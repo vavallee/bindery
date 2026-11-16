@@ -669,6 +669,21 @@ func (r *DownloadRepo) SetImportPath(ctx context.Context, id int64, path string)
 	return err
 }
 
+// SetImportManual records whether a download parked by pair gating was a manual
+// import (#3945), so a later release, which runs under another call's context,
+// can still tell. Only a held row's value is read.
+func (r *DownloadRepo) SetImportManual(ctx context.Context, id int64, manual bool) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET import_manual=? WHERE id=?", manual, id)
+	return err
+}
+
+// ImportManual reports what SetImportManual recorded for a download.
+func (r *DownloadRepo) ImportManual(ctx context.Context, id int64) (bool, error) {
+	var manual bool
+	err := r.db.QueryRowContext(ctx, "SELECT import_manual FROM downloads WHERE id=?", id).Scan(&manual)
+	return manual, err
+}
+
 // SetError marks the download failed with the message that killed it, and
 // stamps dead_at: this is the moment the attempt ended, and the scheduler's
 // re-grab cooldown measures from it (#2710). Nothing else on the row moves

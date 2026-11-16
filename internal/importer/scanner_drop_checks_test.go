@@ -425,3 +425,78 @@ func TestExternalDropChecks_SweepRunsChecksOnce(t *testing.T) {
 		t.Errorf("%d importFailed events, want 1", len(events))
 	}
 }
+
+// Whether a held download is checked when it is released follows the held
+// download, not the call that releases it (#3945): a manual import is never
+// refused, an automatic one always is.
+func TestExternalDropChecks_HeldReleaseFollowsTheHeldDownloadNotTheCaller(t *testing.T) {
+	cases := []struct {
+		name        string
+		heldManual  bool
+		viaSweep    bool
+		wantBlocked bool
+	}{
+		{"manual held, released by an automatic sibling", true, false, false},
+		{"automatic held, released by a manual sibling", false, false, true},
+		{"manual held, swept on an automatic tick", true, true, false},
+		{"automatic held, swept on a manual tick", false, true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newContentFixtureFor(t, "Middlemarch", "George Eliot", models.MediaTypeBoth)
+			drop := f.externalDrop(t)
+			f.setMode(t, "import.drop_pair_gating", "true")
+			f.setMode(t, ebookCheckKey, "block")
+			// A file that is a different book. A manual import is held with it
+			// (never refused); an automatic one is first held clean, then the
+			// file turns out to be another book while it waits.
+			if c.heldManual {
+				f.writeEpubTitled(t, "book.epub", "Jane Eyre: An Autobiography", "Currer Bell")
+			} else {
+				f.writeEpubTitled(t, "book.epub", "Middlemarch", "George Eliot")
+			}
+			heldCtx := context.Background()
+			if c.heldManual {
+				heldCtx = withManualImport(heldCtx)
+			}
+			f.scanner.tryImportInternal(heldCtx, f.dl, f.dir, "", "", "", nil, nil)
+			if dl, _ := f.reload(t); dl.Status != models.StateImportHeld {
+				t.Fatalf("status = %q (%s), want held", dl.Status, dl.ErrorMessage)
+			}
+			if !c.heldManual {
+				f.writeEpubTitled(t, "book.epub", "Jane Eyre: An Autobiography", "Currer Bell")
+			}
+
+			// The releasing call carries the opposite mark.
+			relCtx := context.Background()
+			if !c.heldManual {
+				relCtx = withManualImport(relCtx)
+			}
+			if c.viaSweep {
+				old := time.Now().Add(-100 * time.Hour).UTC()
+				if _, err := f.sqlDB.ExecContext(relCtx, "UPDATE downloads SET completed_at=? WHERE id=?", old, f.dl.ID); err != nil {
+					t.Fatal(err)
+				}
+				f.scanner.sweepHeldPairGating(relCtx)
+			} else {
+				adl := addSiblingAudiobook(t, f)
+				f.scanner.tryImportInternal(relCtx, adl, writeAudiobookDownload(t), "", "", "", nil, nil)
+			}
+
+			dl, _ := f.reload(t)
+			dropped := false
+			for _, p := range dropCheckFilesUnder(t, drop) {
+				dropped = dropped || strings.HasSuffix(p, ".epub")
+			}
+			if c.wantBlocked {
+				if dl.Status != models.StateImportBlocked || dropped {
+					t.Errorf("status = %q (%s), dropped = %v, want blocked and not dropped", dl.Status, dl.ErrorMessage, dropped)
+				}
+				return
+			}
+			if dl.Status != models.StateImportExternal || !dropped {
+				t.Errorf("status = %q (%s), dropped = %v, want a manual import dropped, not refused", dl.Status, dl.ErrorMessage, dropped)
+			}
+		})
+	}
+}

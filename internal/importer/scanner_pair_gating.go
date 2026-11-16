@@ -108,6 +108,20 @@ func (s *Scanner) dropPairGated(ctx context.Context, dl *models.Download, book *
 	return true
 }
 
+// heldContext returns ctx marked as manual or automatic according to the held
+// download itself, ignoring whatever the releasing call carried (#3945). A
+// manual import is never refused by the checks, and an automatic one always is,
+// whichever import tick or sibling download releases it. An unreadable value
+// counts as automatic: the checks run.
+func (s *Scanner) heldContext(ctx context.Context, held *models.Download) context.Context {
+	manual, err := s.downloads.ImportManual(ctx, held.ID)
+	if err != nil {
+		slog.Warn("drop: pair gating — could not read whether the held download was a manual import; checking it", "title", held.Title, "error", err)
+		manual = false
+	}
+	return withManualFlag(ctx, manual)
+}
+
 // siblingFormatOf returns the other format of a media_type=both pair.
 func siblingFormatOf(format string) string {
 	if format == models.MediaTypeAudiobook {
@@ -124,6 +138,11 @@ func siblingFormatOf(format string) string {
 func (s *Scanner) parkHeldFormat(ctx context.Context, dl *models.Download, format, downloadPath string) {
 	if err := s.downloads.SetImportPath(ctx, dl.ID, downloadPath); err != nil {
 		slog.Warn("drop: pair gating — failed to record held download path", "title", dl.Title, "path", downloadPath, "error", err)
+	}
+	// A release runs under another call's context, so the hold keeps whether
+	// this was a manual import (#3945).
+	if err := s.downloads.SetImportManual(ctx, dl.ID, isManualImport(ctx)); err != nil {
+		slog.Warn("drop: pair gating — failed to record whether the held download was a manual import", "title", dl.Title, "error", err)
 	}
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImportHeld)
 	slog.Info("drop: pair gating — holding format until its sibling arrives",
@@ -177,7 +196,7 @@ func (s *Scanner) releaseHeldSibling(ctx context.Context, held *models.Download,
 	}
 	// The files are re-read here, so they get the same checks again (#3945):
 	// the hold stored only the path, and the files may have changed since.
-	files, contentCheck, ok := s.checkBeforeDrop(ctx, held, book, author, held.ImportPath, files, format, true)
+	files, contentCheck, ok := s.checkBeforeDrop(s.heldContext(ctx, held), held, book, author, held.ImportPath, files, format, true)
 	if !ok {
 		return
 	}
@@ -246,7 +265,7 @@ func (s *Scanner) sweepHeldPairGating(ctx context.Context) {
 				"pair gating timeout: held download files are no longer present — retry the import")
 			continue
 		}
-		files, contentCheck, ok := s.checkBeforeDrop(ctx, h, book, author, h.ImportPath, files, format, true)
+		files, contentCheck, ok := s.checkBeforeDrop(s.heldContext(ctx, h), h, book, author, h.ImportPath, files, format, true)
 		if !ok {
 			continue
 		}
