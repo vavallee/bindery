@@ -65,6 +65,9 @@ export const FIELDS: FieldEntry[] = [
   { key: 'metadata.author_enrichment.wikidata', tab: 'metadata', label: G + 'authorWikidataLabel', help: G + 'authorWikidataHint' },
   { key: 'metadata.enrichers_disabled', tab: 'metadata', label: G + 'enrichersHeading' },
 
+  // Quality
+  { key: 'author.default_quality_profile_id', tab: 'quality', label: 'settings.quality.defaultProfileLabel', help: 'settings.quality.defaultProfileHint' },
+
   // Root folders
   { key: 'library.defaultRootFolderId', tab: 'rootfolders', label: 'settings.rootfolders.defaultLabel', help: 'settings.rootfolders.defaultHint' },
   { key: 'library.defaultAudiobookRootFolderId', tab: 'rootfolders', label: 'settings.rootfolders.audiobookDefaultLabel', help: 'settings.rootfolders.audiobookDefaultHint' },

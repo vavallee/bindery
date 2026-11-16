@@ -68,6 +68,11 @@ type ListSyncer struct {
 	books       *db.BookRepo
 	series      seriesLinker
 
+	// settings supplies the install wide default quality profile for an
+	// author created from a list that configures none (#3831). Nil means no
+	// default, which is what tests that never wire it get.
+	settings *db.SettingsRepo
+
 	tokenSource   func(context.Context) string
 	clientFactory hardcoverClientFactory
 	enricher      bookhydrate.AudiobookEnricher
@@ -145,6 +150,13 @@ func New(importLists *db.ImportListRepo, authors *db.AuthorRepo, books *db.BookR
 		books:         books,
 		clientFactory: func(apiKey string) hardcoverClient { return hardcover.NewAuthenticated(apiKey) },
 	}
+}
+
+// WithSettings wires the settings the syncer reads the default quality
+// profile from (#3831).
+func (s *ListSyncer) WithSettings(settings *db.SettingsRepo) *ListSyncer {
+	s.settings = settings
+	return s
 }
 
 // WithSeriesRepo wires the series persistence layer so that books imported
@@ -624,12 +636,6 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 
 		// Look up or create the author
 		authorID, err := s.ensureAuthor(ctx, &book, nameIndex, ownerID, scopeUserID, qualityProfileID, rootFolderID)
-		if errors.Is(err, errAuthorOwnedByAnotherUser) {
-			slog.Info("hardcover list sync: book skipped, its author belongs to another user",
-				"title", book.Title, "author", book.Author.Name, "list_owner_user_id", scopeUserID)
-			countStat(func(st *SyncStats) { st.Skipped++ })
-			continue
-		}
 		if err != nil {
 			slog.Warn("failed to ensure author for book", "title", book.Title, "error", err)
 			countStat(func(st *SyncStats) { st.Failed++ })
@@ -848,13 +854,6 @@ func uniqueAuthorByName(index map[string][]models.Author, name string) *models.A
 	return &matches[0]
 }
 
-// errAuthorOwnedByAnotherUser reports that the book's author exists but is
-// owned by a user other than the list owner, under tenancy enforcement. It is
-// not a failure: authors.foreign_id is globally UNIQUE (migration 001), so
-// there is no parallel row to create, and the caller skips the book rather
-// than attaching it to an author its owner cannot see.
-var errAuthorOwnedByAnotherUser = errors.New("author is owned by another user")
-
 // ensureAuthor looks up the author by foreign ID, then by normalized name,
 // creating a minimal record only if neither matches. Returns the author's
 // database ID. ownerID (0 = global) and qualityProfileID (nil = the list has
@@ -882,14 +881,9 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 	if existing != nil {
 		return existing.ID, nil
 	}
-	if scopeUserID != 0 {
-		// Nothing visible carries this foreign id. If another user's author
-		// holds it, creating would fail the UNIQUE constraint, so stop here
-		// with a reason the caller can report instead of a raw SQL error.
-		if foreign, ferr := s.authors.GetByAnyForeignID(ctx, book.Author.ForeignID); ferr == nil && foreign != nil {
-			return 0, errAuthorOwnedByAnotherUser
-		}
-	}
+	// Nothing the list owner can see carries this foreign id. Another user's
+	// author may, but authors are keyed per owner under tenancy (#3555), so
+	// the list owner gets their own row below rather than a skip.
 
 	// Name fallback: reuse an existing author with the same normalized name
 	// instead of spawning a parallel row, and attach the Hardcover foreign id
@@ -942,18 +936,16 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 	// the sync, and each row must own its field.
 	//
 	// There is deliberately no fallback to the seeded id=1 profile when the list
-	// has none. Unlike metadata profiles, quality profiles are user-scoped:
-	// migration 025 backfills owner_user_id=1 onto every profile that predates
-	// multi-user, so on a tenanted install "profile 1" is one particular user's
-	// private profile, and stamping it here would hand it to authors created by
-	// somebody else's list. A list with no profile configured therefore still
-	// leaves this nil, which ResolveAuthorQualityProfile documents as "no format
-	// filter" — the same result as today, but now fixable from the list's
-	// settings instead of being unreachable.
+	// has none: that is just whichever profile happens to be first, not one
+	// anybody chose for new authors. A list with no profile configured gets the
+	// install wide default quality profile instead (#3831), which an admin set
+	// for exactly this, and stays nil when that is unset too, which
+	// ResolveAuthorQualityProfile documents as "no format filter".
 	if qualityProfileID != nil {
 		id := *qualityProfileID
 		author.QualityProfileID = &id
 	}
+	db.ApplyAuthorQualityProfileDefault(ctx, s.settings, author)
 
 	// Same copy-by-value rule as the quality profile: one pointer is shared
 	// across every author in the sync, and each row must own its field.
@@ -964,8 +956,10 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 
 	if err := s.authors.CreateForUser(ctx, author, ownerID); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") || errors.Is(err, db.ErrAuthorIdentifierConflict) {
-			// Race: author created between our check and insert
-			existing, _ = s.authors.GetByAnyForeignID(ctx, author.ForeignID)
+			// Race: author created between our check and insert. Same scope
+			// as the lookup above, so the list never lands on an author
+			// another user owns.
+			existing, _ = s.authors.GetByAnyForeignIDForUser(ctx, author.ForeignID, scopeUserID)
 			if existing != nil {
 				return existing.ID, nil
 			}

@@ -38,6 +38,7 @@ vi.mock('../api/client', async importOriginal => {
       unlinkSeriesHardcover: vi.fn(),
       getSeriesHardcoverDiff: vi.fn(),
       unmonitorSeriesSplitParts: vi.fn(),
+      listSeriesDuplicates: vi.fn(),
     },
   }
 })
@@ -52,6 +53,8 @@ vi.mock('../auth/AuthContext', async importOriginal => ({
 function renderSeriesPage(series: Series[], status: SystemStatus = { version: 'dev', commit: 'unknown', buildDate: '', enhancedHardcoverApi: true, hardcoverTokenConfigured: true }) {
   vi.mocked(api.listSeries).mockResolvedValue(series)
   vi.mocked(api.status).mockResolvedValue(status)
+  // A queued mockResolvedValueOnce still wins over this default.
+  vi.mocked(api.listSeriesDuplicates).mockResolvedValue({ groups: [] })
   return render(
     <MemoryRouter>
       <SeriesPage />
@@ -1110,6 +1113,25 @@ describe('SeriesPage', () => {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
     }
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+    expect(api.listSeriesDuplicates).not.toHaveBeenCalled()
+  })
+
+  // Duplicate series (#2173): an admin sees how many titles exist twice.
+  it('tells an admin when series appear more than once', async () => {
+    vi.mocked(api.listSeriesDuplicates).mockResolvedValueOnce({
+      groups: [{
+        key: 'fjellserien', suggestedKeepId: 41, sameAuthors: true,
+        series: [
+          { id: 41, title: 'Fjellserien', foreignSeriesId: 'a', bookCount: 1, authors: [], hardcoverLinked: false, monitored: false },
+          { id: 42, title: 'fjellserien', foreignSeriesId: 'b', bookCount: 0, authors: [], hardcoverLinked: false, monitored: false },
+        ],
+      }],
+    })
+    renderSeriesPage([
+      { id: 41, foreignSeriesId: 'a', title: 'Fjellserien', description: '', monitored: false, books: [] },
+      { id: 42, foreignSeriesId: 'b', title: 'fjellserien', description: '', monitored: false, books: [] },
+    ])
+    expect(await screen.findByTestId('series-duplicates')).toHaveTextContent('1 series title appears more than once')
   })
 
   it('adds only the selected Hardcover missing book from its row', async () => {
@@ -1788,6 +1810,166 @@ describe('SeriesPage filters', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Shortlisted' }))
     fireEvent.click(screen.getByRole('button', { name: 'Missing books' }))
     expect(headings()).toEqual(['Gappy'])
+  })
+
+  // Missing scope (#2871): released counts books dated today or earlier, a
+  // book with no date counts as upcoming. Dates sit far from today so the test
+  // does not depend on the clock.
+  describe('missing scope', () => {
+    const PAST = '2001-05-01T00:00:00Z'
+    const FUTURE = '2999-05-01T00:00:00Z'
+    const dated = (b: Book, releaseDate?: string): Book => ({ ...b, releaseDate })
+    const scoped = [
+      // Its only gap is a book that is not out yet.
+      series(1, 'Future Gap', [dated(book(11, 'imported'), PAST), dated(book(12, 'wanted'), FUTURE)]),
+      // A gap that has been out for years, plus an undated working title.
+      series(2, 'Released Gap', [dated(book(21, 'wanted'), PAST), dated(book(22, 'wanted'))]),
+      // Only gap has no release date: a working title volume.
+      series(3, 'Working Title', [dated(book(31, 'imported'), PAST), dated(book(32, 'wanted'))]),
+      series(4, 'Finished', [dated(book(41, 'imported'), PAST)]),
+    ]
+    const scopeGroup = () => screen.getByRole('group', { name: 'Which missing books' })
+
+    it('counts a series whose only gap is a future book as missing under all and not under released', async () => {
+      renderAt(scoped, enhancedOff, '/series?filter=missing')
+      expect(await screen.findByRole('heading', { name: 'Future Gap' })).toBeInTheDocument()
+      expect(within(scopeGroup()).getByRole('button', { name: 'All missing' })).toHaveAttribute('aria-pressed', 'true')
+      expect(headings()).toEqual(['Future Gap', 'Released Gap', 'Working Title'])
+
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Released' }))
+      expect(currentSearch).toBe('?filter=missing&missing=released')
+      expect(headings()).toEqual(['Released Gap'])
+      // The badge follows the scope: the undated book is not counted.
+      expect(screen.getByText('1 released missing')).toBeInTheDocument()
+
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Upcoming' }))
+      expect(currentSearch).toBe('?filter=missing&missing=upcoming')
+      expect(headings()).toEqual(['Future Gap', 'Released Gap', 'Working Title'])
+      expect(screen.getAllByText('1 upcoming')).toHaveLength(3)
+
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'All missing' }))
+      expect(currentSearch).toBe('?filter=missing')
+      expect(screen.getByText('2 missing')).toBeInTheDocument()
+
+      expect(api.fillSeries).not.toHaveBeenCalled()
+      expect(api.getSeriesHardcoverDiff).not.toHaveBeenCalled()
+    })
+
+    it('shows the scope only under Missing books and drops it when the filter changes', async () => {
+      renderAt(scoped, enhancedOff, '/series?filter=missing&missing=released')
+      expect(await screen.findByRole('heading', { name: 'Released Gap' })).toBeInTheDocument()
+      expect(headings()).toEqual(['Released Gap'])
+
+      fireEvent.click(screen.getByRole('button', { name: 'Complete' }))
+      expect(currentSearch).toBe('?filter=complete')
+      expect(screen.queryByRole('group', { name: 'Which missing books' })).not.toBeInTheDocument()
+      // Complete is unscoped: a future gap is still a gap.
+      expect(headings()).toEqual(['Finished'])
+    })
+
+    it('ignores a stray scope under another filter and an unknown scope value', async () => {
+      const { unmount } = renderAt(scoped, enhancedOff, '/series?missing=released')
+      expect(await screen.findByRole('heading', { name: 'Future Gap' })).toBeInTheDocument()
+      expect(headings()).toHaveLength(4)
+      expect(screen.queryByText('1 released missing')).not.toBeInTheDocument()
+      await waitFor(() => expect(currentSearch).toBe(''))
+      // Picking Missing books afterwards starts at All missing, not at the
+      // scope that was sitting in the URL.
+      fireEvent.click(screen.getByRole('button', { name: 'Missing books' }))
+      expect(currentSearch).toBe('?filter=missing')
+      expect(within(scopeGroup()).getByRole('button', { name: 'All missing' })).toHaveAttribute('aria-pressed', 'true')
+      unmount()
+
+      renderAt(scoped, enhancedOff, '/series?filter=missing&missing=bogus')
+      expect(await screen.findByRole('heading', { name: 'Future Gap' })).toBeInTheDocument()
+      expect(within(scopeGroup()).getByRole('button', { name: 'All missing' })).toHaveAttribute('aria-pressed', 'true')
+      expect(headings()).toEqual(['Future Gap', 'Released Gap', 'Working Title'])
+      await waitFor(() => expect(currentSearch).toBe('?filter=missing'))
+    })
+
+    it('counts a book dated today as released', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      onTestFinished(() => { vi.useRealTimers() })
+      vi.setSystemTime(new Date('2026-06-15T12:00:00Z'))
+      renderAt([
+        series(6, 'Out Today', [dated(book(61, 'imported'), PAST), dated(book(62, 'wanted'), '2026-06-15T00:00:00Z')]),
+        series(7, 'Out Tomorrow', [dated(book(71, 'imported'), PAST), dated(book(72, 'wanted'), '2026-06-16T00:00:00Z')]),
+      ], enhancedOff, '/series?filter=missing&missing=released')
+      expect(await screen.findByRole('heading', { name: 'Out Today' })).toBeInTheDocument()
+      expect(headings()).toEqual(['Out Today'])
+      expect(screen.getByText('1 released missing')).toBeInTheDocument()
+    })
+
+    it('collapses the open card when the scope changes', async () => {
+      renderAt([
+        series(8, 'Old Gap', [dated(book(81, 'imported'), PAST), dated(book(82, 'wanted'), PAST)]),
+        ...scoped,
+      ], enhancedOff, '/series?filter=missing&missing=released')
+      expect(await screen.findByRole('heading', { name: 'Old Gap' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('heading', { name: 'Old Gap' }))
+      // While open the card stays listed, so a collapse is what lets Upcoming
+      // drop it.
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Upcoming' }))
+      expect(headings()).not.toContain('Old Gap')
+      expect(headings()).toEqual(['Future Gap', 'Released Gap', 'Working Title'])
+    })
+
+    it('clears the scope with the filter when a Hardcover add reveals a hidden series', async () => {
+      const hcLink = link(9, 1)
+      const existing = series(9, 'Already Here', [dated(book(91, 'imported'), PAST)], { hardcoverLink: hcLink })
+      vi.mocked(api.searchHardcoverSeries).mockResolvedValue([{
+        foreignId: 'hc-series:9', providerId: '9', title: 'Already Here', authorName: 'Some Author', bookCount: 1, readersCount: 1, books: [],
+      }])
+      vi.mocked(api.createSeries).mockRejectedValue(new ApiError(409, { error: 'already', seriesId: 9 }, 'Conflict'))
+      vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue({
+        seriesId: 9, link: hcLink, present: [], missing: [], localOnly: [], uncertain: [], covered: [], presentCount: 1, missingCount: 0,
+      })
+      renderAt([...scoped, existing], enhancedOn, '/series?filter=missing&missing=released')
+      expect(await screen.findByRole('heading', { name: 'Released Gap' })).toBeInTheDocument()
+      expect(headings()).not.toContain('Already Here')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Add Series' }))
+      const dialog = await screen.findByRole('dialog', { name: 'Add Series' })
+      fireEvent.change(within(dialog).getByRole('searchbox', { name: 'Search Hardcover for a series' }), { target: { value: 'already' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Search' }))
+      await within(dialog).findByText('Some Author')
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Add Already Here' }))
+
+      await waitFor(() => expect(currentSearch).toBe(''))
+      expect(await screen.findByRole('heading', { name: 'Already Here' })).toBeInTheDocument()
+    })
+
+    it('leaves the undated Hardcover estimate out of the scoped counts until the diff brings dates', async () => {
+      vi.mocked(api.getSeriesHardcoverDiff).mockResolvedValue({
+        seriesId: 5,
+        link: link(5, 4),
+        present: [],
+        missing: [
+          { foreignBookId: 'hc:5a', providerId: '5a', title: 'Out Already', position: '2', releaseDate: PAST },
+          { foreignBookId: 'hc:5b', providerId: '5b', title: 'Not Yet', position: '3', releaseDate: FUTURE },
+          { foreignBookId: 'hc:5c', providerId: '5c', title: 'Untitled', position: '4' },
+        ],
+        localOnly: [], uncertain: [], covered: [], presentCount: 1, missingCount: 3,
+      })
+      renderAt([
+        series(5, 'Hardcover Gap', [dated(book(51, 'imported'), PAST)], { hardcoverLink: link(5, 4) }),
+      ], enhancedOn, '/series?filter=missing')
+      expect(await screen.findByText('3 missing')).toBeInTheDocument()
+
+      // Unopened, the estimate is a bare count with no dates: not guessed into
+      // the released scope.
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Released' }))
+      expect(headings()).toEqual([])
+
+      // Opened (from the all scope), the diff's dates decide.
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'All missing' }))
+      fireEvent.click(screen.getByRole('heading', { name: 'Hardcover Gap' }))
+      await waitFor(() => expect(api.getSeriesHardcoverDiff).toHaveBeenCalledWith(5))
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Released' }))
+      expect(await screen.findByText('1 released missing')).toBeInTheDocument()
+      fireEvent.click(within(scopeGroup()).getByRole('button', { name: 'Upcoming' }))
+      expect(await screen.findByText('2 upcoming')).toBeInTheDocument()
+    })
   })
 
   // Book count filter (#3317): computed from series.books.length alone.

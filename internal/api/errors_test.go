@@ -68,9 +68,6 @@ func TestNotFoundSweep_ConfigHandlers(t *testing.T) {
 		{"metadata profile update", func(d *sql.DB) http.HandlerFunc {
 			return NewMetadataProfileHandler(db.NewMetadataProfileRepo(d)).Update
 		}, http.MethodPut, `{}`, "metadata profile not found"},
-		{"custom format update", func(d *sql.DB) http.HandlerFunc {
-			return NewCustomFormatHandler(db.NewCustomFormatRepo(d)).Update
-		}, http.MethodPut, `{}`, "custom format not found"},
 		{"import list update", func(d *sql.DB) http.HandlerFunc {
 			return NewImportListHandler(db.NewImportListRepo(d), db.NewSettingsRepo(d), nil, nil).Update
 		}, http.MethodPut, `{}`, "import list not found"},

@@ -252,7 +252,7 @@ Import and rollback:
 
 - `POST /api/v1/abs/import`
 - `GET /api/v1/abs/import/status`
-- `GET /api/v1/abs/import/runs`
+- `GET /api/v1/abs/import/runs`: newest first, `?limit` (default 10, max 200) and `?offset`; one row per library
 - `POST /api/v1/abs/import/runs/{runID}/rollback/preview`
 - `POST /api/v1/abs/import/runs/{runID}/rollback`
 

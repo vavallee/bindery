@@ -495,3 +495,7 @@ func TestRequesterGuard_OPDSModeNeverElevatesARequester(t *testing.T) {
 func (s universalStub) UnmonitorSplitEditionParts(w http.ResponseWriter, _ *http.Request) {
 	s.h(w)
 }
+
+// Duplicates and MergeDuplicates are the duplicate series routes (#2173).
+func (s universalStub) Duplicates(w http.ResponseWriter, _ *http.Request)      { s.h(w) }
+func (s universalStub) MergeDuplicates(w http.ResponseWriter, _ *http.Request) { s.h(w) }

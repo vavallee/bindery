@@ -5,16 +5,18 @@ reads to render the install page for Bindery.
 
 ## Where Bindery is listed
 
-- **Live today: the selfhosters feed.** CA lists Bindery only through
+- **First-party listing (primary).** Approved by the Community Applications
+  moderators on 2026-11-09. CA reads
+  [`vavallee/unraid-templates`](https://github.com/vavallee/unraid-templates)
+  (`templates/bindery.xml`) and shows Bindery as "by vavallee". The route for
+  this is the submission form at [ca.unraid.net/submit](https://ca.unraid.net/submit),
+  not the Unraid forum and not a pull request to `Squidly271/AppFeed`.
+- **Selfhosters feed (secondary).** CA also lists Bindery through
   [`selfhosters/unRAID-CA-templates`](https://github.com/selfhosters/unRAID-CA-templates)
-  (`templates/bindery.xml`, added in their PR #667 on 2026-05-08). CA shows it
-  under "Selfhosters Unraid Discord Repository". Treat that copy as secondary:
-  this file is the source of truth, and the selfhosters copy is brought in line
-  with it by PR.
-- **First-party listing: not live yet.** A first-party repository (CA shows
-  Bindery as "by vavallee" and reads this file's raw URL directly) is requested
-  through the Unraid forum, not by a pull request to `Squidly271/AppFeed`. The
-  AppFeed issue opened in May 2026 (#30) never got a response for that reason.
+  (`templates/bindery.xml`, added in their PR #667 on 2026-05-08), under
+  "Selfhosters Unraid Discord Repository". That copy is brought in line by PR.
+
+This file is the source of truth for all copies.
 
 ## Install counts: HOST_OS detection
 
@@ -39,12 +41,15 @@ only when:
   `false` to `true`.
 - A major release changes what the overview should say.
 
-## Keeping both copies in step
+## Keeping the copies in step
 
 Every time this file changes:
 
 1. Edit `bindery.xml` here first and validate it (below).
-2. Make the same change to `templates/bindery.xml` in a fork of
+2. Copy it to `templates/bindery.xml` in `vavallee/unraid-templates`. The two
+   files are identical apart from `<TemplateURL>`, which points at each repo's
+   own raw URL.
+3. Make the same change to `templates/bindery.xml` in a fork of
    `selfhosters/unRAID-CA-templates` and open a PR there. The two files match
    apart from the fields that belong to the feed: `<TemplateURL>` (each feed
    points at its own raw URL), and on their side `<Support>` and `<Category>`
@@ -53,13 +58,13 @@ Every time this file changes:
    `auto|always|never`), which CA renders as dropdowns, and this file carries
    empty `PostArgs`, `CPUset`, `DateInstalled`, `DonateText`, `DonateLink` and
    `Requires` tags that theirs omits.
-3. Check these always hold in both copies:
+4. Check these always hold in every copy:
    - The overview names Readarr (CA search matches overview text).
    - The licence reads MIT. The image is distroless, so saying so is accurate.
    - Books (`/mnt/user/Books`) and Downloads (`/mnt/user/downloads/bindery`)
      have those defaults and `Required="true"`.
    - `<Icon>` and `<TemplateURL>` are raw GitHub URLs that answer 200.
-4. After their PR merges, CA picks it up within about a day. Search CA for
+5. After a change lands, CA picks it up within about a day. Search CA for
    "bindery" and check the overview.
 
 `patches/selfhosters-bindery.diff` at the repository root is the last patch

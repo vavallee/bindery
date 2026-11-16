@@ -92,12 +92,31 @@ Bindery distinguishes between an item it could not match locally and an item it 
 - Ambiguous title matches are not auto-applied.
 - A book whose ISBN only a fallback provider matched is not relinked while your primary metadata provider is not answering. The row keeps the identity it already had, the summary says `book relink skipped` and names the provider that failed, and the next import retries. A primary that answers without the ISBN still lets the fallback's record through.
 
+## Big Libraries
+
+With enhanced Hardcover on, each item gets a Hardcover series match, and that is what makes a big library slow. Bindery remembers how the match went for each item:
+
+- **Matched** items are not searched again until the item changes (its title, author, series names or linked book).
+- **No result**, or several Hardcover series too close to pick from, is retried after about a month: 30 days plus up to 7 more, spread per item so a big first import does not all fall due on one night.
+- **Failed calls record nothing.** An item whose Hardcover call failed, from rate limiting, an outage or a spent quota, is retried on the next run.
+
+So the first import is the expensive one. A large one can use up the Hardcover daily quota. When Hardcover is your primary metadata provider, the import stops once Hardcover reports the quota spent: that library's run shows as failed with the time the quota resets, later libraries are not started, and the next import picks up from where it stopped. Either way, a big first import can take a few runs before series matching is done.
+
+There is no "changed since" cursor. Every run walks all the configured libraries, but once items are matched the walk is mostly reading ABS and skips their Hardcover series searches, so later runs make few Hardcover calls.
+
+Two options on `POST /api/v1/abs/import` help here. They are API only for now; the Settings button sends neither.
+
+- `"libraryIds": [..]` imports just those libraries. Each must be one you configured.
+- `"full": true` ignores what was recorded and re-checks every item. Skipped items also skip the upstream metadata re-merge and the linking of volumes Hardcover later adds to their series, and a dry run leaves out the Hardcover part for them, so use `full` when you want those refreshed.
+
+**Duplicate series.** If you imported both Calibre and Audiobookshelf, the same series can exist twice in your library. Bindery then cannot tell which one to link, records the item as ambiguous, and counts it as `seriesLinkFailed` in the run summary (`GET /api/v1/abs/import/runs`). Merge the duplicates on the Series page ([Finding Duplicate Series](./Hardcover-Series-Wiki.md#finding-duplicate-series)). Merging two series with the same title makes the ambiguous items due again, so the next normal import retries and links them; you don't need `"full": true` for that. Ambiguous items nobody merges wait for the same monthly retry as a miss. The Calibre import used to make those copies whenever it ran after this one; it now files its books into the series that is already there, so new ones stop appearing, but copies an earlier import made stay until you merge them.
+
 ## Troubleshooting
 
 - Connection test or library listing fails: verify the saved ABS base URL, API key, and that the key can see the target book libraries.
 - Import rejects a selected library: use **List libraries** and choose book libraries. Podcast or other non-book ABS libraries are not imported.
 - Files are not attaching after import: look for `abs import: item files not attached, imported metadata only` in the log. It names the reason, the roots Bindery accepts, and your `abs.path_remap`. A remap only translates paths; the remapped path must still resolve under a Bindery-visible library root (`BINDERY_LIBRARY_DIR`, `BINDERY_AUDIOBOOK_DIR`, or a root folder).
-- Repeat imports are slow on a big library: items already matched on Hardcover, and items searched with no result in the last month, are skipped. To import only some libraries, send `libraryIds` to `POST /api/v1/abs/import`. To re-check everything, send `"full": true`. Skipped items also skip the upstream metadata re-merge and the late linking of volumes Hardcover adds to their series, and dry runs leave out the Hardcover part for them, so use `full` when you want those refreshed.
+- Repeat imports are slow on a big library, or the first import stops partway: see [Big Libraries](#big-libraries).
 - Too many review items: improve ABS metadata quality first, especially ASIN coverage and author/title consistency, then rerun.
 - Unexpected metadata disagreements: resolve them from the conflicts panel instead of rerunning until the same field flips back and forth.
 

@@ -79,6 +79,10 @@ export interface Book {
   // Set on metadata search / lookup results whose foreign id already matches a
   // book the current user owns (#1227). It is the library row id, not `id`.
   libraryBookId?: number
+  // Set for a requester only, on a search result for a book they can see in
+  // the library that still lacks a format (#3898): the formats ("ebook",
+  // "audiobook") a request can still ask for.
+  requestableFormats?: string[]
   language?: string
   calibre_id?: number
   // True when this book's author is not monitored, so Bindery will not search
@@ -110,6 +114,11 @@ export interface SearchResult {
   nzbUrl: string
   infoUrl?: string // human-readable indexer detail/release page (open in new tab); absent when the indexer provides none
   grabs: number
+  // Torrent swarm counts from the torznab seeders and peers attributes
+  // (#3819); peers is seeders plus leechers. Absent when the indexer does not
+  // report them, which every usenet indexer is.
+  seeders?: number
+  peers?: number
   pubDate: string
   protocol: string   // "usenet" or "torrent"
   language?: string  // ISO 639-1 from newznab:attr language (when present)
@@ -222,6 +231,9 @@ export const booksApi = {
   searchBooks: (term: string) => request<Book[]>(`/search/book?term=${encodeURIComponent(term)}`),
   lookupISBN: (isbn: string) => request<Book>(`/book/lookup?isbn=${encodeURIComponent(isbn)}`),
   lookupASIN: (asin: string) => request<Book>(`/book/lookup?asin=${encodeURIComponent(asin)}`),
+  // A Hardcover book by its slug, for a book Hardcover has that the title
+  // search does not surface (#3839).
+  lookupHardcover: (slug: string) => request<Book>(`/book/lookup?hardcover=${encodeURIComponent(slug)}`),
 
   // Add a single book to wanted (adds author silently if new). mediaType
   // optionally forces ebook/audiobook/both; empty keeps the provider value /

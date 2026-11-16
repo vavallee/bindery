@@ -190,9 +190,10 @@ func TestAddBook_NonGoogleBooksNoAuthorStillRefuses(t *testing.T) {
 }
 
 // Under tenancy the synthetic author is owned like any other provider's: the
-// row belongs to the user who added it, a second user never sees it or gets a
-// book attached to it, and the second add answers 409 exactly as it does for a
-// shared OpenLibrary author (authors.foreign_id is unique across users).
+// row belongs to the user who added it, and a second user never sees it or
+// gets a book attached to it. Since authors are keyed per owner (#3555) the
+// second user's add succeeds with their own row for the same synthetic id,
+// exactly as it does for an OpenLibrary author.
 func TestAddBook_GoogleBooksOnlyAuthorIsScopedPerUser(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	f := newGBAddFixture(t, nil,
@@ -213,20 +214,26 @@ func TestAddBook_GoogleBooksOnlyAuthorIsScopedPerUser(t *testing.T) {
 	if rec := f.add(auth.WithUserID(ctx, alice.ID), "gb:AAAAAAAAAAAA", "Owen Brackett"); rec.Code != http.StatusCreated {
 		t.Fatalf("alice add: %d %s", rec.Code, rec.Body.String())
 	}
-	rec := f.add(auth.WithUserID(ctx, bob.ID), "gb:BBBBBBBBBBBB", "Owen Brackett")
-	if rec.Code != http.StatusConflict {
-		t.Errorf("bob add: expected 409 like any other provider's author, got %d: %s", rec.Code, rec.Body.String())
+	if rec := f.add(auth.WithUserID(ctx, bob.ID), "gb:BBBBBBBBBBBB", "Owen Brackett"); rec.Code != http.StatusCreated {
+		t.Fatalf("bob add: expected his own author row, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	mine, err := f.authors.GetByForeignIDForUser(ctx, "gb:author:owen-brackett", alice.ID)
 	if err != nil || mine == nil || mine.OwnerUserID != alice.ID {
 		t.Fatalf("alice's author missing or wrongly owned: err=%v author=%+v", err, mine)
 	}
-	if theirs, _ := f.authors.GetByForeignIDForUser(ctx, "gb:author:owen-brackett", bob.ID); theirs != nil {
-		t.Errorf("bob can see alice's author: %+v", theirs)
+	theirs, err := f.authors.GetByForeignIDForUser(ctx, "gb:author:owen-brackett", bob.ID)
+	if err != nil || theirs == nil || theirs.OwnerUserID != bob.ID {
+		t.Fatalf("bob's author missing or wrongly owned: err=%v author=%+v", err, theirs)
 	}
-	if b, _ := f.books.GetByForeignID(ctx, "gb:BBBBBBBBBBBB"); b != nil {
-		t.Errorf("bob's refused add left a book behind: %+v", b)
+	if theirs.ID == mine.ID {
+		t.Fatalf("bob was handed alice's author %d", mine.ID)
+	}
+	if b, _ := f.books.GetByForeignID(ctx, "gb:AAAAAAAAAAAA"); b == nil || b.AuthorID != mine.ID {
+		t.Errorf("alice's book = %+v, want it under her author %d", b, mine.ID)
+	}
+	if b, _ := f.books.GetByForeignID(ctx, "gb:BBBBBBBBBBBB"); b == nil || b.AuthorID != theirs.ID || b.OwnerUserID != bob.ID {
+		t.Errorf("bob's book = %+v, want it his, under his author %d", b, theirs.ID)
 	}
 }
 

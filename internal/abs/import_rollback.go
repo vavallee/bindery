@@ -52,10 +52,17 @@ type RollbackResult struct {
 }
 
 func (i *Importer) RecentRuns(ctx context.Context, limit int) ([]models.ABSImportRun, error) {
+	return i.RunsPage(ctx, limit, 0)
+}
+
+// RunsPage lists recorded runs newest first, skipping offset of them. Each
+// row is one library of an import, so a large multi library import needs
+// more than one page (#2173).
+func (i *Importer) RunsPage(ctx context.Context, limit, offset int) ([]models.ABSImportRun, error) {
 	if i.runs == nil {
 		return nil, nil
 	}
-	return i.runs.ListRecent(ctx, limit)
+	return i.runs.ListPage(ctx, limit, offset)
 }
 
 func HydrateRun(run models.ABSImportRun) PersistedImportRun {
@@ -840,13 +847,10 @@ func (i *Importer) rollbackAuthorIdentifiers(ctx context.Context, author *models
 		if strings.EqualFold(foreignID, currentPrimary) {
 			continue
 		}
-		identifier, err := i.authors.GetAuthorIdentifier(ctx, foreignID)
-		if err != nil {
-			return err
-		}
-		if identifier == nil || identifier.AuthorID != author.ID {
-			continue
-		}
+		// DeleteAuthorIdentifier is keyed on this author, so it removes only
+		// this author's row and is a no op when the author does not hold the
+		// id. Asking GetAuthorIdentifier who holds it is not enough since
+		// several accounts' authors can hold one id (#3555).
 		if err := i.authors.DeleteAuthorIdentifier(ctx, author.ID, foreignID); err != nil {
 			return err
 		}

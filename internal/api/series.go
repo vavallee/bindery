@@ -52,6 +52,10 @@ type SeriesHandler struct {
 
 	editionFetcher bookhydrate.EditionFetcher
 
+	// seriesTitleFn replaces series.SeriesTitle in the duplicate merge's
+	// group check; tests use it to fail one group's lookup.
+	seriesTitleFn func(ctx context.Context, id int64) (string, bool, error)
+
 	// checking holds the ids of series a scheduled check is running for, and
 	// checkMediaType resolves the media type of books it adds (#2523).
 	checking       sync.Map
@@ -2328,7 +2332,7 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 		applyProfile = false
 		// Backfilled from a series catalogue, so there is no user monitor
 		// choice to carry — take the install-wide default (#1666).
-		db.ApplyAuthorMonitorDefaults(ctx, h.settings, author)
+		db.ApplyAuthorCreateDefaults(ctx, h.settings, author)
 		if err := h.authors.CreateForUser(ctx, author, seriesJobOwner(ctx)); err != nil {
 			return nil, err
 		}
@@ -2483,8 +2487,18 @@ func (h *SeriesHandler) resolveHardcoverCatalogAuthor(ctx context.Context, serie
 	if candidate == nil || h.authors == nil {
 		return nil, false, nil
 	}
+	// A series check acting for one account under tenancy looks only at what
+	// that account can use: its own authors and shared ones. Each account
+	// holds its own row for an author (#3555), so another account's Frank
+	// Herbert is not a reason to skip the book; the check creates the
+	// owner's own row below instead. Everyone else (tenancy off, an admin's
+	// fill) keeps the unscoped lookup.
+	scope := int64(0)
+	if auth.EnforceTenancy() {
+		scope = seriesJobOwner(ctx)
+	}
 	if strings.TrimSpace(candidate.ForeignID) != "" {
-		author, err := h.authors.GetByAnyForeignID(ctx, candidate.ForeignID)
+		author, err := h.authors.GetByAnyForeignIDForUser(ctx, candidate.ForeignID, scope)
 		if err != nil || author != nil {
 			return author, false, err
 		}
@@ -2492,13 +2506,20 @@ func (h *SeriesHandler) resolveHardcoverCatalogAuthor(ctx context.Context, serie
 	if strings.TrimSpace(candidate.Name) == "" {
 		return nil, false, nil
 	}
-	if author, ambiguous, err := h.matchSeriesAuthorByName(ctx, series, candidate.Name); err != nil || ambiguous || author != nil {
+	if author, ambiguous, err := h.matchSeriesAuthorByName(ctx, series, candidate.Name, scope); err != nil || ambiguous || author != nil {
 		return author, ambiguous, err
 	}
-	return h.matchGlobalAuthorByName(ctx, candidate.Name)
+	return h.matchGlobalAuthorByName(ctx, candidate.Name, scope)
 }
 
-func (h *SeriesHandler) matchSeriesAuthorByName(ctx context.Context, series *models.Series, name string) (*models.Author, bool, error) {
+// scopeAllows reports whether an author owned by owner (0 = shared) is in the
+// scope a name match runs in: everything for scope 0, else the scope's own
+// authors and shared ones.
+func scopeAllows(scope, owner int64) bool {
+	return scope == 0 || owner == 0 || owner == scope
+}
+
+func (h *SeriesHandler) matchSeriesAuthorByName(ctx context.Context, series *models.Series, name string, scope int64) (*models.Author, bool, error) {
 	if series == nil || h.authors == nil {
 		return nil, false, nil
 	}
@@ -2519,7 +2540,7 @@ func (h *SeriesHandler) matchSeriesAuthorByName(ctx context.Context, series *mod
 		} else if seriesBook.Book != nil && seriesBook.Book.Author != nil {
 			author = seriesBook.Book.Author
 		}
-		if author == nil || author.ID == 0 {
+		if author == nil || author.ID == 0 || !scopeAllows(scope, author.OwnerUserID) {
 			continue
 		}
 		if !trustedAuthorNameMatch(author, name) {
@@ -2533,11 +2554,11 @@ func (h *SeriesHandler) matchSeriesAuthorByName(ctx context.Context, series *mod
 	return match, false, nil
 }
 
-func (h *SeriesHandler) matchGlobalAuthorByName(ctx context.Context, name string) (*models.Author, bool, error) {
+func (h *SeriesHandler) matchGlobalAuthorByName(ctx context.Context, name string, scope int64) (*models.Author, bool, error) {
 	if h.authors == nil {
 		return nil, false, nil
 	}
-	authors, err := h.authors.List(ctx)
+	authors, err := h.authors.ListByUser(ctx, scope)
 	if err != nil {
 		return nil, false, err
 	}

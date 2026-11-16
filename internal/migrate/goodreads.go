@@ -448,7 +448,7 @@ func ensureGoodreadsAuthor(ctx context.Context, authors *db.AuthorRepo, settings
 	}
 	// Created as a side effect of importing a book, so there is no per-author
 	// monitor choice — take the install-wide default (#1666).
-	db.ApplyAuthorMonitorDefaults(ctx, settings, author)
+	db.ApplyAuthorCreateDefaults(ctx, settings, author)
 	if err := authors.Create(ctx, author); err != nil {
 		if isAuthorCreateConflict(err) {
 			existing, _ = authors.GetByAnyForeignID(ctx, author.ForeignID)

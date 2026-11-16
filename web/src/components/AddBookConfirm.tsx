@@ -5,6 +5,7 @@ import type { LibraryRequest } from '../api/client'
 import { useIsRequester } from '../auth/AuthContext'
 import RequestConfirm from './RequestConfirm'
 import { metadataSourceLink, providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
+import { calendarYear } from '../util/calendarDate'
 import MetadataLinksMenu from './MetadataLinksMenu'
 import CoverImage from './CoverImage'
 import CoverPlaceholder from './CoverPlaceholder'
@@ -53,6 +54,7 @@ export default function AddBookConfirm(props: Props) {
         title={book.title}
         subtitle={book.author?.authorName}
         imageUrl={book.imageUrl}
+        requestableFormats={book.requestableFormats}
         onBack={onBack}
         onClose={onClose}
         onRequested={r => (onRequested ? onRequested(r) : onClose())}
@@ -141,7 +143,7 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
             <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
               {book.releaseDate && <>
                 <dt className="text-fg-muted">{t('addToLibrary.book.published')}</dt>
-                <dd>{new Date(book.releaseDate).getFullYear()}</dd>
+                <dd>{calendarYear(book.releaseDate)}</dd>
               </>}
               {book.language && <>
                 <dt className="text-fg-muted">{t('addToLibrary.book.language')}</dt>

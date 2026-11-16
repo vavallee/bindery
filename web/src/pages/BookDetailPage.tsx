@@ -22,7 +22,9 @@ import { useConfirmDialog } from '../components/useConfirmDialog'
 import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
+import ReleaseSwarm from '../components/ReleaseSwarm'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
+import { formatCalendarDate } from '../util/calendarDate'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
 import { safeHref } from '../util/safeHref'
@@ -239,6 +241,7 @@ function ReleaseRow({
         </div>
         <span className="text-fg-muted truncate block">
           {r.indexerName} · {formatBytes(r.size)} · {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
+          <ReleaseSwarm seeders={r.seeders} peers={r.peers} />
           {safeHref(r.infoUrl) && (
             <>
               {' · '}
@@ -724,6 +727,28 @@ function BookDetailPageInner() {
   // itself. This posts the book's single id to the bulk endpoint, which is the
   // only API entry point into scheduler.SearchAndGrabBook and already carries
   // the ownership check and the auto-grab refusal (see api/bulk.ts).
+  const noIndexerMessage = async (runId: string): Promise<string | null> => {
+    // Up to 3 looks about 300 ms apart, stopping at the first finished state.
+    let run: Awaited<ReturnType<typeof api.getSearchRun>> | null = null
+    for (let i = 0; i < 3; i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 300))
+      run = await api.getSearchRun(runId).catch(() => null)
+      if (!run || run.state === 'finished') break
+    }
+    // 'no results' is the outcome of a run that asked its indexers and got
+    // nothing, which is also what no enabled indexer looks like. Skips
+    // (unmonitored, auto-grab off, not searched) and failures keep "started".
+    if (!run || run.state !== 'finished' || run.outcome !== 'no results') return null
+    try {
+      const list = await api.listIndexers()
+      if (list.some(i => i.enabled)) return null
+      return t(list.length === 0 ? 'bookDetail.autoSearchNoIndexers' : 'bookDetail.autoSearchAllIndexersDisabled')
+    } catch {
+      // A 403 for a non admin, or any other failure: say nothing new.
+      return null
+    }
+  }
+
   const runAutoSearch = async () => {
     if (!book) return
     setAutoSearching(true)
@@ -744,6 +769,18 @@ function BookDetailPageInner() {
       const item = res.results[String(book.id)]
       if (item && !item.ok) {
         throw new Error(item.error || t('bookDetail.autoSearchFailed'))
+      }
+      // The search runs after the response, so "started" is only true if an
+      // indexer exists to ask. Look at the run a few times (it may still be
+      // queued), and only when it finished having found nothing check the
+      // real enabled count: the run's own indexer count includes disabled
+      // ones. Any failure here keeps the "started" wording.
+      if (item?.runId) {
+        const msg = await noIndexerMessage(item.runId)
+        if (msg) {
+          setAutoSearchStatus({ ok: false, text: msg })
+          return
+        }
       }
       setAutoSearchStatus({ ok: true, text: t('bookDetail.autoSearchStarted') })
     } catch (e) {
@@ -1025,9 +1062,7 @@ function BookDetailPageInner() {
   const hasAnyFile = rows.length > 0
 
   const lang = languageName(book.language)
-  const publishedDate = book.releaseDate
-    ? new Date(book.releaseDate).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-    : null
+  const publishedDate = formatCalendarDate(book.releaseDate)
 
   // Mirrors models.Book.NeedsEbook/NeedsAudiobook, which is what
   // scheduler.SearchAndGrabBook feeds into neededFormats(): with no needed

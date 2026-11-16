@@ -203,6 +203,28 @@ export default function SettingsPage() {
   // heading to appear instead of assuming it is there.
   const contentRef = useRef<HTMLDivElement>(null)
   const [pendingHeading, setPendingHeading] = useState<string | null>(null)
+  // A tab like Logs fills in after it mounts (the log table loads), which
+  // pushes a heading further down the page than the scroll that landed on it.
+  // So after landing, scroll again when the content changes, for a short
+  // window, until the person scrolls or presses something themselves.
+  const stopSettle = useRef<(() => void) | null>(null)
+  useEffect(() => () => stopSettle.current?.(), [])
+  const settleOn = useCallback((root: HTMLElement, h: HTMLElement) => {
+    stopSettle.current?.()
+    const observer = new MutationObserver(() => h.scrollIntoView?.({ block: 'start' }))
+    const events = ['wheel', 'touchmove', 'keydown', 'pointerdown'] as const
+    let timer = 0
+    const stop = () => {
+      observer.disconnect()
+      window.clearTimeout(timer)
+      events.forEach(e => window.removeEventListener(e, stop))
+      if (stopSettle.current === stop) stopSettle.current = null
+    }
+    observer.observe(root, { childList: true, subtree: true })
+    events.forEach(e => window.addEventListener(e, stop, { passive: true }))
+    timer = window.setTimeout(stop, 2000)
+    stopSettle.current = stop
+  }, [])
   useEffect(() => {
     const root = contentRef.current
     if (!pendingHeading || !root) return
@@ -212,6 +234,7 @@ export default function SettingsPage() {
       h.tabIndex = -1
       h.scrollIntoView?.({ block: 'start' })
       h.focus({ preventScroll: true })
+      settleOn(root, h)
       setPendingHeading(null)
     }
     const now = find()
@@ -223,7 +246,7 @@ export default function SettingsPage() {
     observer.observe(root, { childList: true, subtree: true })
     const giveUp = window.setTimeout(() => { observer.disconnect(); setPendingHeading(null) }, 4000)
     return () => { observer.disconnect(); window.clearTimeout(giveUp) }
-  }, [pendingHeading, tab])
+  }, [pendingHeading, tab, settleOn])
 
   // A field the page should scroll to and highlight once its tab has rendered.
   // The anchor is the setting key, which is also the element id the tab sets,

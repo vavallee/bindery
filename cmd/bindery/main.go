@@ -191,7 +191,6 @@ func main() {
 	prowlarrRepo := db.NewProwlarrRepo(database)
 	metadataProfileRepo := db.NewMetadataProfileRepo(database)
 	delayProfileRepo := db.NewDelayProfileRepo(database)
-	customFormatRepo := db.NewCustomFormatRepo(database)
 	userRepo := db.NewUserRepo(database)
 	// One denylist instance, shared by the logout handler and the auth
 	// middleware, so a logout is seen by the very next request.
@@ -596,6 +595,7 @@ func main() {
 	hcSyncer := hardcoverlistsyncer.New(importListRepo, authorRepo, bookRepo).
 		WithDailyQuota(dailyQuota).
 		WithSeriesRepo(seriesRepo).
+		WithSettings(settingsRepo). // default quality profile for list created authors (#3831)
 		WithTokenSource(func(ctx context.Context) string {
 			return api.GetHardcoverAPIToken(ctx, settingsRepo)
 		}).
@@ -802,7 +802,6 @@ func main() {
 	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer, userRepo).WithDailyQuota(dailyQuota)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
-	customFormatHandler := api.NewCustomFormatHandler(customFormatRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched).
 		WithSearchRuns(searchRuns).
 		WithSeriesRepo(seriesRepo).
@@ -873,7 +872,9 @@ func main() {
 		WithFinder(seriesRepo, importScanner).
 		WithEditionHydration(editionRepo, metaAgg).
 		WithAppContext(appCtx)
-	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir).WithLocalCovers(coverStore)
+	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir).
+		WithLocalCovers(coverStore).
+		WithMaxCacheBytes(int64(cfg.ImageCacheMaxMB) << 20)
 	imageProxyHandler.StartEviction(24 * time.Hour)
 	// Proxied cover URLs must carry the path prefix so they resolve under a
 	// subpath deploy (BINDERY_URL_BASE). No-op when URLBase is empty.
@@ -898,6 +899,7 @@ func main() {
 	// require every scrape config to also carry the key, which is a
 	// worse default for the typical Helm-chart deployment.
 	metrics.SetBuildInfo(version, commit, date)
+	metrics.SetQueueCounter(downloadStateLabels(), downloadRepo.CountByStatus)
 	r.Handle("/metrics", metrics.Handler())
 
 	// Composite auth: session cookie (UI) OR API key (external apps) OR
@@ -933,10 +935,7 @@ func main() {
 		registerAPIErrorHandlers(r)
 
 		// System
-		r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"ok","version":"` + version + `"}`))
-		})
+		registerHealthRoutes(r, database)
 		r.Get("/system/status", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			cacheBytes, _ := imageProxyHandler.CacheSize()
@@ -950,8 +949,11 @@ func main() {
 				// by the telemetry ping server. Empty when no ping has
 				// succeeded yet or telemetry is disabled — the frontend
 				// shows an update badge only when it is set and newer.
-				LatestVersion                   string `json:"latestVersion,omitempty"`
-				ImageCacheBytes                 int64  `json:"imageCacheBytes"`
+				LatestVersion   string `json:"latestVersion,omitempty"`
+				ImageCacheBytes int64  `json:"imageCacheBytes"`
+				// ImageCacheMaxBytes is the cap the cover cache stops
+				// growing at, so an admin can see when it is full.
+				ImageCacheMaxBytes              int64  `json:"imageCacheMaxBytes"`
 				EnhancedHardcoverAPI            bool   `json:"enhancedHardcoverApi"`
 				HardcoverTokenConfigured        bool   `json:"hardcoverTokenConfigured"`
 				HardcoverPausedUntil            string `json:"hardcoverPausedUntil,omitempty"`
@@ -966,6 +968,7 @@ func main() {
 				BuildDate:                       date,
 				LatestVersion:                   telemetryClient.LatestVersion(),
 				ImageCacheBytes:                 cacheBytes,
+				ImageCacheMaxBytes:              imageProxyHandler.MaxCacheBytes(),
 				EnhancedHardcoverAPI:            hardcoverState.EnhancedHardcoverAPI,
 				HardcoverTokenConfigured:        hardcoverState.HardcoverTokenConfigured,
 				HardcoverPausedUntil:            pausedUntil,
@@ -1143,6 +1146,7 @@ func main() {
 		// Quality profiles: reads open, writes admin only (see
 		// registerQualityProfileRoutes).
 		registerQualityProfileRoutes(r, qualityProfileHandler)
+		registerAuthorQualityProfileUnsetRoutes(r, api.NewAuthorQualityProfileUnsetHandler(authorRepo, qualityProfileRepo))
 
 		// Settings: reads open to every role, but a non admin only gets the
 		// keys on the handler's allowlist (isAdminOnlySetting, #2361);
@@ -1222,12 +1226,6 @@ func main() {
 			r.Get("/delayprofile/{id}", delayProfileHandler.Get)
 			r.Put("/delayprofile/{id}", delayProfileHandler.Update)
 			r.Delete("/delayprofile/{id}", delayProfileHandler.Delete)
-
-			r.Get("/customformat", customFormatHandler.List)
-			r.Post("/customformat", customFormatHandler.Create)
-			r.Get("/customformat/{id}", customFormatHandler.Get)
-			r.Put("/customformat/{id}", customFormatHandler.Update)
-			r.Delete("/customformat/{id}", customFormatHandler.Delete)
 		})
 
 		// Metadata profiles: reads open, writes admin only (see

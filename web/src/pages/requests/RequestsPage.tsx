@@ -23,6 +23,9 @@ export default function RequestsPage() {
   const [approving, setApproving] = useState<number | null>(null)
   const [declining, setDeclining] = useState<number | null>(null)
   const [reason, setReason] = useState('')
+  // What the last approval told the approver, e.g. that the book was already
+  // in the library. Shown above the list because the row has just left it.
+  const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async (offset: number) => {
     setLoading(true)
@@ -49,6 +52,7 @@ export default function RequestsPage() {
     setApproving(null)
     setDeclining(null)
     setReason('')
+    setNotice(updated.notice ?? null)
     if (filter === 'pending') {
       setItems(prev => prev.filter(x => x.id !== updated.id))
       setTotal(n => Math.max(0, n - 1))
@@ -87,6 +91,7 @@ export default function RequestsPage() {
       </div>
 
       {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
+      {notice && <p role="status" className="text-sm text-emerald-800 dark:text-emerald-300">{notice}</p>}
       {/* Centered, with a hint line, so this reads like the Queue, Discover and
           Import empty states instead of a stray left aligned sentence. */}
       {!loading && !error && items.length === 0 && (
@@ -119,6 +124,9 @@ export default function RequestsPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  {r.status === 'pending' && r.alreadyInLibrary && (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">{t('requests.admin.alreadyInLibrary')}</span>
+                  )}
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${requestStatusClass(r)}`}>{requestStatusLabel(t, r)}</span>
                   {r.status === 'pending' && approving !== r.id && declining !== r.id && (
                     <>

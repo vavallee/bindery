@@ -31,30 +31,45 @@ import (
 //
 // What this deliberately does not drop:
 //
-//   - "Part 1 of 2" and "Part 2 of 2". A two part posting is the likeliest
-//     shape of one recording split in two, and the multi-book pack code
-//     (pack.go) already makes the same call for "part".
+//   - "Part 1 of 2" and "Part 2 of 2" as far as THIS rule goes: its total must
+//     be 10 or more. The lone part rule below does drop them for audiobooks.
 //   - "Catch 22 of Them", "1 of a Kind": MM must be digits, and "Catch22"
 //     does not hold a chapter marker because "ch" must start a word.
 //
 // Lone parts of a set (#3417). Bindery imports one grab as one book and cannot
 // assemble several grabs, so a release that says it is one slice of a set is a
-// partial book. "Part 3 of 5" is therefore dropped for an audiobook, and so are
-// "Pt 2 of 3", "Disc 2 of 4" and "CD 3 of 8". The cost, accepted on purpose, is
-// that a recording posted as "Part 1 of 3" is no longer eligible. The rule is
-// kept as narrow as it can be:
+// partial book. For an audiobook it is dropped when its title carries "N of M"
+// in either of two shapes, with M from 2 to 99 and N from 1 to M:
 //
-//   - the counter must follow a part word (part, pt, disc, disk, cd) directly,
-//     so "Book 3 of 12" and a bare "3 of 5" are not touched;
-//   - MM must be 3 or more. "Part 1 of 2" is the likeliest shape of one
-//     recording split in two, while "Part N of 5" is almost certainly a slice;
+//   - after a part word (part, pt, disc, disk, cd): "Part 3 of 5", "Pt 2 of 3",
+//     "Disc 2 of 4", "CD 3 of 8", "Part 2 of 2";
+//   - in parentheses or square brackets with no part word: "(2 of 2)",
+//     "[1 of 3]". This is how MyAnonaMouse names a dramatized Graphic Audio
+//     recording posted as two torrents, "Morning Star (2 of 2) by Pierce Brown
+//     [ENG / M4B]" next to the complete "Morning Star by Pierce Brown".
+//
+// The rule is kept as narrow as it can be:
+//
+//   - a bare "3 of 5" with no part word and no brackets is not touched;
+//   - a series count word straight before the counter ("Book 1 of 6", "Vol 2
+//     of 3", "Red Rising Book (1 of 6)") says the number is a place in a
+//     series, so the release is kept; "Red Rising (Book 1 of 6)" never matches
+//     because the counter is not the first thing inside the brackets;
 //   - "all parts" or the word "complete" in the name means the set is in one
-//     release ("Disc 1 of 8 Complete"). "Unabridged" is not such a word,
-//     because individual parts are routinely labelled unabridged;
+//     release ("Disc 1 of 8 Complete", "Complete (1 of 2) M4B"). "Unabridged" is
+//     not such a word, because individual parts are routinely labelled
+//     unabridged;
 //   - it applies only when the title names an audio container, or names no
 //     format and the search is for an audiobook, so ebooks and ebook searches
 //     are never touched;
-//   - a counter that the wanted book's own title contains is kept.
+//   - a counter that the wanted book's own title contains is kept;
+//   - M is capped at 99, so "(2 of 2024)" is a year and not a set.
+//
+// The cost, accepted on purpose: a recording posted as one whole under "Part 1
+// of 2" or "(1 of 2)" is no longer eligible (this rule used to leave every two
+// part set alone, on the guess that it was one recording split in two), and a
+// bare series position written in brackets with no series word, "(1 of 6)", is
+// dropped for an audiobook search.
 //
 // The rule runs on every result, so it applies to torrent results as well as
 // usenet ones. The wanted title is the one the search used, which keeps its
@@ -63,18 +78,19 @@ import (
 // carry that phrase anyway.
 //
 // Known false keeps (a lone part that is not recognised): "Part 3/5", "3/5",
-// "Part III of V", "Vol 3 of 5", "Part One of Two".
+// "Part III of V", "Vol 3 of 5", "Part One of Two", "Part 2 of 2024", a title whose
+// last word before the brackets is a series word ("The Book (2 of 2)") and a
+// bare "3 of 5" with no brackets.
 //
 // Known limits: a title that really contains "NN of MM" with MM 10 or more and
-// no ebook format ("12 of 56 Stories") is dropped; a lone part posted without a
-// part word ("3 of 5") is kept when MM is under 10; and a whole recording posted
-// under a "Part 1 of 3" or longer name is dropped.
+// no ebook format ("12 of 56 Stories") is dropped by the chapter rule, and a
+// whole recording posted under an "N of M" name is dropped.
 
 // reasonChapterFragment is the FilterDebug reason for a per-chapter fragment.
 const reasonChapterFragment = "looks like one chapter or part of a larger post (Ch NN, NN of MM)"
 
 // reasonLoneAudioPart is the FilterDebug reason for one part of a multipart set.
-const reasonLoneAudioPart = "looks like one part of a multipart audiobook set (Part N of M), which Bindery cannot assemble"
+const reasonLoneAudioPart = "looks like one part of a multipart audiobook set (Part N of M, or N of M in brackets), which Bindery cannot assemble"
 
 var (
 	chapterMarkerRe = regexp.MustCompile(`(?i)\b(?:ch|chapter)\.?\s*\d{1,3}\b`)
@@ -83,6 +99,8 @@ var (
 	ebookFormatRe   = regexp.MustCompile(`(?i)\b(?:epub3?|kepub|azw3?|mobi|pdf|djvu|cbr|cbz|fb2|lit|prc|rtf|txt|doc|docx|kfx|ebook|html?)\b`)
 	// partOfRe is a part word straight before "N of M".
 	partOfRe = regexp.MustCompile(`(?i)\b(?:part|pt|disc|disk|cd)\.?\s*#?\s*(\d{1,3})\s*of\s*(\d{1,3})\b`)
+	// bracketOfRe is "N of M" alone inside parentheses or square brackets.
+	bracketOfRe = regexp.MustCompile(`[(\[]\s*(\d{1,3})\s*of\s*(\d{1,3})\s*[)\]]`)
 	// wholeSetRe says the release carries every part.
 	wholeSetRe = regexp.MustCompile(`(?i)\ball\s+(?:\d+\s+)?parts\b|\bcomplete\b`)
 	// precedingWordRe captures the last word before an index.
@@ -154,15 +172,36 @@ func isLoneAudioPart(title string, sc junkScope) bool {
 	}
 	wanted := squashSpaces(sc.WantedTitle)
 	for _, m := range partOfRe.FindAllStringSubmatch(title, -1) {
-		if total, _ := strconv.Atoi(m[2]); total < 3 {
+		if sliceOfSet(m[1], m[2]) && !wantedHolds(wanted, m[0]) {
+			return true
+		}
+	}
+	for _, m := range bracketOfRe.FindAllStringSubmatchIndex(title, -1) {
+		if !sliceOfSet(title[m[2]:m[3]], title[m[4]:m[5]]) || wantedHolds(wanted, title[m[0]:m[1]]) {
 			continue
 		}
-		if wanted != "" && strings.Contains(wanted, squashSpaces(m[0])) {
+		if w := precedingWordRe.FindStringSubmatch(title[:m[0]]); w != nil && seriesCountWords[strings.ToLower(w[1])] {
 			continue
 		}
 		return true
 	}
 	return false
+}
+
+// maxSetTotal caps M in "N of M", so a year ("2 of 2024") is never a set.
+const maxSetTotal = 99
+
+// sliceOfSet reports whether n and m, as digits, read as part n of a set of m:
+// 2 <= m <= maxSetTotal and 1 <= n <= m.
+func sliceOfSet(n, m string) bool {
+	nv, _ := strconv.Atoi(n)
+	mv, _ := strconv.Atoi(m)
+	return mv >= 2 && mv <= maxSetTotal && nv >= 1 && nv <= mv
+}
+
+// wantedHolds reports whether the squashed wanted title contains counter.
+func wantedHolds(wanted, counter string) bool {
+	return wanted != "" && strings.Contains(wanted, squashSpaces(counter))
 }
 
 // usenetJunkReason returns why title is dropped by the usenet junk filter, or

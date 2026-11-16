@@ -91,6 +91,14 @@ func (h *stubSeriesRouteHandler) Merge(w http.ResponseWriter, _ *http.Request) {
 	h.record("merge", w)
 }
 
+func (h *stubSeriesRouteHandler) Duplicates(w http.ResponseWriter, _ *http.Request) {
+	h.record("duplicates", w)
+}
+
+func (h *stubSeriesRouteHandler) MergeDuplicates(w http.ResponseWriter, _ *http.Request) {
+	h.record("merge-duplicates", w)
+}
+
 func (h *stubSeriesRouteHandler) HardcoverDiff(w http.ResponseWriter, _ *http.Request) {
 	h.record("hardcover-diff", w)
 }
@@ -110,6 +118,8 @@ func TestSeriesMutationRoutesRequireAdmin(t *testing.T) {
 		{name: "monitor series", method: http.MethodPatch, path: "/series/1"},
 		{name: "delete series", method: http.MethodDelete, path: "/series/1"},
 		{name: "merge series", method: http.MethodPost, path: "/series/1/merge"},
+		{name: "list duplicate series", method: http.MethodGet, path: "/series/duplicates"},
+		{name: "merge duplicate series", method: http.MethodPost, path: "/series/duplicates/merge"},
 		{name: "add book", method: http.MethodPost, path: "/series/1/books"},
 		{name: "remove book", method: http.MethodDelete, path: "/series/1/books/2"},
 		{name: "set primary book", method: http.MethodPut, path: "/series/1/books/2/primary"},
@@ -155,6 +165,8 @@ func TestSeriesMutationRoutesAllowAdmin(t *testing.T) {
 		{name: "monitor series", method: http.MethodPatch, path: "/series/1", called: "monitor"},
 		{name: "delete series", method: http.MethodDelete, path: "/series/1", called: "delete"},
 		{name: "merge series", method: http.MethodPost, path: "/series/1/merge", called: "merge"},
+		{name: "list duplicate series", method: http.MethodGet, path: "/series/duplicates", called: "duplicates"},
+		{name: "merge duplicate series", method: http.MethodPost, path: "/series/duplicates/merge", called: "merge-duplicates"},
 		{name: "add book", method: http.MethodPost, path: "/series/1/books", called: "add-book"},
 		{name: "remove book", method: http.MethodDelete, path: "/series/1/books/2", called: "remove-book"},
 		{name: "set primary book", method: http.MethodPut, path: "/series/1/books/2/primary", called: "set-primary-book"},

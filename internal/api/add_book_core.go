@@ -73,7 +73,6 @@ var (
 	errAddBookInvalidMediaType          = errors.New("add book: invalid media type")
 	errAddBookAuthorMetadataUnavailable = errors.New("add book: author metadata unavailable")
 	errAddBookAuthorExists              = errors.New("add book: author already exists")
-	errAddBookAuthorHeld                = errors.New("add book: author held by another account")
 	errAddBookAuthorUnresolved          = errors.New("add book: could not resolve author")
 	errAddBookCancelled                 = errors.New("add book: request cancelled")
 	errAddBookNotFound                  = errors.New("add book: book not found after author sync")
@@ -90,7 +89,6 @@ var addBookErrorResponses = []struct {
 	{errAddBookInvalidMediaType, http.StatusBadRequest, "mediaType must be 'ebook', 'audiobook', or 'both'"},
 	{errAddBookAuthorMetadataUnavailable, http.StatusUnprocessableEntity, "Author metadata unavailable for this result. Add the author manually first (Authors → Add Author by name), then try again."},
 	{errAddBookAuthorExists, http.StatusConflict, "author already exists"},
-	{errAddBookAuthorHeld, http.StatusConflict, authorHeldByAnotherAccountMessage},
 	{errAddBookAuthorUnresolved, http.StatusInternalServerError, "could not resolve author"},
 	{errAddBookCancelled, http.StatusGatewayTimeout, "request cancelled"},
 	{errAddBookNotFound, http.StatusNotFound, "book not found after author sync — try again shortly"},
@@ -344,11 +342,10 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 			// upgrade only replaces its identity and descriptive fields
 			// (db.AuthorRepo.UpgradeSyntheticDNB), never its owner, monitoring,
 			// profiles or root folders. Leaving it would give the caller a new
-			// author under the provider id, and authors.foreign_id is unique
-			// across users, so every other user's add under that id would then
-			// fail.
+			// author under the provider id next to a shared placeholder for the
+			// same person, which every user would then see twice.
 			if existing, lookupErr := h.authors.GetByDNBSyntheticName(ctx, fetched.SortName, userID); lookupErr == nil && existing != nil {
-				if err := h.authors.UpgradeSyntheticDNB(ctx, existing.ForeignID, fetched); err != nil {
+				if err := h.authors.UpgradeSyntheticDNB(ctx, existing.ID, existing.ForeignID, fetched); err != nil {
 					slog.Debug("AddBook: upgrade synthetic DNB author failed", "from", existing.ForeignID, "to", fetched.ForeignID, "error", err)
 				} else {
 					// Re-fetch the row by its new canonical ForeignID so subsequent
@@ -368,21 +365,16 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 		if author == nil {
 			// Add-book creates the author as a side effect, so it never carries
 			// an explicit monitor choice — take the install-wide default (#1666).
-			db.ApplyAuthorMonitorDefaults(ctx, h.settings, fetched)
+			db.ApplyAuthorCreateDefaults(ctx, h.settings, fetched)
 			if err := h.authors.CreateForUser(ctx, fetched, userID); err != nil {
 				if !strings.Contains(err.Error(), "UNIQUE constraint failed") && !errors.Is(err, db.ErrAuthorIdentifierConflict) {
 					return addBookResult{}, err
 				}
-				// Either a concurrent request created it between our check and
-				// insert, or another account holds it and the scoped lookup cannot
-				// see it (authors.foreign_id is unique per instance, #3555).
+				// Race: another request created it between our check and insert.
+				// Another account's row for the same author no longer collides:
+				// authors are keyed per owner under tenancy (#3555).
 				author, _ = h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignAuthorID, scopeID)
 				if author == nil {
-					// Only a scoped caller (tenancy on, not an admin) can miss a
-					// row another account holds; otherwise keep the plain text.
-					if scopeID != 0 {
-						return addBookResult{}, errAddBookAuthorHeld
-					}
 					return addBookResult{}, errAddBookAuthorExists
 				}
 			} else {
@@ -629,6 +621,32 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 	}
 	bookCreated = true
 
+	// 3 and 4. Monitor the book, apply the requested format, optionally search.
+	runID, err := h.monitorBookAndSearch(ctx, book, req, "")
+	if err != nil {
+		return addBookResult{}, err
+	}
+
+	return addBookResult{
+		Book:          book,
+		BookCreated:   bookInserted || fallbackSynced,
+		Author:        author,
+		AuthorCreated: authorWasJustCreated,
+		SearchRunID:   runID,
+	}, nil
+}
+
+// monitorBookAndSearch is steps 3 and 4 of addBookCore, shared with the
+// request approval of a book that is already in the library (#3835): mark
+// book monitored, apply req.MediaType and re-evaluate its status, save it, and
+// start the search when req.SearchOnAdd asks for one. It returns the search run
+// id, or "" when no search started. book is changed in place.
+//
+// A non-empty expectedUpdatedAt (the snapshot's UpdatedAtRaw) makes the save
+// conditional: if the row changed since book was read, nothing is written, no
+// search starts and errBookChangedMeanwhile comes back, so a concurrent import
+// is never overwritten from a stale snapshot. addBookCore passes "".
+func (h *AuthorHandler) monitorBookAndSearch(ctx context.Context, book *models.Book, req addBookParams, expectedUpdatedAt string) (string, error) {
 	// 3. Mark the book monitored (wanted). An explicit media-type choice is
 	// applied here too — the poll may have found a row created by the async
 	// catalogue sync (or one already in the library) carrying the default.
@@ -642,8 +660,16 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 		book.MediaType = req.MediaType
 		reevaluateBookStatus(book)
 	}
-	if err := h.books.Update(ctx, book); err != nil {
-		return addBookResult{}, err
+	if expectedUpdatedAt != "" {
+		ok, err := h.books.UpdateIfUnchanged(ctx, book, expectedUpdatedAt)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", errBookChangedMeanwhile
+		}
+	} else if err := h.books.Update(ctx, book); err != nil {
+		return "", err
 	}
 
 	// 3b. Say so when this add went past the strict media-type policy (#1759).
@@ -677,11 +703,32 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 		go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(searchruns.WithRunID(h.bgCtx(), runID), indexer.OriginAdd), *book) // #nosec G118 -- intentional: search must outlive the request
 	}
 
-	return addBookResult{
-		Book:          book,
-		BookCreated:   bookInserted || fallbackSynced,
-		Author:        author,
-		AuthorCreated: authorWasJustCreated,
-		SearchRunID:   runID,
-	}, nil
+	return runID, nil
+}
+
+// errBookChangedMeanwhile means a conditional save lost to a concurrent write
+// to the same book row (an import setting a file path, say).
+var errBookChangedMeanwhile = errors.New("the book changed while it was being saved")
+
+// monitorExistingBookCore is the add for a book that is already in the
+// library, used when a request for it is approved (#3835). addBookCore refuses
+// such a book on purpose, so the Add dialog can never flip an owned book back
+// to wanted by accident. An approver deciding on a request is an explicit act,
+// so here the existing row is monitored for mediaType, which the caller has
+// already widened to include what the row had, and searched when asked.
+// A book the user skipped is wanted again; otherwise status is re-derived from
+// the formats still missing, as for any media type change.
+//
+// The save only lands if the row is as book was read (errBookChangedMeanwhile
+// otherwise), because it rewrites every column and a concurrent import must not
+// lose its file path to this snapshot.
+func (h *AuthorHandler) monitorExistingBookCore(ctx context.Context, book *models.Book, mediaType string, searchOnAdd bool) (addBookResult, error) {
+	if book.Status == models.BookStatusSkipped {
+		book.Status = models.BookStatusWanted
+	}
+	runID, err := h.monitorBookAndSearch(ctx, book, addBookParams{MediaType: mediaType, SearchOnAdd: searchOnAdd}, book.UpdatedAtRaw)
+	if err != nil {
+		return addBookResult{}, err
+	}
+	return addBookResult{Book: book, SearchRunID: runID}, nil
 }

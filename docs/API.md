@@ -8,7 +8,8 @@ Bindery exposes a REST API at `/api/v1/*`. Every Bindery feature is reachable fr
 
 Every request to `/api/v1/*` is authenticated **except** the bootstrap and identity endpoints:
 
-- `GET  /api/v1/health`
+- `GET  /api/v1/health` (static liveness: `{"status":"ok","version":"..."}`)
+- `GET  /api/v1/health/ready` (readiness: pings the database with a 2 second budget; `503 {"status":"unavailable"}` when the connection is closed or unusable or the driver returns an error (it does not detect a damaged database file), `200 {"status":"ok"}` otherwise, plus `"busy":true` when the single connection was held past the budget; cached for 1 second)
 - `GET  /api/v1/auth/status`
 - `POST /api/v1/auth/login`, `/auth/logout`, `/auth/setup`
 - `GET  /api/v1/auth/oidc/{provider}/login` and `/callback`
@@ -101,10 +102,14 @@ POST   /api/v1/author/{id}/merge                  merge another author into this
 `POST /api/v1/author/{id}/merge` takes `{"sourceId": 123}` (and an optional
 `overwriteDefaults`, default `true`); `{id}` is the author that is kept. It
 answers `{"BooksReparented", "AliasesMigrated", "AliasesCreated",
-"AliasesSkipped", "TargetUpdated"}`. Alias names are unique across the
+"AliasesSkipped", "IdentifiersDropped", "TargetUpdated"}`. Alias names are unique across the
 instance, so a source name another author already holds cannot be recorded on
 the kept author: it is listed in `AliasesSkipped` (`null` when there are none)
-and the server logs a warning (#3565).
+and the server logs a warning (#3565). A provider id of the source that another
+author in the kept author's account already holds is not moved, since within
+one account an id answers to one author; it is listed in `IdentifiersDropped`
+(`null` when there are none). That only happens when merging across accounts
+(#3555).
 
 Each author in `GET /api/v1/author` carries `statistics.bookCount` (the author's
 books, scoped to the caller like `GET /book`) and `statistics.availableBookCount`
@@ -185,6 +190,27 @@ and `POST /api/v1/author/{id}/refresh` answers **409 Conflict** while it is set
 instead of starting a second sync (#2601). It is also set from the moment
 `POST /api/v1/author` answers, for the catalogue sync the add starts, so a page
 opened straight after the add sees it (#3058).
+
+`qualityProfileId` on `POST /api/v1/author` and `PUT /api/v1/author/{id}`
+tells "left out" apart from `null` (#3831). An author with no quality profile
+has no format filter at all: every format is accepted at grab and at import.
+
+- `POST /api/v1/author`: left out gives the new author the
+  `author.default_quality_profile_id` setting's profile, or none when that is
+  unset or names a deleted profile. `null` means none, whatever the default.
+  When the add relinks an existing author instead, left out keeps that
+  author's own profile (it used to clear it).
+- `PUT /api/v1/author/{id}`: left out leaves the profile alone, `null` clears
+  it, a number sets it.
+- `POST /api/v1/requests/{id}/approve` follows the `POST /api/v1/author` rule.
+
+The web Add Author and request approval dialogs send `qualityProfileId` only
+when the user changed the picker, so an untouched picker gets the default on a
+new author and keeps the profile of an author that already exists.
+
+Every other path that creates an author (adding a book, series fill, the ABS,
+Calibre, CSV, Readarr and Goodreads imports, and Hardcover list sync when the
+list sets no profile of its own) gives it the default quality profile too.
 
 `POST /api/v1/author` accepts an optional `monitorNewItems` (#2541), the same
 field `PUT /api/v1/author/{id}` takes: `all` (the default) lets a refresh add
@@ -404,6 +430,12 @@ Clients written before this ignore the two new keys and see no change. Automatic
 searches never see a filtered release. The free text search
 (`GET /indexer/search`) does not return `filtered`.
 
+A torrent release in any of these lists, and in `GET /indexer/search`, carries
+`seeders` and `peers` when its indexer reports the torznab attributes of those
+names (#3819); `peers` is seeders plus leechers, as the indexer counts them.
+Both are absent, not 0, when the indexer does not report them, as with every
+usenet release, so a reported 0 means a dead torrent.
+
 Each book carries `averageRating` (community rating, 0 when the provider has none)
 and `ratingsCount` (#3124). `GET /book?sort=` also accepts `rating-desc` and
 `rating-asc`; unrated books sort last in both directions, and `rating-desc` breaks
@@ -422,10 +454,18 @@ PATCH  /api/v1/series/{id}                        monitor / unmonitor (admin): {
                                                   released books) or "all" (adds every missing book). Read by the scheduled series check while
                                                   `series.monitoring.interval` is set; each series carries `monitoring` {mode,lastCheckAt,nextCheckAt,lastStatus,lastMessage,lastCreated}
 POST   /api/v1/series/{id}/merge                  merge other series into this one: {"sourceIds":[..],"title":"optional rename","dryRun":true} previews (admin)
+GET    /api/v1/series/duplicates                  series that share a title, sub series qualifiers kept apart, grouped (admin), see below
+POST   /api/v1/series/duplicates/merge            merge duplicate groups: {"groups":[{"keepId":1,"sourceIds":[2]}],"dryRun":true} (admin), see below
 POST   /api/v1/series/{id}/books                  add a book or update its position: {"bookId":1,"positionInSeries":"2","primarySeries":true}; positionInSeries is optional (admin)
 DELETE /api/v1/series/{id}/books/{bookId}         take a book out of the series, and keep it out on refresh (admin)
 POST   /api/v1/abs/import                         start an Audiobookshelf import (admin): {"dryRun":true,"libraryIds":[..],"full":true}, all optional. libraryIds must be a subset of the configured libraries (400 on an unknown id), full re-runs the Hardcover series match for every item
+GET    /api/v1/abs/import/runs                    recorded import runs, newest first (admin): ?limit (default 10, max 200) and ?offset. One row per library, so an import over many libraries spans several rows
 ```
+
+`GET /abs/import/runs` used to ignore `limit` and `offset` and always answer
+the newest 10 rows (#2173). It still answers a bare array. A `limit` that is
+not a positive number falls back to 10, a larger one is capped at 200, a bad
+`offset` counts as 0, and an offset past the end gives `[]`.
 
 Taking a book out of a series is remembered (#2554): a refresh that still
 reports the book in that series, under its own provider id or one merged into
@@ -433,6 +473,44 @@ it, leaves it out. Adding the book back with `POST /series/{id}/books` forgets
 that, and so does an admin unlocking all of the book's fields (`PUT /book/{id}`
 with `"lockedFields": []`; another user's unlock leaves the book's series alone). Adding a book as primary makes it the book's only
 primary series. `GET /book/{id}/series-exclusions` lists what was taken out.
+
+Duplicate series (#2173). `GET /series/duplicates` answers `{"groups":[..]}`.
+A group is two or more series whose titles normalize to the same identity
+key: case, punctuation, apostrophes, accents, `&` against "and", a leading
+"The", "A" or "An" (also in the "Expanse, The" form) and a trailing bracketed
+or parenthesised format marker (`[Audiobook]`, `(Unabridged)`, `[Dramatized
+Adaptation]` and the like) are folded, and any other bracketed or
+parenthesised qualifier is kept, so "Discworld (Witches)" and "Discworld
+(City Watch)" are not a group. The Audiobookshelf import cannot pick between
+the series in a group and leaves the item's Hardcover series unlinked
+(`seriesLinkFailed` in the run summary). Each group carries `key`, `suggestedKeepId` (the series with a
+Hardcover link, else the most books, else the lowest id), `sameAuthors` and
+`series`, the suggested keep first. Each series has `id`, `title`,
+`foreignSeriesId`, `bookCount`, `authors` (distinct author names of its books,
+every owner's), `hardcoverLinked` and `monitored`. `sameAuthors` is true only
+when every series in the group that holds books shares an author with the
+suggested keep (or, when that one is empty, with the fullest series); empty
+series count as compatible. False usually means two different series with
+one name.
+
+`POST /series/duplicates/merge` runs each group through the same merge as
+`POST /series/{id}/merge` (books, aliases, Hardcover link and the rest), one
+transaction per group, keeping the keep series' title. A group is refused,
+and left as it was, when a series in it does not exist, appears in an earlier
+group of the same request, or does not share the keep series' identity key
+(the one `GET /series/duplicates` groups by).
+Groups are independent: the response is always 200 for a well formed body,
+`{"dryRun":..,"merged":N,"failed":N,"results":[{"keepId","sourceIds","ok","error","plan"}]}`,
+where `plan` is the merge plan carried out, or with `dryRun` the one that
+would be. At most 5000 groups per request.
+
+A series merge, single or bulk, in which a source shares the keep series'
+title as the Audiobookshelf import looks it up (that key drops a trailing
+qualifier) also makes every Audiobookshelf item the import recorded as
+ambiguous between two local series due again, so the next normal import
+retries them without `full`. A merge of differently titled series does not.
+The bulk endpoint checks titles only; keeping groups with different authors
+out of a bulk merge is up to the caller, as the Series page does.
 
 `GET /series` returns the bare array it always has. Pagination is opt-in
 (#2345): pass `limit` and/or `offset` and you get an `{items, total, limit,
@@ -445,7 +523,11 @@ unpaged response carries every series with every linked book.
 GET    /api/v1/search/author?term=…               metadata author search
 GET    /api/v1/search/book?term=…                 metadata book search
 GET    /api/v1/search/library?q=…                 your own catalogue: `{authors, books, series}`, up to `limit` rows per group (default 5, max 10), owner scoped like the list endpoints; 400 on an empty `q`
-GET    /api/v1/book/lookup?isbn=… | ?asin=…       single-book lookup by identifier
+GET    /api/v1/book/lookup?isbn=… | ?asin=… | ?hardcover=…
+                                                  single-book lookup by identifier. `hardcover` takes a Hardcover book slug (the last
+                                                  part of a hardcover.app/books/ address, `hc:` prefix optional) and fetches that one book
+                                                  even when the title search does not return it; 400 on a value that is not a slug, 404
+                                                  when Hardcover has no such book, is turned off as a source, or has no API token saved
 GET    /api/v1/wanted/missing                     list wanted-but-missing books. A bare array, every one of them, unless `limit` is passed:
                                                   `?limit=50&offset=0&search=&includeExcluded=` answers {"items":[..],"total":N,"limit":50,"offset":0}.
                                                   `total` counts every wanted book you can see that matches `search` and `includeExcluded`,
@@ -497,6 +579,13 @@ identifier. Both fields hold the library row id and are omitted otherwise, so a
 client can offer "open" for those rows and "add" for the rest. The lookup is
 owner scoped: another user's copy does not stamp. If the library lookup itself
 fails the search still succeeds, unstamped.
+
+For a requester the book stamp means "nothing left to ask for" (#3898):
+`libraryBookId` is kept only when both formats are on disk or monitored. A book
+the requester can see that still lacks a format is returned without it and with
+`requestableFormats`, the formats (`ebook`, `audiobook`) a request can still
+name. The field is never sent to other roles and never describes another
+account's book.
 
 An author in `/search/author` carries the provider's work count as
 `statistics.bookCount` when one is known (#3126). Hardcover supplies it as well as
@@ -609,7 +698,20 @@ GET    /api/v1/qualityprofile/{id}                read one
 POST   /api/v1/qualityprofile                     create (admin)
 PUT    /api/v1/qualityprofile/{id}                update (admin)
 DELETE /api/v1/qualityprofile/{id}                remove (admin); 409 while an author uses it
+GET    /api/v1/authors/without-quality-profile    count authors with no quality profile (admin), {"count": N}
+POST   /api/v1/authors/without-quality-profile    give them one (admin), body {"qualityProfileId": N}, answers {"updated": N}
 ```
+
+The two `/authors/without-quality-profile` routes are the opt in fix for
+authors that have no quality profile and so accept every format at grab and
+at import (#3831). Nothing runs them automatically. Both are admin only and
+cover every author in the library whichever account owns it, the same set the
+admin sees in the author list. That includes authors a request approval
+created for a requester. API key, local only and disabled auth requests act as
+the admin operator, so they get the same scope. The POST changes only authors
+with no profile, leaves the rest alone, and answers `400` when
+`qualityProfileId` is missing or names a profile that does not exist. The
+Settings page shows the count on the Quality tab.
 
 A profile is `{id, name, items, cutoff, upgradeAllowed, preferredNarrators, editionPreference}`. `items` is an array
 of `{quality, allowed}` in preference order, best first (#2733). The media
@@ -1127,7 +1229,7 @@ POST   /api/v1/backup                             snapshot the SQLite database (
 GET    /api/v1/backup                             list stored backups (admin)
 DELETE /api/v1/backup/{filename}                  delete one backup (admin)
 POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
-GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size, Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token; `features` lists optional API behaviour an integration can detect (`requestsForUser`)
+GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size (`imageCacheBytes`) and its ceiling (`imageCacheMaxBytes`, both in bytes as counted on disk; the cache is full when they are close), Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token; `features` lists optional API behaviour an integration can detect (`requestsForUser`)
 GET    /api/v1/system/setup-state                 first run checklist state (indexer, client, author, grab, import, complete); admins also get `blocked`, `blockedArea`, `blockedReason` and `hasLibraryFolder` (a root folder exists, or BINDERY_LIBRARY_DIR is writable; left out while the storage probe has no answer)
 POST   /api/v1/library/scan                       start a library scan in the background (202; {"queued": true} when one is already running)
 GET    /api/v1/library/duplicate-candidates      read-only duplicate title groups across every author, paginated (#2999)
@@ -1735,6 +1837,15 @@ unset key:
 | `default.media_type` | add author dialog |
 | `author.default_monitor_mode` | add author dialog |
 | `author.default_monitor_latest_count` | add author dialog |
+| `author.default_quality_profile_id` | add author dialog |
+
+`author.default_quality_profile_id` (#3831) is the quality profile id given to
+authors created without one, on every creation path. Empty, the default, means
+none, and an author with no quality profile accepts every format at grab and
+at import. A write must name an existing profile or be empty (`400`
+otherwise). A default that names a profile deleted later is treated as empty.
+If the default profile has upgrades on, authors created by an ABS or Calibre
+import join the upgrade sweep straight away.
 
 `metadata.primary_provider` accepts `openlibrary` (the default), `dnb`, `nb`
 (Nasjonalbiblioteket), `bnf` (Bibliothèque nationale de France, #3144) and
@@ -1893,7 +2004,7 @@ an id with no account `422`. Answers:
 | `201` | the request, as below |
 | `403` | `forUser` sent by anyone but an admin session or the API key |
 | `400`, `422` | `forUser` is not a user id, or no account has that id |
-| `409` | already in the library, already requested by this user (pending or declined); the `error` field says which |
+| `409` | already in the library with the requested format on disk or monitored (a book the library holds without it can still be requested, #3898), or, with `BINDERY_ENFORCE_TENANCY` on, held by another account whether or not it has the format (same `error` sentence as a covered book); already requested by this user (pending or declined); the `error` field says which |
 | `429` | this user already has `requests.max_pending_per_user` requests waiting (default 25), or a requester made creates or searches faster than the per user allowance (burst of 20, then one every 3 seconds; `Retry-After` says when). The cap is checked in the same statement as the insert, so concurrent creates cannot pass it |
 | `502`, `404` | the provider did not answer, or has no such id |
 
@@ -1909,6 +2020,8 @@ A request as the API returns it:
 | `fulfilled` | approved and on disk: the book imported, or at least one of the author's books |
 | `booksTotal`, `booksImported` | an approved author request's progress |
 | `searchRunId` | the approve response for a book request with `searchOnAdd`: the run to poll at `GET /search/runs/{id}` |
+| `notice` | admin responses only, so in practice the approve response, when the book was already in the library (#3835): one sentence saying whether the missing format is now monitored on the existing book or nothing was added. A requester never receives it, not even from a create that an auto approval resolved |
+| `alreadyInLibrary` | admin queue only, on a pending book request: `true` when the book is in the library and every requested format (the default format for a request with none) is on disk or monitored, so approving adds nothing. It is decided by the same rule approve uses, whoever owns the book. A request that needs a format added to another account's book under `BINDERY_ENFORCE_TENANCY` is not flagged, because approving it is refused |
 | `username`, `resultBookId`, `resultAuthorId` | admin queue only |
 | `createdVia`, `createdBy` | admin queue only, and only for a request made with `forUser`: `createdVia` is `api_key` or `admin`, and `createdBy` the admin's username for `admin` |
 
@@ -1924,13 +2037,28 @@ each item has only `id`, `title`, `authorName`, `series`, `seriesPosition`,
 apply to both kinds. The approval is claimed atomically, so of two concurrent
 approvals one adds and the other gets `409`, and a running approval renews its
 claim so a slow add cannot be taken over. A request whose item reached the
-library in the meantime answers `409`, and a failed add leaves the request
-pending. Unknown fields are refused with `400`.
+library in the meantime no longer answers `409` for a book (#3835): if the
+request asks for a format the existing book neither has on disk nor monitors,
+the approval monitors it on that book (and searches when `searchOnAdd` is set),
+and if every requested format is covered it adds nothing and resolves the
+request. Both answer `200` with the approved request, `resultBookId` set to the
+existing book and a `notice` sentence. Monitoring a format on a book the owner
+skipped or left unmonitored makes it wanted again. The save is conditional on
+the book not having changed since it was read; if it did, the approval reads it
+again and tries once more, then answers `409` asking the approver to retry. `409`
+also remains for an author already in the library. Under
+`BINDERY_ENFORCE_TENANCY` a book that belongs to another account is never
+widened: if it already covers every requested format the request is resolved
+without touching it, and if a format is missing the approval answers `409` and
+the request can be declined.
+`POST /api/v1/requests/{id}/decline` does not look at the library and always
+works on a pending request. A failed add leaves the request pending. Unknown
+fields are refused with `400`.
 
 A requester may call only `/requests`, `/requests/{id}` (DELETE),
 `/requests/library`, the three metadata searches (`/search/author`,
-`/search/book`, `/book/lookup`, rate limited per user), `/images` (rate limited per user with a larger allowance), `/health`
-and the session routes under `/auth`. Every other route answers `403` for
+`/search/book`, `/book/lookup`, rate limited per user), `/images` (rate limited per user with a larger allowance), `/health`,
+`/health/ready` and the session routes under `/auth`. Every other route answers `403` for
 that role, and `/opds` does too.
 
 ### Library export

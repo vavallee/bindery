@@ -12,7 +12,7 @@ don't have a number yet), e.g. `997-drop-folder.md`:
 
 ```markdown
 ### Added
-- **Post-import drop folder** (#941) — short, user-facing description of the change.
+- **Post-import drop folder** (#941). A short, user-facing description of the change.
 ```
 
 Rules:

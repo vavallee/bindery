@@ -82,7 +82,7 @@ export const api = {
   // History + blocklist.
   ...historyApi,
   ...notificationsApi,
-  // Quality / metadata / delay profiles, custom formats, root folders.
+  // Quality / metadata / delay profiles, root folders.
   ...profilesApi,
   ...seriesApi,
   // Settings + backup.

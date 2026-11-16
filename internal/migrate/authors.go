@@ -186,7 +186,7 @@ func resolveAndCreateAuthor(
 	full.MetadataProvider = boundProvider(full)
 	// The source hands over a monitored flag but no monitor mode, so take the
 	// install-wide default rather than the column default "all" (#1666).
-	db.ApplyAuthorMonitorDefaults(ctx, settings, full)
+	db.ApplyAuthorCreateDefaults(ctx, settings, full)
 
 	if cerr := authors.Create(ctx, full); cerr != nil {
 		if isAuthorCreateConflict(cerr) {

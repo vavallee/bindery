@@ -167,14 +167,26 @@ func (r *ABSImportRunRepo) LatestRunningWithCheckpoint(ctx context.Context) (*mo
 }
 
 func (r *ABSImportRunRepo) ListRecent(ctx context.Context, limit int) ([]models.ABSImportRun, error) {
+	return r.ListPage(ctx, limit, 0)
+}
+
+// ListPage returns up to limit runs, newest first, after skipping offset of
+// them. A run is one row per library, so a single import over many libraries
+// spans several rows and needs paging to see in full (#2173). The id tie
+// break keeps the order stable when two rows share a started_at, which
+// otherwise lets a row repeat or vanish between pages.
+func (r *ABSImportRunRepo) ListPage(ctx context.Context, limit, offset int) ([]models.ABSImportRun, error) {
 	if limit <= 0 {
 		limit = 10
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, source_id, source_label, base_url, library_id, status, dry_run, source_config_json, checkpoint_json, summary_json, started_at, finished_at
 		FROM abs_import_runs
 		ORDER BY started_at DESC, id DESC
-		LIMIT ?`, limit)
+		LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list recent abs import runs: %w", err)
 	}
@@ -652,7 +664,10 @@ func (r *ABSReviewItemRepo) ResolveAuthorForPrimary(ctx context.Context, sourceI
 	// importer records the alias itself at creation time.
 	if updated > 0 && primaryAuthor != "" && textutil.NormalizeAuthorName(name) != key {
 		var canonicalID int64
-		err := r.db.QueryRowContext(ctx, "SELECT id FROM authors WHERE foreign_id = ?", foreignID).Scan(&canonicalID)
+		// The same row AuthorRepo.GetByForeignID picks, which is the one the
+		// ABS importer will attach to, when several accounts hold their own
+		// row for this author (#3555).
+		err := r.db.QueryRowContext(ctx, "SELECT id FROM authors WHERE foreign_id = ?"+unscopedAuthorOrder, foreignID).Scan(&canonicalID)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			// canonical author not yet created locally; alias will be added

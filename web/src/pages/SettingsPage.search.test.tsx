@@ -97,8 +97,11 @@ vi.mock('./settings/LogsTab', async () => {
   return {
     default: function LogsStub() {
       const [ready, setReady] = useState(false)
+      const [rows, setRows] = useState(false)
       useEffect(() => { const id = setTimeout(() => setReady(true), 30); return () => clearTimeout(id) }, [])
-      return <div><p>logs tab</p>{ready && <h3>{'  Usage Telemetry  '}</h3>}</div>
+      // The log table arrives after the heading and pushes it down the page.
+      useEffect(() => { const id = setTimeout(() => setRows(true), 80); return () => clearTimeout(id) }, [])
+      return <div><p>logs tab</p>{rows && <p>log rows</p>}{ready && <h3>{'  Usage Telemetry  '}</h3>}</div>
     },
   }
 })
@@ -433,6 +436,31 @@ describe('Settings search', () => {
     const heading = await screen.findByRole('heading', { name: 'Usage Telemetry' })
     await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1))
     expect(scroll.mock.contexts[0]).toBe(heading)
+  })
+
+  it('scrolls the heading into view again when the tab grows after it landed', async () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    renderSettings()
+    type('telemetry')
+    fireEvent.keyDown(box(), { key: 'Enter' })
+    const heading = await screen.findByRole('heading', { name: 'Usage Telemetry' })
+    await screen.findByText('log rows')
+    await waitFor(() => expect(scroll.mock.calls.length).toBeGreaterThanOrEqual(2))
+    expect(scroll.mock.contexts.every(c => c === heading)).toBe(true)
+  })
+
+  it('stops re-scrolling once the person scrolls themselves', async () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    renderSettings()
+    type('telemetry')
+    fireEvent.keyDown(box(), { key: 'Enter' })
+    await screen.findByRole('heading', { name: 'Usage Telemetry' })
+    await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1))
+    fireEvent.wheel(window)
+    await screen.findByText('log rows')
+    expect(scroll).toHaveBeenCalledTimes(1)
   })
 
   it('says when more results matched than are shown', () => {

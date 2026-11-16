@@ -17,6 +17,8 @@ type seriesRouteHandler interface {
 	Monitor(http.ResponseWriter, *http.Request)
 	Delete(http.ResponseWriter, *http.Request)
 	Merge(http.ResponseWriter, *http.Request)
+	Duplicates(http.ResponseWriter, *http.Request)
+	MergeDuplicates(http.ResponseWriter, *http.Request)
 	AddBook(http.ResponseWriter, *http.Request)
 	RemoveBook(http.ResponseWriter, *http.Request)
 	SetPrimaryBook(http.ResponseWriter, *http.Request)
@@ -41,6 +43,10 @@ func registerSeriesRoutes(r chi.Router, seriesHandler seriesRouteHandler) {
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAdmin)
 		r.Post("/series", seriesHandler.Create)
+		// Duplicate series (#2173): reads every series and every book's
+		// author, so admin only even for the GET.
+		r.Get("/series/duplicates", seriesHandler.Duplicates)
+		r.Post("/series/duplicates/merge", seriesHandler.MergeDuplicates)
 		r.Put("/series/{id}", seriesHandler.Update)
 		r.Patch("/series/{id}", seriesHandler.Monitor)
 		r.Delete("/series/{id}", seriesHandler.Delete)

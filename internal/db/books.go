@@ -674,6 +674,37 @@ func (r *BookRepo) GetByIDs(ctx context.Context, ids []int64) (map[int64]*models
 	return out, nil
 }
 
+// GetByForeignIDs loads the books with the given foreign ids in one query,
+// unscoped like GetByForeignID, keyed by foreign id. Blank and repeated ids are
+// ignored and ids with no row are absent. It lets a page of requests be checked
+// against the library without a lookup per row (#3835).
+func (r *BookRepo) GetByForeignIDs(ctx context.Context, foreignIDs []string) (map[string]*models.Book, error) {
+	out := make(map[string]*models.Book, len(foreignIDs))
+	seen := make(map[string]bool, len(foreignIDs))
+	var placeholders []string
+	var args []any
+	for _, id := range foreignIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	if len(args) == 0 {
+		return out, nil
+	}
+	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+
+		" WHERE books.foreign_id IN ("+strings.Join(placeholders, ",")+")", args)
+	if err != nil {
+		return nil, err
+	}
+	for i := range books {
+		out[books[i].ForeignID] = &books[i]
+	}
+	return out, nil
+}
+
 func (r *BookRepo) GetByForeignID(ctx context.Context, foreignID string) (*models.Book, error) {
 	books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE books.foreign_id = ?", []any{foreignID})
 	if err != nil {

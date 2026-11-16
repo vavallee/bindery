@@ -347,6 +347,26 @@ func registerQualityProfileRoutes(r chi.Router, h profileRouteHandler) {
 	})
 }
 
+// authorQualityProfileUnsetRouteHandler is the surface
+// registerAuthorQualityProfileUnsetRoutes needs.
+type authorQualityProfileUnsetRouteHandler interface {
+	Count(http.ResponseWriter, *http.Request)
+	Apply(http.ResponseWriter, *http.Request)
+}
+
+// registerAuthorQualityProfileUnsetRoutes mounts the count of authors with no
+// quality profile and the opt in apply that gives them one (#3831). Admin
+// only: the only screen offering it is the admin only Quality tab, and the
+// apply is a bulk write across many authors. The handler still limits both to
+// the caller's own and unowned authors, never another account's.
+func registerAuthorQualityProfileUnsetRoutes(r chi.Router, h authorQualityProfileUnsetRouteHandler) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Get("/authors/without-quality-profile", h.Count)
+		r.Post("/authors/without-quality-profile", h.Apply)
+	})
+}
+
 // registerMetadataProfileRoutes mounts the /metadataprofile routes with the
 // same split as registerQualityProfileRoutes. Writes used to be open to every
 // user; a metadata profile filters what every author refresh adds, and the

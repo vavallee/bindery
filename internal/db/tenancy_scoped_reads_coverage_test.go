@@ -104,6 +104,18 @@ func TestTenancyScopedReads_Coverage(t *testing.T) {
 			t.Fatalf("GetByForeignIDVisibleTo(bob's book, 0) = %+v, %v; want it unscoped", got, err)
 		}
 
+		byForeign, err := books.GetByForeignIDs(ctx, []string{"OL-SC-1W", "OL-SC-2W", "", "OL-SC-1W", "missing"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(byForeign) != 2 || byForeign["OL-SC-1W"] == nil || byForeign["OL-SC-1W"].ID != aliceBook.ID ||
+			byForeign["OL-SC-2W"] == nil || byForeign["OL-SC-2W"].ID != bobBook.ID {
+			t.Fatalf("GetByForeignIDs = %v, want alice's and bob's book, unscoped", byForeign)
+		}
+		if m, err := books.GetByForeignIDs(ctx, []string{"", ""}); err != nil || len(m) != 0 {
+			t.Fatalf("GetByForeignIDs(blank) = %v, %v; want empty without a query", m, err)
+		}
+
 		m, err := books.LibraryIDsByForeignIDsForUser(ctx, []string{"OL-SC-1W", "OL-SC-2W", "OL-SC-3W", "", "OL-SC-1W", "missing"}, alice)
 		if err != nil {
 			t.Fatal(err)

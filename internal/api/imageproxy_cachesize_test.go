@@ -10,8 +10,10 @@ import (
 	"time"
 )
 
-// dirBytes sums every regular file under root, which is what CacheSize's walk
-// is supposed to produce.
+// dirBytes sums every regular file under root, each rounded up to whole 4 KiB
+// blocks (an empty file counts one), which is what CacheSize's walk is
+// supposed to produce. The rounding is spelled out here rather than borrowed
+// from the handler so the two are checked against each other.
 func dirBytes(t *testing.T, root string) int64 {
 	t.Helper()
 	var total int64
@@ -23,7 +25,7 @@ func dirBytes(t *testing.T, root string) int64 {
 		if err != nil {
 			return nil //nolint:nilerr // raced with a delete; not this test's concern
 		}
-		total += info.Size()
+		total += max((info.Size()+4095)/4096, 1) * 4096
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
@@ -53,8 +55,8 @@ func TestImageProxy_CacheSizeIsMemoised(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CacheSize: %v", err)
 	}
-	if first != 100 {
-		t.Fatalf("first CacheSize = %d, want 100", first)
+	if first != 4096 {
+		t.Fatalf("first CacheSize = %d, want 4096 (one block)", first)
 	}
 
 	// Written outside the handler, so nothing adjusts the memo.
@@ -66,8 +68,8 @@ func TestImageProxy_CacheSizeIsMemoised(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CacheSize: %v", err)
 	}
-	if second != 100 {
-		t.Errorf("second CacheSize = %d, want the memoised 100 (a re-walk means the memo is not working)", second)
+	if second != 4096 {
+		t.Errorf("second CacheSize = %d, want the memoised 4096 (a re-walk means the memo is not working)", second)
 	}
 
 	// Expiring the memo brings the number back in line.
@@ -79,8 +81,8 @@ func TestImageProxy_CacheSizeIsMemoised(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CacheSize: %v", err)
 	}
-	if third != 350 {
-		t.Errorf("CacheSize after the TTL expired = %d, want 350", third)
+	if third != 8192 {
+		t.Errorf("CacheSize after the TTL expired = %d, want 8192 (two blocks)", third)
 	}
 }
 
@@ -151,11 +153,11 @@ func TestImageProxy_EvictionRecountsCacheSize(t *testing.T) {
 	}
 
 	h := NewImageProxyHandler(dir)
-	if size, err := h.CacheSize(); err != nil || size != 500 {
-		t.Fatalf("CacheSize before eviction = %d (err %v), want 500", size, err)
+	if size, err := h.CacheSize(); err != nil || size != 4096 {
+		t.Fatalf("CacheSize before eviction = %d (err %v), want 4096", size, err)
 	}
 
-	h.evictExpired()
+	h.sweep()
 
 	if size, err := h.CacheSize(); err != nil || size != 0 {
 		t.Errorf("CacheSize after eviction = %d (err %v), want 0", size, err)

@@ -3003,8 +3003,12 @@ func TestCreateAuthor_HiddenIdentifierConflictDoesNotLeakCanonicalAuthor(t *test
 
 	h.Create(rec, req)
 
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	// Alice's author carrying OL13200512A as an alternate id used to block
+	// bob's relink with a 409. Authors are keyed per owner since #3555, so
+	// bob's own Emilia Jae is relinked to the id, and nothing about alice's
+	// author reaches the response or changes.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (bob's own author relinked), got %d: %s", rec.Code, rec.Body.String())
 	}
 	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
@@ -3013,15 +3017,20 @@ func TestCreateAuthor_HiddenIdentifierConflictDoesNotLeakCanonicalAuthor(t *test
 	if _, ok := resp["canonicalAuthorId"]; ok {
 		t.Fatalf("response leaked canonicalAuthorId: %v", resp)
 	}
-	if _, ok := resp["canonicalAuthor"]; ok {
-		t.Fatalf("response leaked canonicalAuthor: %v", resp)
+	if id, _ := resp["id"].(float64); int64(id) != bobAuthor.ID {
+		t.Fatalf("response is author %v, want bob's %d", resp["id"], bobAuthor.ID)
 	}
 	got, err := authorRepo.GetByID(ctx, bobAuthor.ID)
-	if err != nil || got == nil {
-		t.Fatalf("bob author lookup: %+v err=%v", got, err)
+	if err != nil || got == nil || got.ForeignID != "OL13200512A" || got.OwnerUserID != bob.ID {
+		t.Fatalf("bob author after relink = %+v err=%v", got, err)
 	}
-	if got.ForeignID != bobAuthor.ForeignID || got.MetadataProvider != bobAuthor.MetadataProvider {
-		t.Fatalf("bob author mutated unexpectedly: %+v", got)
+	alices, err := authorRepo.GetByID(ctx, aliceAuthor.ID)
+	if err != nil || alices == nil || alices.ForeignID != "hc:emilia-jae" || alices.OwnerUserID != alice.ID {
+		t.Fatalf("alice author changed: %+v err=%v", alices, err)
+	}
+	ids, err := authorRepo.ListAuthorIdentifiers(ctx, aliceAuthor.ID)
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("alice's identifiers = %+v err=%v, want her two untouched", ids, err)
 	}
 }
 
@@ -3079,8 +3088,10 @@ func TestCreateAuthor_HiddenPrimaryConflictDoesNotLeakCanonicalAuthor(t *testing
 
 	h.Create(rec, req)
 
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	// Bob used to get a 409 here because alice held the id. Since #3555 he
+	// gets his own row; the response is that row, never alice's.
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 (bob's own row), got %d: %s", rec.Code, rec.Body.String())
 	}
 	var resp map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
@@ -3089,11 +3100,14 @@ func TestCreateAuthor_HiddenPrimaryConflictDoesNotLeakCanonicalAuthor(t *testing
 	if _, ok := resp["canonicalAuthorId"]; ok {
 		t.Fatalf("response leaked canonicalAuthorId: %v", resp)
 	}
-	if _, ok := resp["canonicalAuthor"]; ok {
-		t.Fatalf("response leaked canonicalAuthor: %v", resp)
+	if id, _ := resp["id"].(float64); id == 0 || int64(id) == aliceAuthor.ID {
+		t.Fatalf("response is author %v, want a new row for bob (alice's is %d)", resp["id"], aliceAuthor.ID)
 	}
-	if got, err := authorRepo.GetByID(ctx, aliceAuthor.ID); err != nil || got == nil || got.ForeignID != aliceAuthor.ForeignID {
+	if got, err := authorRepo.GetByID(ctx, aliceAuthor.ID); err != nil || got == nil || got.ForeignID != aliceAuthor.ForeignID || got.Name != "Canonical Emilia" {
 		t.Fatalf("alice author after Create = %+v err=%v", got, err)
+	}
+	if bobs, err := authorRepo.GetByForeignIDForUser(ctx, "OL13200512A", bob.ID); err != nil || bobs == nil || bobs.OwnerUserID != bob.ID {
+		t.Fatalf("bob's row = %+v err=%v", bobs, err)
 	}
 }
 
@@ -4531,11 +4545,21 @@ func TestAddBook_DoesNotResolveOtherUsersAlternateAuthorIdentifier(t *testing.T)
 
 	h.AddBook(rec, req)
 
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	// Alice's alternate id no longer blocks bob with a 409 (#3555): bob's add
+	// goes ahead with his own author row. The stub has no such book, so the
+	// add ends in 404 and the orphan cleanup removes bob's empty row. What
+	// matters is that it never resolved to alice's author.
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 from the stub's missing book, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got, err := authorRepo.GetByForeignID(ctx, "hc:alice-author"); err != nil || got != nil {
-		t.Fatalf("hidden identifier created bob-visible author: %+v err=%v", got, err)
+	if strings.Contains(rec.Body.String(), "Alice Author") || strings.Contains(rec.Body.String(), "OL-ALICE") {
+		t.Fatalf("response leaked alice's author: %s", rec.Body.String())
+	}
+	if books, _ := bookRepo.ListByAuthor(ctx, aliceAuthor.ID); len(books) != 0 {
+		t.Fatalf("bob's add filed books under alice's author: %+v", books)
+	}
+	if got, err := authorRepo.GetByForeignIDForUser(ctx, "hc:alice-author", bob.ID); err != nil || got != nil {
+		t.Fatalf("bob's empty author row survived the failed add: %+v err=%v", got, err)
 	}
 	if got, err := authorRepo.GetByID(ctx, aliceAuthor.ID); err != nil || got == nil || got.ForeignID != "OL-ALICE" {
 		t.Fatalf("alice author after AddBook = %+v err=%v", got, err)

@@ -211,4 +211,12 @@ type SearchResult struct {
 	DownloadVolumeFactor *float64 `json:"downloadVolumeFactor,omitempty"`
 	MediaType            string   `json:"mediaType,omitempty"` // "ebook" or "audiobook"; set for dual-format book searches
 	IndexerPriority      int      `json:"indexerPriority"`     // copied from models.Indexer.Priority; higher wins
+
+	// Seeders and Peers are the torznab seeders and peers attributes: the
+	// release's current seed count, and seeders plus leechers. Unlike Grabs,
+	// a lifetime download count, they say whether the swarm is alive now.
+	// nil means the indexer did not report them (usenet indexers never do),
+	// which is not the same as a reported 0, a dead torrent.
+	Seeders *int `json:"seeders,omitempty"`
+	Peers   *int `json:"peers,omitempty"`
 }

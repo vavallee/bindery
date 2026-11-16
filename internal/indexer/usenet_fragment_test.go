@@ -131,6 +131,15 @@ var lonePartPosts = []string{
 	"Author - Some Book Disc 1 of 8 Unabridged MP3",
 	"Author_Some_Book_Part_3_of_5_mp3",
 	"Author - Some Book Part 4 of 12 FLAC",
+	// Two part sets used to be kept on purpose; they are dropped now.
+	"Author - Some Book Part 1 of 2 MP3",
+	"Author - Some Book (Part 2 of 2) M4B",
+	"Author - Some Book Disc 1 of 2 MP3",
+	"Author - Some Book Part 2 of 2",
+	// A counter in brackets with no part word.
+	"Author - Some Book Unabridged (2 of 5) MP3",
+	"Author - Some Book Unabridged [1 of 3]",
+	"Author - Some Book Unabridged (1 of 2) M4B",
 }
 
 // lonePartKeepers look a little like lone parts and are not, searched as an
@@ -144,9 +153,6 @@ var lonePartKeepers = []string{
 	"Author - Some Book 3 of 5",
 	"Author - Some Book 3 of 5 MP3",
 	"Author - Some Book Part 1 of 1 MP3",
-	"Author - Some Book Part 1 of 2 MP3",
-	"Author - Some Book (Part 2 of 2) M4B",
-	"Author - Some Book Disc 1 of 2 MP3",
 	"Author - Some Book All 5 Parts MP3",
 	"Author - Some Book Part 1 of 2 Complete MP3",
 	"Author - Some Book Disc 1 of 8 Complete",
@@ -158,6 +164,17 @@ var lonePartKeepers = []string{
 	"Author - Some Book (Unabridged) M4B",
 	"Author - Some Book Part One MP3",
 	"Author - Party 3 of 5 MP3",
+	"Author - Some Book (Book 1 of 6) M4B",
+	"Author - Some Book Book (1 of 6) M4B",
+	"Author - Some Book Vol (2 of 3) MP3",
+	"Author - Some Book Complete (1 of 2) M4B",
+	"Author - Some Book (2 of 2024) M4B",
+	"Author - Some Book (3 of 2) M4B",
+	"Author - Some Book (0 of 2) M4B",
+	"Author - Some Book (1 of 1) M4B",
+	"Author - Some Book (2 of 5) EPUB",
+	"Author - Some Book (1 of 2) epub",
+	"Author - Some Book (Unabridged) [ENG / M4B]",
 }
 
 func TestUsenetJunkDropsLoneAudioParts(t *testing.T) {
@@ -250,5 +267,60 @@ func TestUsenetJunkLonePartReachesEveryEntrypoint(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("debug filters do not carry the lone part reason: %+v", dbg.Filters)
+	}
+}
+
+// King's four MyAnonaMouse results (reached through Prowlarr): the two halves
+// of a Graphic Audio dramatization are dropped, the complete releases are kept.
+func TestUsenetJunkLonePartMAMGraphicAudio(t *testing.T) {
+	sc := junkScope{MediaType: models.MediaTypeAudiobook, WantedTitle: "Morning Star"}
+	drops := []string{
+		"Morning Star (2 of 2) by Pierce Brown [ENG / M4B] [VIP]",
+		"Morning Star (1 of 2) by Pierce Brown [ENG / M4B] [VIP]",
+	}
+	keeps := []string{
+		"Morning Star by Pierce Brown [ENG / M4B]",
+		"Morning Star by Pierce Brown [ENG / MP3]",
+	}
+	for _, d := range drops {
+		if got := usenetJunkReason(d, sc); got != reasonLoneAudioPart {
+			t.Errorf("%q: reason %q, want the lone part reason", d, got)
+		}
+	}
+	for _, k := range keeps {
+		if got := usenetJunkReason(k, sc); got != "" {
+			t.Errorf("%q: dropped with %q", k, got)
+		}
+	}
+}
+
+func TestUsenetJunkLonePartBracketForms(t *testing.T) {
+	audio := junkScope{MediaType: models.MediaTypeAudiobook, WantedTitle: "Red Rising"}
+	cases := []struct {
+		name  string
+		title string
+		sc    junkScope
+		drop  bool
+	}{
+		{"part word, two part set", "Dune Part 2 of 2 [ENG / M4B]", audio, true},
+		{"parens, five part set", "Dune (2 of 5) [ENG / M4B]", audio, true},
+		{"square brackets", "Dune [1 of 3] [ENG / M4B]", audio, true},
+		{"no format, audiobook search", "Dune (2 of 2)", audio, true},
+		{"series position in parens", "Red Rising (Book 1 of 6)", audio, false},
+		{"series position, word outside parens", "Red Rising Book (1 of 6)", audio, false},
+		{"bare series position is dropped", "Red Rising (1 of 6) M4B", audio, true},
+		{"plain unabridged", "Dune (Unabridged) [ENG / M4B]", audio, false},
+		{"whole set word", "Dune Complete (1 of 2) M4B", audio, false},
+		{"year, not a set", "Dune (2 of 2024) M4B", audio, false},
+		{"ebook search, no format", "Dune (1 of 2)", junkScope{MediaType: models.MediaTypeEbook, WantedTitle: "Dune"}, false},
+		{"epub title", "Dune (1 of 2) EPUB", audio, false},
+		{"wanted title holds the counter", "Heist (2 of 3) M4B", junkScope{MediaType: models.MediaTypeAudiobook, WantedTitle: "Heist (2 of 3)"}, false},
+		{"another counter than the wanted one", "Heist (1 of 3) M4B", junkScope{MediaType: models.MediaTypeAudiobook, WantedTitle: "Heist (2 of 3)"}, true},
+	}
+	for _, c := range cases {
+		got := isLoneAudioPart(c.title, c.sc)
+		if got != c.drop {
+			t.Errorf("%s: isLoneAudioPart(%q) = %v, want %v", c.name, c.title, got, c.drop)
+		}
 	}
 }

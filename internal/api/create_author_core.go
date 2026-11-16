@@ -18,15 +18,20 @@ import (
 // it itself. Ownership is not a field: the core reads the acting user from
 // ctx, exactly as the handler always has.
 type createAuthorParams struct {
-	ForeignID             string
-	Name                  string
-	QualityProfileID      *int64
-	MetadataProfileID     *int64
-	RootFolderID          *int64
-	AudiobookRootFolderID *int64
-	Monitored             bool
-	MonitorMode           *string
-	MonitorLatestCount    *int
+	ForeignID        string
+	Name             string
+	QualityProfileID *int64
+	// QualityProfileExplicit is true when the caller chose the quality
+	// profile, including choosing none with a nil QualityProfileID. False
+	// means no choice was made, so a new author gets the install wide
+	// default quality profile and a relinked one keeps its own (#3831).
+	QualityProfileExplicit bool
+	MetadataProfileID      *int64
+	RootFolderID           *int64
+	AudiobookRootFolderID  *int64
+	Monitored              bool
+	MonitorMode            *string
+	MonitorLatestCount     *int
 	// Settable at add time as of the Add Author redesign: before this it
 	// could only be changed on the author afterwards, so "catalogue this
 	// author once and never let a refresh grow it" was not expressible
@@ -98,12 +103,6 @@ type createAuthorLookupError struct {
 func (e *createAuthorLookupError) Error() string { return e.Err.Error() }
 func (e *createAuthorLookupError) Unwrap() error { return e.Err }
 
-// authorHeldByAnotherAccountMessage is the 409 body when an add collides with
-// an author another account holds (#3555). authors.foreign_id is unique across
-// the instance, so the second account cannot have its own row. The text names
-// no account and the response carries no author.
-const authorHeldByAnotherAccountMessage = "This author is already in another account's library on this instance, and an author can only be in one account's library. Ask that account's owner, or use the requester role to request books."
-
 // authorConflictError is a 409: the author already exists, or its name
 // resolves to one that does. Canonical, when set, is the existing author the
 // handler returns so the client can offer to open it.
@@ -168,7 +167,9 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 	// (auth.ListScopeUserID: every author with tenancy off or for an admin, the
 	// caller's own plus unowned ones otherwise), so a conflict is only reported
 	// for an author the caller can see. A global GetByForeignID would block
-	// re-creation of authors orphaned under a different user ID.
+	// re-creation of authors orphaned under a different user ID. Under
+	// tenancy a miss here means the caller gets their own row, even when
+	// another account holds one for the same author (#3555).
 	scopeID := auth.ListScopeUserID(ctx)
 	existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, req.ForeignID, scopeID)
 	if existing != nil {
@@ -195,7 +196,17 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 		// only by an admin, so a user who is not one gets the confirm merge
 		// conflict below instead, naming the author they matched.
 		if canRelinkAuthorToUpstream(canonical) && auth.CheckWriteOwnership(ctx, canonical.OwnerUserID) {
-			if err := h.relinkExistingAuthorToUpstream(ctx, canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, monitorNewItems, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
+			// No choice keeps the profile the matched author already has. The
+			// relink used to write the request's nil over it, silently taking
+			// a configured author back to no format filter at all.
+			qualityProfileID := req.QualityProfileID
+			if !req.QualityProfileExplicit {
+				qualityProfileID = canonical.QualityProfileID
+				if qualityProfileID == nil {
+					qualityProfileID = db.ResolveDefaultAuthorQualityProfileID(ctx, h.settings)
+				}
+			}
+			if err := h.relinkExistingAuthorToUpstream(ctx, canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, monitorNewItems, qualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
 				if isAuthorIdentityConflict(err) {
 					return createAuthorResult{}, &authorConflictError{Message: "upstream author already exists locally"}
 				}
@@ -222,7 +233,15 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 		}
 		return createAuthorResult{}, &authorConflictError{Canonical: canonical, Message: "author name already resolves to an existing author — confirm merge"}
 	}
-	applyAuthorCreateOptions(author, req.Monitored, monitorMode, monitorLatestCount, req.QualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID)
+	// An author with no quality profile accepts every format at grab and at
+	// import, so a request that makes no choice gets the install wide default
+	// quality profile, the same way it gets the default metadata profile. An
+	// explicit null is the user picking "None" and is kept (#3831).
+	qualityProfileID := req.QualityProfileID
+	if !req.QualityProfileExplicit {
+		qualityProfileID = db.ResolveDefaultAuthorQualityProfileID(ctx, h.settings)
+	}
+	applyAuthorCreateOptions(author, req.Monitored, monitorMode, monitorLatestCount, qualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID)
 	author.MonitorNewItems = monitorNewItems
 
 	if err := h.authors.CreateForUser(ctx, author, auth.UserIDFromContext(ctx)); err != nil {
@@ -234,14 +253,11 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 			if existing, _ := h.authors.GetByAnyForeignIDForUser(ctx, author.ForeignID, scopeID); existing != nil {
 				return createAuthorResult{}, &authorConflictError{Canonical: existing, Message: "author already exists"}
 			}
-			// Neither lookup found a row the caller can see, yet the unique
-			// foreign id is taken. Only a caller whose list is scoped (tenancy
-			// on, not an admin) can be missing a row another account holds; for
-			// anyone else the cause is something else, such as an orphaned
-			// identifier row, so keep the plain text.
-			if scopeID != 0 {
-				return createAuthorResult{}, &authorConflictError{Message: authorHeldByAnotherAccountMessage}
-			}
+			// Neither lookup found a row the caller can see, yet the id is
+			// taken: an orphaned identifier row, or a provider id the fetched
+			// record canonicalised to. Another account's row for the same
+			// author is not a cause any more; under tenancy each account holds
+			// its own (#3555).
 			return createAuthorResult{}, &authorConflictError{Message: "author already exists"}
 		}
 		return createAuthorResult{}, err

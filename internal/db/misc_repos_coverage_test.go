@@ -252,20 +252,20 @@ func TestMiscRepos_Coverage(t *testing.T) {
 
 		// UpgradeSyntheticDNB: validation, a no-op for a missing row, then a
 		// real upgrade that keeps the row id and both identifiers.
-		if err := authors.UpgradeSyntheticDNB(ctx, "", &models.Author{ForeignID: "x"}); err == nil {
+		if err := authors.UpgradeSyntheticDNB(ctx, 1, "", &models.Author{ForeignID: "x"}); err == nil {
 			t.Error("UpgradeSyntheticDNB without a current id should fail")
 		}
-		if err := authors.UpgradeSyntheticDNB(ctx, "dnb:author:x", nil); err == nil {
+		if err := authors.UpgradeSyntheticDNB(ctx, 1, "dnb:author:x", nil); err == nil {
 			t.Error("UpgradeSyntheticDNB without a target should fail")
 		}
-		if err := authors.UpgradeSyntheticDNB(ctx, "dnb:author:missing", &models.Author{ForeignID: "OL-NEW"}); err != nil {
+		if err := authors.UpgradeSyntheticDNB(ctx, 999999, "dnb:author:missing", &models.Author{ForeignID: "OL-NEW"}); err != nil {
 			t.Fatalf("UpgradeSyntheticDNB(missing row) = %v; want a silent no-op", err)
 		}
 		dnb := &models.Author{ForeignID: "dnb:author:tolkien", Name: "Tolkien", SortName: "Tolkien, J. R. R.", MetadataProvider: "dnb", Description: "old"}
 		if err := authors.Create(ctx, dnb); err != nil {
 			t.Fatal(err)
 		}
-		if err := authors.UpgradeSyntheticDNB(ctx, dnb.ForeignID, &models.Author{
+		if err := authors.UpgradeSyntheticDNB(ctx, dnb.ID, dnb.ForeignID, &models.Author{
 			ForeignID: "OL26320A", Name: "J.R.R. Tolkien", SortName: "Tolkien, J.R.R.", MetadataProvider: "openlibrary",
 		}); err != nil {
 			t.Fatal(err)

@@ -29,8 +29,14 @@ const (
 type LibraryRequest struct {
 	// SearchRunID is the search an approval started, never stored (#3133).
 	SearchRunID string
-	ID          int64
-	OwnerUserID int64
+	// Notice is what an approval tells the approver about a book that was
+	// already in the library, never stored (#3835).
+	Notice string
+	// AlreadyInLibrary is derived for the admin queue: a pending book request
+	// whose requested formats the library already covers (#3835).
+	AlreadyInLibrary bool
+	ID               int64
+	OwnerUserID      int64
 	// OwnerUsername is joined in for the admin queue only.
 	OwnerUsername string
 	Kind          string
