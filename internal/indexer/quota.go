@@ -119,17 +119,43 @@ func (q *indexerQuota) load(ctx context.Context) {
 	}
 	q.loaded = true
 
-	// Seed both maps from the store: those requests are already persisted, so
-	// only what happens from here is a delta this process owes the database.
-	q.counts = stored
-	q.flushed = make(map[int64]map[time.Time]int, len(stored))
+	// Seed from the store: those requests are already persisted, so only what
+	// happens from here is a delta this process owes the database.
+	//
+	// A search that ran while the load was failing has already counted requests
+	// in memory. Flushes send deltas, so what is still unwritten is
+	// counts-flushed per bucket, and that is added on top of the stored value
+	// rather than replaced by it. Replacing it forgot those requests entirely:
+	// they were neither in the tally nor owed to the database, so the cap could
+	// be overspent by up to one flush interval. On a first-time successful load
+	// both maps are empty, so this is the same as seeding straight from the store.
+	merged := make(map[int64]map[time.Time]int, len(stored))
+	flushed := make(map[int64]map[time.Time]int, len(stored))
 	for id, buckets := range stored {
-		copied := make(map[time.Time]int, len(buckets))
+		m := make(map[time.Time]int, len(buckets))
+		f := make(map[time.Time]int, len(buckets))
 		for hour, n := range buckets {
-			copied[hour] = n
+			m[hour] = n
+			f[hour] = n
 		}
-		q.flushed[id] = copied
+		merged[id] = m
+		flushed[id] = f
 	}
+	for id, buckets := range q.counts {
+		for hour, n := range buckets {
+			owed := n - q.flushed[id][hour]
+			if owed <= 0 {
+				continue
+			}
+			if merged[id] == nil {
+				merged[id] = make(map[time.Time]int)
+				flushed[id] = make(map[time.Time]int)
+			}
+			merged[id][hour] += owed
+		}
+	}
+	q.counts = merged
+	q.flushed = flushed
 }
 
 // usedLocked sums the buckets still inside the window and drops the ones that
@@ -310,6 +336,10 @@ func (q *indexerQuota) flush(ctx context.Context, idx models.Indexer, force bool
 		if err := q.store.AddQueryCount(writeCtx, idx.ID, hour, delta); err != nil {
 			slog.Warn("failed to record indexer query count", "indexer", idx.Name, "error", err)
 			q.mu.Lock()
+			// A load that succeeded mid-flush rebuilt the map.
+			if q.flushed[idx.ID] == nil {
+				q.flushed[idx.ID] = make(map[time.Time]int)
+			}
 			q.flushed[idx.ID][hour] -= delta
 			q.mu.Unlock()
 		}
