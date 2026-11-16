@@ -4,6 +4,8 @@ Bindery can learn what you already own from a [BookOrbit](https://github.com/boo
 
 It is a one way read. Bindery never writes to BookOrbit, and the import never moves, renames or deletes a file.
 
+To run Bindery and BookOrbit side by side for new books, see [BookOrbit integration](./BookOrbit-Integration-Wiki.md). This page covers importing a library BookOrbit already holds.
+
 Tested against BookOrbit 3.8.0. See [When BookOrbit changes](#when-bookorbit-changes) for what happens on other versions.
 
 ## Setup
