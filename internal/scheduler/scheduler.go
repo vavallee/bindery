@@ -1447,6 +1447,10 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	if freeleechOnly := freeleechOnlyIndexerIDs(idxs); len(freeleechOnly) > 0 {
 		specs = append(specs, decision.FreeleechOnlySpec{IndexerIDs: freeleechOnly})
 	}
+	// Torrents the indexer reports with zero seeders are never auto-grabbed
+	// (#3953). Not parked in pending: a dead swarm is not expected to revive,
+	// and a later search can find a seeded copy.
+	specs = append(specs, decision.DeadTorrentSpec{})
 	dm := decision.New(specs...)
 	enabledProtocols := map[string]bool{"usenet": true, "torrent": true}
 	eligibleProtocols := map[string]bool{"usenet": true, "torrent": true}
@@ -1517,6 +1521,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	var bestExisting *models.Download
 	heldOutcome := ""
 	stopOutcome := ""
+	deadSkipped := 0
 	accept := func(res *newznab.SearchResult) (*models.DownloadClient, bool, error) {
 		c, skip, err := s.checkPin(ctx, book, res, skippedPinned)
 		if err != nil {
@@ -1605,6 +1610,11 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		// approving a pack would just walk it into the importer's own block.
 		// Log it instead, so "nothing was grabbed" is not silent when the only
 		// candidates were packs.
+		if strings.Contains(d.Rejection, decision.RejectionDeadTorrent) {
+			deadSkipped++
+			slog.Info("skipping a torrent with 0 seeders",
+				"book", book.Title, "release", results[i].Title, "indexer", results[i].IndexerName)
+		}
 		if strings.Contains(d.Rejection, decision.RejectionMultiBookPack) {
 			slog.Info("skipping a multi-book pack for a single-book search",
 				"book", book.Title, "release", results[i].Title, "reason", d.Rejection)
@@ -1626,6 +1636,10 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 				outcome = heldOutcome
 			case rawResults == 0:
 				outcome = "no results"
+			case deadSkipped > 0:
+				slog.Info("no seeded torrent found, leaving the book wanted",
+					"book", book.Title, "dead_torrents", deadSkipped)
+				outcome = "only torrents with 0 seeders"
 			default:
 				outcome = "nothing approved"
 			}

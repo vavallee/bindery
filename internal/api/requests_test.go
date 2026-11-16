@@ -400,6 +400,13 @@ type fakeAdder struct {
 	// is the media type the last one was asked to monitor.
 	existingCalls    atomic.Int32
 	lastExistingType string
+	// searchCalls counts searchExistingBookCore calls.
+	searchCalls atomic.Int32
+}
+
+func (a *fakeAdder) searchExistingBookCore(_ context.Context, _ *models.Book) string {
+	a.searchCalls.Add(1)
+	return "run-existing"
 }
 
 func (a *fakeAdder) monitorExistingBookCore(_ context.Context, _ *models.Book, mediaType string, _ bool) (addBookResult, error) {
