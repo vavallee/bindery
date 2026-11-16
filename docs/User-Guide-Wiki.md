@@ -308,7 +308,10 @@ Two settings decide whether an author add stays a trickle or becomes a flood:
   books it discovers at all. *Follow monitor mode* adds them and monitors them
   per the mode; *Don't add them* keeps the refresh to the books you already
   have. Library imports (Calibre, ABS) set *Don't add them* on the authors they
-  create, because those catalogues are partial by design.
+  create, because those catalogues are partial by design. The default for
+  authors you add yourself lives in Settings → Metadata Profiles → Library
+  Defaults → **Default for monitoring newly discovered books**. It only applies
+  to authors added after you change it, and the Add Author dialog preselects it.
 
 These two are independent, and monitor mode *None* is not a substitute for the
 second one: it means "list the catalogue, monitor none of it", so a refresh

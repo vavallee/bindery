@@ -151,7 +151,9 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 		return createAuthorResult{}, errCreateAuthorSearchNeedsSync
 	}
 	monitorMode, monitorLatestCount, err := h.resolveCreateMonitorOptions(ctx, req.MonitorMode, req.MonitorLatestCount)
-	monitorNewItems := models.DefaultAuthorMonitorNewItems
+	// The install wide default (#3958) applies when the request names no value.
+	monitorNewItems := db.ResolveAuthorMonitorNewItemsDefault(ctx, h.settings)
+	monitorNewItemsExplicit := req.MonitorNewItems != nil
 	if req.MonitorNewItems != nil {
 		v := strings.TrimSpace(*req.MonitorNewItems)
 		if !models.IsAuthorMonitorNewItemsValid(v) {
@@ -206,7 +208,14 @@ func (h *AuthorHandler) createAuthorCore(ctx context.Context, req createAuthorPa
 					qualityProfileID = db.ResolveDefaultAuthorQualityProfileID(ctx, h.settings)
 				}
 			}
-			if err := h.relinkExistingAuthorToUpstream(ctx, canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, monitorNewItems, qualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
+			// A request that names no monitor new items value keeps the
+			// matched author's own, the same as the quality profile above. The
+			// install default is for authors that do not exist yet (#3958).
+			relinkNewItems := monitorNewItems
+			if !monitorNewItemsExplicit {
+				relinkNewItems = models.NormalizeAuthorMonitorNewItems(canonical.MonitorNewItems)
+			}
+			if err := h.relinkExistingAuthorToUpstream(ctx, canonical, author, req.Name, req.Monitored, monitorMode, monitorLatestCount, relinkNewItems, qualityProfileID, req.MetadataProfileID, req.RootFolderID, req.AudiobookRootFolderID); err != nil {
 				if isAuthorIdentityConflict(err) {
 					return createAuthorResult{}, &authorConflictError{Message: "upstream author already exists locally"}
 				}

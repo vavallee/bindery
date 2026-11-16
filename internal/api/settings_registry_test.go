@@ -470,6 +470,7 @@ func TestValidateSettingValue_KnownKeysUnchanged(t *testing.T) {
 var webSettingKeys = []string{
 	"author.default_monitor_latest_count",
 	"author.default_monitor_mode",
+	"author.default_monitor_new_items",
 	"authors.discovery.interval",
 	"autoGrab.enabled",
 	"calibre.binary_path",

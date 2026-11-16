@@ -4,7 +4,7 @@ import { api, AddAuthorRequest, Author, AuthorConflictBody, AuthorMonitorMode, M
 import type { LibraryRequest } from '../api/client'
 import { useIsRequester } from '../auth/AuthContext'
 import RequestConfirm from './RequestConfirm'
-import { AuthorAddDefaults, DEFAULT_MONITOR_LATEST_COUNT, DEFAULT_MONITOR_MODE } from './authorAddDefaults'
+import { AuthorAddDefaults, DEFAULT_MONITOR_LATEST_COUNT, DEFAULT_MONITOR_MODE, DEFAULT_MONITOR_NEW_ITEMS } from './authorAddDefaults'
 import { useNeedsSetup } from './useNeedsSetup'
 import { authorProviderKey } from '../util/authorMetadata'
 import { providerDisplayName } from '../util/metadataSource'
@@ -104,8 +104,8 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
   const [monitorLatestCount, setMonitorLatestCount] = useState(DEFAULT_MONITOR_LATEST_COUNT)
   const [monitorOptionsChanged, setMonitorOptionsChanged] = useState(false)
   // Sent only when touched, so the install-wide default (#2217) still applies
-  // to an untouched dialog.
-  const [monitorNewItems, setMonitorNewItems] = useState<MonitorNewItems>('all')
+  // to an untouched dialog. The control preselects that default (#3958).
+  const [monitorNewItems, setMonitorNewItems] = useState<MonitorNewItems>(DEFAULT_MONITOR_NEW_ITEMS)
   const [monitorNewItemsChanged, setMonitorNewItemsChanged] = useState(false)
   const headingRef = useRef<HTMLDivElement>(null)
 
@@ -127,6 +127,8 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
     setMediaType(defaults.mediaType)
     setMonitorMode(defaults.monitorMode)
     setMonitorLatestCount(defaults.monitorLatestCount)
+    // Preselect the install default; it is still only sent once changed.
+    setMonitorNewItems(defaults.monitorNewItems)
   }, [defaults])
 
   const mismatchedProvider = (() => {
