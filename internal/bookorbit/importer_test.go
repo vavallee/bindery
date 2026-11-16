@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/abs"
 	"github.com/vavallee/bindery/internal/db"
@@ -718,7 +719,7 @@ func TestNormalizeChoosesFiles(t *testing.T) {
 		{ID: 6, Path: "/b/T/disc 2/02.mp3", Role: "content"},
 		{ID: 7, Path: "/b/T/disc 1/01.mp3", Role: "content"},
 	}}
-	item, ok := normalize(book, "bookorbit-2")
+	item, ok := normalize(book, "bookorbit-2", nil)
 	if !ok {
 		t.Fatal("normalize rejected a book with files")
 	}
@@ -770,4 +771,118 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+// A server that answers every page with the same ids and a huge total never
+// grows the id list, so a cap on the list alone never fires. The run has to
+// stop on its own, fail with words that say why, write nothing and let go of
+// the run gate (the next run starts).
+func TestImportStopsWhenTheListingRepeatsItself(t *testing.T) {
+	s := newShelf(t)
+	seedLibrary(s)
+	s.fake.listing = func(page, size int) map[string]any {
+		items := make([]map[string]any, 0, 3)
+		for id := 1; id <= 3; id++ {
+			items = append(items, map[string]any{"id": id, "title": "Same", "libraryId": 2})
+		}
+		return map[string]any{"items": items, "total": 1 << 40, "page": page, "size": size}
+	}
+	assertListingFails(t, s, "already listed")
+}
+
+// A server that keeps handing out new ids for a total that never ends is
+// stopped by the book cap, and one that never fills the cap by the page cap.
+func TestImportStopsWhenTheListingNeverEnds(t *testing.T) {
+	old := maxBooksPerLibrary
+	maxBooksPerLibrary = 250
+	t.Cleanup(func() { maxBooksPerLibrary = old })
+
+	s := newShelf(t)
+	seedLibrary(s)
+	s.fake.listing = func(page, size int) map[string]any {
+		items := make([]map[string]any, 0, size)
+		for i := 0; i < size; i++ {
+			items = append(items, map[string]any{"id": page*size + i + 1, "title": "Endless", "libraryId": 2})
+		}
+		return map[string]any{"items": items, "total": 1 << 40, "page": page, "size": size}
+	}
+	assertListingFails(t, s, "lists more than 250 books")
+
+	// Short pages never reach the book cap, so the page cap has to end it.
+	var served int
+	s.fake.listing = func(page, size int) map[string]any {
+		served++
+		return map[string]any{"items": []map[string]any{{"id": page + 1, "title": "Trickle", "libraryId": 2}}, "total": 1 << 40, "page": page, "size": size}
+	}
+	maxBooksPerLibrary = 300
+	assertListingFails(t, s, "did not end after")
+	if want := maxListingPages(); served > want+1 {
+		t.Errorf("served %d listing pages, the cap is %d", served, want)
+	}
+}
+
+func assertListingFails(t *testing.T, s *shelf, want string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err := s.importer.Run(ctx, s.config(false))
+	if err == nil {
+		t.Fatal("a listing that never ends did not fail the run")
+	}
+	if ctx.Err() != nil || time.Since(started) > 15*time.Second {
+		t.Fatalf("the run only stopped because its context ran out: %v", err)
+	}
+	for _, w := range []string{want, "nothing was imported"} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("error %q does not contain %q", err, w)
+		}
+	}
+	for table, n := range s.snapshot() {
+		if n != 0 {
+			t.Errorf("failed run left %d rows in %s", n, table)
+		}
+	}
+	if s.importer.Progress().Running {
+		t.Error("the importer still reports a run in progress")
+	}
+	// The gate is free again: the next run starts and reads the real listing.
+	s.fake.listing = nil
+	s.fake.addBook(2, fakeBook(77, "After The Storm", []string{"Bea Lindqvist"}, fakeFile(7, s.put("Romance/Bea Lindqvist/Standalone/After The Storm/After The Storm.epub"), "primary")))
+	stats, err := s.importer.Run(context.Background(), s.config(true))
+	if err != nil {
+		t.Fatalf("run after the failure: %v", err)
+	}
+	if stats.ItemsSeen == 0 {
+		t.Errorf("run after the failure saw nothing: %s", stats)
+	}
+}
+
+func TestAudiobookPathRefusesALibraryFolder(t *testing.T) {
+	roots := []string{"/books"}
+	track := func(p string) File { return File{Path: p} }
+	cases := []struct {
+		name  string
+		files []File
+		want  string
+	}{
+		{"one book folder", []File{track("/books/Fic/A/B/01.mp3"), track("/books/Fic/A/B/02.mp3")}, "/books/Fic/A/B"},
+		{"discs of one book", []File{track("/books/Fic/A/B/CD1/01.mp3"), track("/books/Fic/A/B/CD2/01.mp3")}, "/books/Fic/A/B"},
+		{"a single file", []File{track("/books/loose.m4b")}, "/books/loose.m4b"},
+		{"files straight in the library folder", []File{track("/books/01.mp3"), track("/books/02.mp3")}, ""},
+		{"trailing slash on the root", []File{track("/books/x.mp3"), track("/books/y.mp3")}, ""},
+		{"files in different roots", []File{track("/books/A/01.mp3"), track("/other/B/01.mp3")}, ""},
+		{"nothing in common", []File{track("/a/01.mp3"), track("/b/01.mp3")}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := roots
+			if tc.name == "trailing slash on the root" {
+				r = []string{"/books/"}
+			}
+			if got := audiobookPath(tc.files, r); got != tc.want {
+				t.Errorf("audiobookPath = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

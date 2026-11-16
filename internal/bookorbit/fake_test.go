@@ -22,6 +22,9 @@ type fakeServer struct {
 	// books maps a library id to its book records, each a full detail
 	// record as the test wants it served.
 	books map[int64][]map[string]any
+	// listing, when set, answers the book listing instead of books, so a test
+	// can serve a listing that misbehaves.
+	listing func(page, size int) map[string]any
 
 	mu       sync.Mutex
 	requests []string // "METHOD path"
@@ -87,6 +90,10 @@ func (f *fakeServer) serve(w http.ResponseWriter, r *http.Request) {
 		page, size := 0, 50
 		if p, ok := query["pagination"].(map[string]any); ok {
 			page, size = int(p["page"].(float64)), int(p["size"].(float64))
+		}
+		if f.listing != nil {
+			writeFake(w, http.StatusOK, f.listing(page, size))
+			return
 		}
 		all := f.books[id]
 		items := []map[string]any{}

@@ -28,12 +28,18 @@ const (
 	// and the engine builds placeholder ids from the library id alone, so a
 	// bare "17" could meet another source's library of the same name.
 	libraryIDPrefix = "bookorbit-"
-
-	// maxBooksPerLibrary stops a listing that never ends. It is far above
-	// any real library and exists only so a server that keeps answering with
-	// full pages cannot hold a run forever.
-	maxBooksPerLibrary = 500000
 )
+
+// maxBooksPerLibrary stops a listing that never ends. It is far above any
+// real library and exists only so a server that keeps answering with full
+// pages cannot hold a run forever. A variable so a test can lower it.
+var maxBooksPerLibrary = 500000
+
+// maxListingPages is how many pages a library listing may take before the
+// run gives up. It is derived from the book cap, with one page of slack, so a
+// server that repeats ids or claims a huge total without ever filling the
+// cap still stops.
+func maxListingPages() int { return maxBooksPerLibrary/PageSize + 1 }
 
 // ErrAlreadyRunning is returned when a BookOrbit import is under way.
 var ErrAlreadyRunning = errors.New("a BookOrbit import is already running")
@@ -90,6 +96,7 @@ type Importer struct {
 type runState struct {
 	client     API
 	libraryIDs []int64
+	roots      map[int64][]string // each library's folders as BookOrbit sees them
 
 	once  sync.Once
 	err   error
@@ -253,8 +260,10 @@ func (s *runState) readAll(ctx context.Context) error {
 		return describeError(err)
 	}
 	names := make(map[int64]string, len(libraries))
+	s.roots = make(map[int64][]string, len(libraries))
 	for _, lib := range libraries {
 		names[lib.ID] = lib.Name
+		s.roots[lib.ID] = lib.Folders
 	}
 	for _, id := range s.libraryIDs {
 		if _, ok := names[id]; !ok {
@@ -281,23 +290,33 @@ func (s *runState) readLibrary(ctx context.Context, libraryID int64, name string
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if page >= maxListingPages() {
+			return fmt.Errorf("BookOrbit library %q listing did not end after %d pages, refusing to continue; nothing was imported", name, page)
+		}
 		result, err := s.client.ListBookIDs(ctx, libraryID, page)
 		if err != nil {
 			return err
 		}
 		stats.PagesScanned++
+		added := 0
 		for _, id := range result.IDs {
 			if _, dup := seen[id]; dup {
 				continue
 			}
 			seen[id] = struct{}{}
 			ids = append(ids, id)
+			added++
+		}
+		if len(result.IDs) > 0 && added == 0 {
+			// A page of books already listed means the server is not paging.
+			// Going on would never end.
+			return fmt.Errorf("BookOrbit library %q answered page %d with books it had already listed, so the listing is not paging; nothing was imported", name, page+1)
+		}
+		if len(ids) > maxBooksPerLibrary {
+			return fmt.Errorf("BookOrbit library %q lists more than %d books, refusing to continue; nothing was imported", name, maxBooksPerLibrary)
 		}
 		if len(result.IDs) == 0 || (page+1)*PageSize >= result.Total {
 			break
-		}
-		if len(ids) > maxBooksPerLibrary {
-			return fmt.Errorf("BookOrbit library %q lists more than %d books, refusing to continue", name, maxBooksPerLibrary)
 		}
 	}
 	stats.ItemsSeen = len(ids)
@@ -320,7 +339,7 @@ func (s *runState) readLibrary(ctx context.Context, libraryID int64, name string
 			return err
 		}
 		stats.ItemsDetailFetched++
-		item, ok := normalize(book, engineID)
+		item, ok := normalize(book, engineID, s.roots[libraryID])
 		if !ok {
 			slog.Info("bookorbit import: book has no ebook or audiobook file, skipping it", "bookID", book.ID, "title", book.Title)
 			continue
@@ -358,7 +377,7 @@ var audioExtensions = map[string]bool{
 // normalize describes a BookOrbit book the way the import engine expects. It
 // reports false for a book with no file Bindery tracks, which is not imported:
 // the point of the import is to register files.
-func normalize(book *Book, engineLibraryID string) (abs.NormalizedLibraryItem, bool) {
+func normalize(book *Book, engineLibraryID string, roots []string) (abs.NormalizedLibraryItem, bool) {
 	item := abs.NormalizedLibraryItem{
 		ItemID:          strconv.FormatInt(book.ID, 10),
 		LibraryID:       engineLibraryID,
@@ -446,8 +465,13 @@ func normalize(book *Book, engineLibraryID string) (abs.NormalizedLibraryItem, b
 			})
 			item.SizeBytes += f.SizeBytes
 		}
-		item.Path = audiobookPath(audio)
+		item.Path = audiobookPath(audio, roots)
 		item.IsFile = len(audio) == 1
+		if item.Path == "" {
+			// No safe folder to register. The audio files stay listed, but
+			// nothing is registered for them.
+			slog.Warn("bookorbit import: audio files do not share one book folder, not registering the audiobook", "bookID", book.ID, "title", book.Title)
+		}
 	}
 	return item, true
 }
@@ -472,7 +496,12 @@ func fileID(f File) string {
 // audiobookPath is what Bindery registers as the book's audiobook: the file
 // when there is one, and the folder holding them when there are several,
 // which is how Bindery tracks a multi file audiobook from any source.
-func audiobookPath(audio []File) string {
+//
+// The folder must be a book folder. When the common ancestor of the files is a
+// library folder itself, or sits above one, the files belong to different
+// books or to no book folder, and registering it would claim a whole library
+// as one audiobook. It returns "" then, and the caller registers nothing.
+func audiobookPath(audio []File, roots []string) string {
 	if len(audio) == 1 {
 		return audio[0].Path
 	}
@@ -484,6 +513,19 @@ func audiobookPath(audio []File) string {
 				return ""
 			}
 			dir = parent
+		}
+	}
+	trimmed := strings.TrimRight(dir, `/\`)
+	if trimmed == "" || trimmed == "." {
+		return ""
+	}
+	for _, root := range roots {
+		root = strings.TrimRight(root, `/\`)
+		if root == "" {
+			continue
+		}
+		if trimmed == root || underDir(root, trimmed) {
+			return ""
 		}
 	}
 	return dir

@@ -109,7 +109,7 @@ Nothing is ever sent back to BookOrbit.
 - **No review queue.** The Audiobookshelf import can park an ambiguous match for a decision. The BookOrbit import does not yet: a book whose match is ambiguous is reported as failed with the reason, and nothing is guessed.
 - **No rollback button.** Runs are recorded, but the run history has no undo. Preview first.
 - **Unmatched books show Audiobookshelf as their provider.** A book that matches nothing upstream gets a placeholder id from the engine the two importers share, and Bindery currently labels that namespace Audiobookshelf. The book and its files are correct.
-- **Multi track audiobooks are registered as a folder,** not as individual tracks.
+- **Multi track audiobooks are registered as a folder,** not as individual tracks. When a book's audio files sit directly in a library folder, or in folders with nothing but a library folder in common, no folder is registered for it and the log says so.
 - **No scheduled import.** Run it by hand when BookOrbit has new books.
 - **No resume.** A run cut short by a restart is not picked up again and stays listed as running in the history. Start it again: runs are idempotent.
 - **Hardcover enhanced series matching** from the Audiobookshelf import is not used here. Series come from BookOrbit as written.
@@ -126,7 +126,7 @@ An import first reads every selected library in full and checks each record for 
 
 Fields the importer does not use can come and go without affecting it. If you hit a shape error, open an issue with the BookOrbit version and the error text.
 
-Other failures are reported the same way, before any write: a rejected or expired key, a key without access to a selected library, a library that no longer exists, or a server that cannot be reached.
+Other failures are reported the same way, before any write: a rejected or expired key, a key without access to a selected library, a library that no longer exists, or a server that cannot be reached. A listing that never ends, or keeps repeating books it already gave, stops the run the same way.
 
 ## Troubleshooting
 
