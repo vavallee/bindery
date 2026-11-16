@@ -561,3 +561,40 @@ func TestRebind_KeepsFieldsTheFetchCouldNotDetermine(t *testing.T) {
 		t.Errorf("description is determined absent and should clear, got %q", got.Description)
 	}
 }
+
+// Rebinding to an omnibus edition must not strip the real series the book
+// already had: Hardcover's ref for the wrapper is dropped on purpose (#3317),
+// so unlink then relink would otherwise leave the book with no series.
+func TestRebind_KeepsRealSeriesWhenUpstreamIsEditionWrapper(t *testing.T) {
+	h, _, _, series, author, book, ctx := rebindFixture(t)
+
+	real := &models.Series{ForeignID: "hc-series:839", Title: "The Liveship Traders"}
+	if err := series.CreateOrGet(ctx, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := series.LinkBook(ctx, real.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	stale := &models.Series{ForeignID: "SER_STALE", Title: "Unrelated Old Series"}
+	if err := series.CreateOrGet(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := series.LinkBook(ctx, stale.ID, book.ID, "2", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The provider already dropped the wrapper ref, so SeriesRefs is empty.
+	h.WithMetaLookup(&stubLookup{book: &models.Book{
+		Title:  "The Liveship Traders Trilogy",
+		Author: &models.Author{ForeignID: author.ForeignID},
+	}})
+	rec := httptest.NewRecorder()
+	h.Rebind(rec, rebindRequest(book.ID, map[string]any{"provider": "hardcover", "foreign_id": "hc:omnibus"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	ids, _ := series.GetSeriesIDsForBook(ctx, book.ID)
+	if len(ids) != 1 || ids[0] != real.ID {
+		t.Errorf("want only the real series kept, got %v (real=%d stale=%d)", ids, real.ID, stale.ID)
+	}
+}

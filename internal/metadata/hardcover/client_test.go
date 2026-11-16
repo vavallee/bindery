@@ -2665,7 +2665,7 @@ func TestGetListBooks_BuiltinShelfPopulatesSeriesRefs(t *testing.T) {
 // conversion rules don't drift silently.
 func TestBookSeriesRefs_EdgeCases(t *testing.T) {
 	// Valid entry -> a primary SeriesRef with prefixed foreign id.
-	refs := bookSeriesRefs([]hcBookSeries{{Position: 2, Series: struct {
+	refs := bookSeriesRefs("", []hcBookSeries{{Position: 2, Series: struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	}{ID: 55, Name: "Foundation"}}})
@@ -2674,7 +2674,7 @@ func TestBookSeriesRefs_EdgeCases(t *testing.T) {
 	}
 
 	// First valid entry wins (book_series is ordered by position asc).
-	multi := bookSeriesRefs([]hcBookSeries{
+	multi := bookSeriesRefs("", []hcBookSeries{
 		{Position: 1, Series: struct {
 			ID   int    `json:"id"`
 			Name string `json:"name"`
@@ -2689,7 +2689,7 @@ func TestBookSeriesRefs_EdgeCases(t *testing.T) {
 	}
 
 	// Missing id -> drop (cannot link without a stable foreign id).
-	if got := bookSeriesRefs([]hcBookSeries{{Series: struct {
+	if got := bookSeriesRefs("", []hcBookSeries{{Series: struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	}{ID: 0, Name: "Anon"}}}); got != nil {
@@ -2697,7 +2697,7 @@ func TestBookSeriesRefs_EdgeCases(t *testing.T) {
 	}
 
 	// Missing name -> drop (unusable upstream).
-	if got := bookSeriesRefs([]hcBookSeries{{Series: struct {
+	if got := bookSeriesRefs("", []hcBookSeries{{Series: struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	}{ID: 12, Name: ""}}}); got != nil {
@@ -2705,7 +2705,7 @@ func TestBookSeriesRefs_EdgeCases(t *testing.T) {
 	}
 
 	// Empty -> nil.
-	if got := bookSeriesRefs(nil); got != nil {
+	if got := bookSeriesRefs("", nil); got != nil {
 		t.Errorf("empty should be nil, got %+v", got)
 	}
 }
@@ -3207,5 +3207,37 @@ func TestGetBook_MarksGenresAndLanguageUnknown(t *testing.T) {
 	}
 	if !slices.Contains(book.UnknownFields, models.BookFieldGenres) || !slices.Contains(book.UnknownFields, models.BookFieldLanguage) {
 		t.Errorf("UnknownFields = %v", book.UnknownFields)
+	}
+}
+
+// A book Hardcover files as a series of one (an omnibus) must not carry a
+// series ref, so no caller can turn it into a series row (#3317). The real
+// series behind it, when there is one, takes over as primary.
+func TestToBook_DropsEditionWrapperSeriesRefs(t *testing.T) {
+	c := &Client{}
+	mk := func(id int, name string) hcBookSeries {
+		var bs hcBookSeries
+		bs.Series.ID, bs.Series.Name = id, name
+		return bs
+	}
+	omnibus := c.toBook(hcBook{ID: 1, Title: "The Liveship Traders Trilogy",
+		BookSeries: []hcBookSeries{mk(839, "The Liveship Traders")}})
+	if len(omnibus.SeriesRefs) != 0 {
+		t.Errorf("omnibus kept refs: %+v", omnibus.SeriesRefs)
+	}
+	issues := c.toBook(hcBook{ID: 2, Title: "Amazing Spider-Man, Vol. 3",
+		BookSeries: []hcBookSeries{mk(702, "The Amazing Spider-Man (2018) (Single Issues)"), mk(5, "Spider-Man")}})
+	if len(issues.SeriesRefs) != 1 || issues.SeriesRefs[0].Title != "Spider-Man" || !issues.SeriesRefs[0].Primary {
+		t.Errorf("want the real series as primary, got %+v", issues.SeriesRefs)
+	}
+	typesense := c.toBook(hcBook{ID: 3, Title: "Maze Runner Complete Collection",
+		SeriesRefs: []models.SeriesRef{{ForeignID: "hc-series:882", Title: "The Maze Runner", Primary: true}}})
+	if len(typesense.SeriesRefs) != 0 {
+		t.Errorf("search ref kept: %+v", typesense.SeriesRefs)
+	}
+	real := c.toBook(hcBook{ID: 4, Title: "Million Dollar Demon",
+		BookSeries: []hcBookSeries{mk(10, "The Hollows")}})
+	if len(real.SeriesRefs) != 1 || real.SeriesRefs[0].Title != "The Hollows" {
+		t.Errorf("real series lost: %+v", real.SeriesRefs)
 	}
 }
