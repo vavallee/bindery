@@ -119,6 +119,7 @@ describe('HEADINGS', () => {
     'settings.calibre.pushAll.label': 'the title of the progress dialog shown during a push; on the page it is a label in plugin mode only',
     'settings.calibre.deliveries.resetTitle': 'the title of a confirmation dialog',
     'settings.clients.diagnose.heading': 'a panel that appears after Diagnose is pressed',
+    'settings.tabs.bookorbit': 'the tab title, covered by the tab result',
     'settings.clients.remapAssist.heading': 'a panel that appears on demand under a client',
   }
   const ALLOWED_LITERALS: Record<string, string> = {

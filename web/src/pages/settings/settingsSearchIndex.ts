@@ -65,6 +65,7 @@ export const HEADINGS: HeadingEntry[] = [
   { tab: 'abs', key: 'settings.abs.libraries.heading' },
   { tab: 'bookorbit', key: 'settings.bookorbit.libraries.heading' },
   { tab: 'bookorbit', key: 'settings.bookorbit.import.heading' },
+  { tab: 'bookorbit', key: 'settings.bookorbit.runs.heading' },
   { tab: 'grimmory', key: 'settings.grimmory.push.heading' },
   { tab: 'api-keys', key: 'settings.general.apiKeys' },
   { tab: 'api-keys', key: 'settings.general.opds' },
