@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/vavallee/bindery/internal/importer"
 )
@@ -17,7 +19,16 @@ type reorganizeScanner interface {
 	PreviewReorganizeAuthor(ctx context.Context, authorID int64) ([]importer.ReorganizeMove, error)
 	PreviewReorganizeLibrary(ctx context.Context) ([]importer.ReorganizeMove, error)
 	ApplyReorganize(ctx context.Context, fileIDs []int64) []importer.ReorganizeMove
+	// ExternalImportFormats lists the formats whose effective import mode is
+	// External (another tool owns their layout, #3946).
+	ExternalImportFormats(ctx context.Context) []string
+	// ReorganizeFileFormats lists the distinct formats of the given files.
+	ReorganizeFileFormats(ctx context.Context, fileIDs []int64) []string
 }
+
+// codeReorganizeExternalMode is the stable error code of the 409 Apply
+// returns for files of a format in External import mode without confirmation.
+const codeReorganizeExternalMode = "reorganize_external_mode"
 
 // ReorganizeHandler serves the library-reorganize preview and apply endpoints.
 // All routes are admin-only (they move files on the server filesystem) and
@@ -45,7 +56,15 @@ type reorganizeSummary struct {
 type reorganizeResponse struct {
 	Moves   []importer.ReorganizeMove `json:"moves"`
 	Summary reorganizeSummary         `json:"summary"`
+	// ExternalMode is true on a preview when the plan holds files of a format
+	// whose import mode is External. ExternalFormats names them and Warning
+	// explains why Apply needs confirmExternalMode (#3946).
+	ExternalMode    bool     `json:"externalMode"`
+	ExternalFormats []string `json:"externalFormats,omitempty"`
+	Warning         string   `json:"warning,omitempty"`
 }
+
+const externalModeWarning = "Import mode is External for %s, so another tool owns that layout. Reorganize would rename and move those files to Bindery's naming template and can fight that tool. Apply needs explicit confirmation."
 
 // newReorganizeResponse builds the response body, normalising a nil moves
 // slice to an empty one so the JSON is "moves": [] rather than null (#3470).
@@ -112,11 +131,39 @@ func (h *ReorganizeHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, newReorganizeResponse(moves))
+	resp := newReorganizeResponse(moves)
+	var present []string
+	for _, m := range moves {
+		present = append(present, m.Format)
+	}
+	if ext := intersectFormats(h.scanner.ExternalImportFormats(ctx), present); len(ext) > 0 {
+		resp.ExternalMode = true
+		resp.ExternalFormats = ext
+		resp.Warning = fmt.Sprintf(externalModeWarning, strings.Join(ext, " and "))
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// intersectFormats returns the members of external that appear in present,
+// in external's order.
+func intersectFormats(external, present []string) []string {
+	var out []string
+	for _, e := range external {
+		for _, p := range present {
+			if e == p {
+				out = append(out, e)
+				break
+			}
+		}
+	}
+	return out
 }
 
 type applyReorganizeRequest struct {
 	FileIDs []int64 `json:"fileIds"`
+	// ConfirmExternalMode lets an admin deliberately reorganize files of a
+	// format in External import mode (#3946).
+	ConfirmExternalMode bool `json:"confirmExternalMode"`
 }
 
 // Apply handles POST /api/v1/reorganize/apply with a body of {fileIds:[...]}.
@@ -132,6 +179,20 @@ func (h *ReorganizeHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	if len(req.FileIDs) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "fileIds is required"})
 		return
+	}
+	// A request that holds any file of an External-mode format is refused whole
+	// unless confirmed, so nothing of that format is ever moved silently. Files
+	// of managed formats can be applied in their own request.
+	if !req.ConfirmExternalMode {
+		ext := intersectFormats(h.scanner.ExternalImportFormats(r.Context()), h.scanner.ReorganizeFileFormats(r.Context(), req.FileIDs))
+		if len(ext) > 0 {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":   fmt.Sprintf(externalModeWarning, strings.Join(ext, " and ")),
+				"code":    codeReorganizeExternalMode,
+				"formats": ext,
+			})
+			return
+		}
 	}
 	results := h.scanner.ApplyReorganize(r.Context(), req.FileIDs)
 	writeJSON(w, http.StatusOK, newReorganizeResponse(results))

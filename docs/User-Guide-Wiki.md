@@ -1301,6 +1301,10 @@ Three scopes, all the same preview:
 | One author | the author page, **More** → Rename files |
 | Your whole library | Settings → General → Library → **Reorganize Library** (#2296) |
 
+**External import mode.** If ebooks or audiobooks are in External import mode, another
+tool owns that layout, so the dialog shows a warning and the Rename button stays off
+until you tick a confirmation. Only files of those formats are affected.
+
 **Run Scan library first.** Reorganize only knows about files already attached
 to a book, so anything sitting in your library that no scan has matched is
 invisible to it and stays where it is. That is why the library scoped button

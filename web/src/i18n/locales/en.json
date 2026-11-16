@@ -3377,6 +3377,8 @@
     "both": "Ebook + Audiobook"
   },
   "renameFiles": {
+    "externalWarning": "Import mode is External, so another tool owns this layout. Renaming here can fight that tool.",
+    "externalConfirm": "I understand, rename these files anyway",
     "status": {
       "move": "Will move",
       "moved": "Moved",
