@@ -35,7 +35,7 @@ Bindery imports each download into its own library the normal way. BookOrbit has
 
 ### What to set
 
-In Bindery, keep **Import Mode** on `Auto`, `Copy` or `Hardlink` (Settings, General tab, File Naming). The lab used Copy. Use separate roots:
+In Bindery, set **Import Mode** to `Copy` (Settings, General tab, File Naming). Only Copy was tested here. Hardlink and Move are untested for this recipe. Hardlinks make two names for one file, so anything that edits a file in place, including a BookOrbit option that writes metadata into files if you turn it on, edits both names. Use separate roots:
 
 | Setting | Value |
 |---|---|
@@ -54,8 +54,6 @@ Then decide how BookOrbit learns about new books. Both of these worked:
 With watch off, a library whose content arrived after it was created stayed at 0 books for six minutes. Creating a library starts a scan, but nothing after that does unless watch is on or you start one. Books already in the folder before you turned watch on stayed unlisted until a manual scan, because the watcher only scans what changes.
 
 The lab turned watch on through BookOrbit's API. Watch on the ebook library was not tried, and neither was clicking through BookOrbit's UI for it.
-
-A third option, from the earlier lab: add a Bindery webhook notification on the **Book imported** event that POSTs to BookOrbit's scan route for the library, with an API key that has write access and the Manage libraries permission. With BookOrbit's watcher off, the scan started in the same second as the import and the book appeared. Bindery blocks webhooks to private addresses unless `BINDERY_NOTIFICATIONS_ALLOW_PRIVATE=1` is set.
 
 Leave BookOrbit's file renaming off for these libraries, or Bindery loses track of files it placed. This is advice from how Bindery tracks paths. It was not tested.
 
@@ -92,7 +90,9 @@ Mount the parent once, as `/data`, in both containers. Three separate mounts loo
 
 `BINDERY_LIBRARY_DIR` must be BookOrbit's final library, not the dock. Bindery never writes there in this mode. It only reads it during a scan. If it points at the wrong place the book stays Wanted.
 
-Bindery creates folders with mode `0750` by default (`BINDERY_DIR_MODE` changes that), so a BookOrbit running as a different user may not be able to move files out of them. Running both as the same user avoids the question. Different users were not tested.
+Bindery creates the folders it makes with mode `0750` by default, so a BookOrbit running as a different user may not be able to move files out of them. Running both as the same user avoids the question. Setting `BINDERY_DIR_MODE` to `0755` (the accepted values are `0700`, `0750` and `0755`) should open them up. Both the different user case and that fix are untested here.
+
+`BINDERY_PUID` and `BINDERY_PGID` are sanity checks only, not user switchers. Set the user on the container itself, `user: "UID:GID"` in Compose, as in the example below. See [Running as a specific UID/GID](./DEPLOYMENT.md#running-as-a-specific-uidgid).
 
 ```yaml
 services:
@@ -121,9 +121,9 @@ services:
 ### BookOrbit settings
 
 1. Create a library whose folder is `/data/books`. Leave its naming at the default so the author stays the top level folder (see limits).
-2. In the Book Dock's settings, turn on auto finalize into that library. Leave the threshold at 85 and the metadata mode at safe merge. Auto finalize is off on a fresh install, and without it every book waits in the dock for a click.
+2. In BookOrbit, turn on auto finalize for the Book Dock and point it at that library. Leave the threshold at 85 and the metadata mode at safe merge. Auto finalize is off on a fresh install, and without it every book waits in the dock for a click.
 
-The lab set the same thing through BookOrbit's API with a key from Settings, You, API keys:
+The lab set the same thing through BookOrbit's API, with an API key created in BookOrbit:
 
 ```bash
 curl -X PUT https://bookorbit.example.com/api/v1/book-dock/settings \
@@ -149,7 +149,7 @@ The drop folder fields appear once Import Mode is External. With the audiobook s
 
 **Flat versus templated.** Use Flat. An ebook lands as `Pride and Prejudice - Jane Austen.epub` in the dock root. An audiobook lands as one folder, `Persuasion - Jane Austen`, holding its tracks, and BookOrbit took that in as one book with three files. Templated (an `Author/Title` tree inside the dock) also worked, including two books by one author arriving together, but it gains nothing because BookOrbit renames everything anyway. Nested `Author/Title` folders in the dock were read as separate books, which is one more reason to prefer flat.
 
-**Copy versus hardlink.** Hardlink worked: the file in BookOrbit's library kept the same inode as the download. If you turn on BookOrbit's option to write metadata into files, a hardlinked library copy and the seeding download are the same bytes, so use Copy in that case.
+**Copy versus hardlink.** Hardlink worked: the file in BookOrbit's library kept the same inode as the download. Because both names are one file, anything that edits it in place, including a BookOrbit option that writes metadata into files if you turn it on, edits the seeding download too. Use Copy in that case.
 
 ### What BookOrbit does with a drop
 
@@ -167,9 +167,9 @@ The year in BookOrbit's folder name comes from the edition its lookup picked, so
 
 ### When a book parks in the dock
 
-BookOrbit compares what is inside the file with what its lookup found and scores the match. In 3.8.0 the auto finalize threshold is 85, an exact title is worth 55 and an exact author 30. That adds up to exactly 85, so a well tagged file with no ISBN has no headroom at all. A matching ISBN scored 90 or more on its own. Every well tagged file in the lab scored 85 or 90 and went through. A file with no embedded title or author scored 0 and waited, even though Bindery had given it a sensible file name.
+BookOrbit scores how well a dropped file matches its metadata lookup, and the lab ran with auto finalize on at the default threshold of 85. A drop whose title and author metadata matched scored exactly 85, which equals the threshold, so it was finalized with no spare margin. A file with no usable metadata scored 0 and waited in the dock for a click, even though Bindery had given it a sensible file name.
 
-Do not raise BookOrbit's threshold above 85. Anything higher parks nearly everything.
+Do not raise the threshold above 85. A matching drop scored 85 in the lab, so a higher setting would leave those files waiting in the dock too.
 
 A parked book is silent on the Bindery side: the book stays Wanted, the download stays handed off and Bindery does not grab it again. When a book you expected has not shown up, look at the Book Dock in BookOrbit and finalize it there. Bindery picks it up on the next scan.
 
