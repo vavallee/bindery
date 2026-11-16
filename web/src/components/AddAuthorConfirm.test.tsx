@@ -235,6 +235,11 @@ describe('AddAuthorConfirm', () => {
     expect(vi.mocked(api.addAuthor).mock.calls[0][0]).toMatchObject({ monitorNewItems: 'all' })
   })
 
+  it('keeps the monitor new items select disabled until the defaults arrive', () => {
+    render(<AddAuthorConfirm author={author({})} defaults={null} primaryProvider={null} onBack={vi.fn()} onClose={vi.fn()} onAdded={vi.fn()} />)
+    expect(screen.getByLabelText('Monitor newly discovered books')).toBeDisabled()
+  })
+
   it('reads the install monitor new items default, treating anything but none as all', async () => {
     vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
       if (key === 'author.default_monitor_new_items') return { key, value: 'none' }
