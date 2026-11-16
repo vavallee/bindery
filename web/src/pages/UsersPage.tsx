@@ -13,6 +13,19 @@ import { errorText } from '../util/errorText'
 const inputCls = 'w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm'
 const btnCls = 'px-3 py-1.5 rounded text-sm font-medium transition-colors'
 
+// The per account auto approve setting as a select value: null is "use the
+// system default", true is Always, false is Never (#3900).
+function autoApproveValue(v: boolean | null): 'default' | 'always' | 'never' {
+  if (v === null || v === undefined) return 'default'
+  return v ? 'always' : 'never'
+}
+
+function autoApproveFromValue(v: string): boolean | null {
+  if (v === 'always') return true
+  if (v === 'never') return false
+  return null
+}
+
 export default function UsersPage() {
   const fid = useId()
   const { t } = useTranslation()
@@ -112,10 +125,14 @@ export default function UsersPage() {
 
   // Per-account request auto approval (#2718). Turning it on only changes what
   // happens to the account's next request; anything already queued stays.
-  async function handleAutoApproveChange(u: ManagedUser, next: boolean) {
+  async function handleAutoApproveChange(u: ManagedUser, next: boolean | null) {
     try {
-      await api.setUserAutoApprove(u.id, next)
-      setUsers(prev => prev.map(x => x.id === u.id ? { ...x, autoApproveRequests: next } : x))
+      const res = await api.setUserAutoApprove(u.id, next)
+      setUsers(prev => prev.map(x => x.id === u.id ? {
+        ...x,
+        autoApproveRequests: next,
+        autoApproveEffective: res?.autoApproveEffective ?? x.autoApproveEffective,
+      } : x))
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t('users.autoApproveFail'))
     }
@@ -155,15 +172,23 @@ export default function UsersPage() {
   // Only a requester queues requests, so the toggle is shown for that role.
   // The value stays on the account if the role changes and comes back with it.
   const autoApproveToggle = (u: ManagedUser) => u.role === 'requester' && (
-    <label className="flex items-center gap-2 text-xs text-fg-muted">
-      <input
-        type="checkbox"
-        checked={u.autoApproveRequests}
-        onChange={e => void handleAutoApproveChange(u, e.target.checked)}
+    <div className="flex flex-col gap-1 text-xs text-fg-muted">
+      <select
+        value={autoApproveValue(u.autoApproveRequests)}
+        onChange={e => void handleAutoApproveChange(u, autoApproveFromValue(e.target.value))}
         aria-label={t('users.autoApproveFor', { username: u.username })}
-      />
-      {t('users.autoApprove')}
-    </label>
+        className="rounded border border-border bg-surface px-2 py-1 text-xs text-fg"
+      >
+        <option value="default">{t('users.autoApproveDefault')}</option>
+        <option value="always">{t('users.autoApproveAlways')}</option>
+        <option value="never">{t('users.autoApproveNever')}</option>
+      </select>
+      {u.autoApproveEffective !== undefined && (
+        <span data-testid={`auto-approve-effective-${u.id}`}>
+          {u.autoApproveEffective ? t('users.autoApproveEffectiveOn') : t('users.autoApproveEffectiveOff')}
+        </span>
+      )}
+    </div>
   )
 
   // The server refuses to delete your own account or the last admin, so the

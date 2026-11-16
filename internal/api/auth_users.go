@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -20,6 +22,7 @@ import (
 // PUT    /api/v1/auth/users/:id/auto-approve
 type UserManagementHandler struct {
 	users            *db.UserRepo
+	settings         *db.SettingsRepo
 	localAuthEnabled bool
 }
 
@@ -41,6 +44,13 @@ func NewUserManagementHandler(users *db.UserRepo) *UserManagementHandler {
 	return &UserManagementHandler{users: users, localAuthEnabled: true}
 }
 
+// WithSettings gives the handler the settings store so a user's effective
+// auto approve value can include requests.auto_approve_default (#3900).
+func (h *UserManagementHandler) WithSettings(s *db.SettingsRepo) *UserManagementHandler {
+	h.settings = s
+	return h
+}
+
 // WithLocalAuthEnabled controls whether local password accounts may be
 // created via the admin API. When false, POST /auth/users returns 403.
 func (h *UserManagementHandler) WithLocalAuthEnabled(v bool) *UserManagementHandler {
@@ -55,20 +65,30 @@ type userResponse struct {
 	Email       *string `json:"email,omitempty"`
 	DisplayName *string `json:"displayName,omitempty"`
 	CreatedAt   string  `json:"createdAt"`
-	// AutoApproveRequests makes this account's requests approve themselves
-	// instead of waiting in the queue (#2718).
-	AutoApproveRequests bool `json:"autoApproveRequests"`
+	// AutoApproveRequests is the account's own setting: true (Always), false
+	// (Never) or null (use requests.auto_approve_default) (#2718, #3900).
+	AutoApproveRequests *bool `json:"autoApproveRequests"`
+	// AutoApproveEffective is what a request from this account actually gets
+	// today: its own value, or the system default when it has none.
+	AutoApproveEffective bool `json:"autoApproveEffective"`
 }
 
-func toUserResponse(u db.User) userResponse {
+// toUserResponse shapes a user row. autoDefault is the system default,
+// read once by the caller so a list does not read the setting per row.
+func toUserResponse(u db.User, autoDefault bool) userResponse {
+	effective := autoDefault
+	if u.RequestsAutoApprove != nil {
+		effective = *u.RequestsAutoApprove
+	}
 	return userResponse{
-		ID:                  u.ID,
-		Username:            u.Username,
-		Role:                u.Role,
-		Email:               u.Email,
-		DisplayName:         u.DisplayName,
-		CreatedAt:           u.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		AutoApproveRequests: u.RequestsAutoApprove,
+		ID:                   u.ID,
+		Username:             u.Username,
+		Role:                 u.Role,
+		Email:                u.Email,
+		DisplayName:          u.DisplayName,
+		CreatedAt:            u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		AutoApproveRequests:  u.RequestsAutoApprove,
+		AutoApproveEffective: effective,
 	}
 }
 
@@ -80,9 +100,10 @@ func (h *UserManagementHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
+	autoDefault := autoApproveDefault(r.Context(), h.settings)
 	out := make([]userResponse, 0, len(users))
 	for _, u := range users {
-		out = append(out, toUserResponse(u))
+		out = append(out, toUserResponse(u, autoDefault))
 	}
 	writeOK(w, out)
 }
@@ -132,7 +153,7 @@ func (h *UserManagementHandler) Create(w http.ResponseWriter, r *http.Request) {
 		u.Role = body.Role
 	}
 	w.WriteHeader(http.StatusCreated)
-	writeOK(w, toUserResponse(*u))
+	writeOK(w, toUserResponse(*u, autoApproveDefault(r.Context(), h.settings)))
 }
 
 // Delete removes a user (admin-only). Cannot delete the last admin, and a
@@ -249,7 +270,35 @@ func (h *UserManagementHandler) SetRole(w http.ResponseWriter, r *http.Request) 
 	writeOK(w, map[string]any{"ok": true})
 }
 
-// SetAutoApprove turns a user's request auto approval on or off (admin-only).
+// parseAutoApproveBody reads {"enabled": true|false|null}. The key is
+// required and must be a JSON boolean or null: a string, a number, a missing
+// key or an extra key is refused rather than guessed at, because a misread
+// "off" or "on" changes who gets books added without an admin. null clears the
+// account's own setting so it follows requests.auto_approve_default.
+func parseAutoApproveBody(r io.Reader) (*bool, bool) {
+	var body struct {
+		Enabled json.RawMessage `json:"enabled"`
+	}
+	dec := json.NewDecoder(io.LimitReader(r, 1<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil || dec.More() {
+		return nil, false
+	}
+	switch string(bytes.TrimSpace(body.Enabled)) {
+	case "true":
+		v := true
+		return &v, true
+	case "false":
+		v := false
+		return &v, true
+	case "null":
+		return nil, true
+	}
+	return nil, false
+}
+
+// SetAutoApprove sets a user's own request auto approval (admin-only): true
+// is Always, false is Never, null is use the system default (#3900).
 // PUT /api/v1/auth/users/:id/auto-approve
 //
 // It changes what happens to the account's next request; requests already in
@@ -260,14 +309,12 @@ func (h *UserManagementHandler) SetAutoApprove(w http.ResponseWriter, r *http.Re
 		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var body struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid body")
+	enabled, ok := parseAutoApproveBody(r.Body)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "enabled must be true, false or null")
 		return
 	}
-	if err := h.users.SetRequestsAutoApprove(r.Context(), id, body.Enabled); err != nil {
+	if err := h.users.SetRequestsAutoApprove(r.Context(), id, enabled); err != nil {
 		if errors.Is(err, db.ErrUserNotFound) {
 			writeErr(w, http.StatusNotFound, "No user with that id.")
 			return
@@ -275,7 +322,16 @@ func (h *UserManagementHandler) SetAutoApprove(w http.ResponseWriter, r *http.Re
 		writeServerError(w, r, err)
 		return
 	}
-	writeOK(w, map[string]any{"ok": true})
+	// Answer with what the account now has, so the UI shows the effective
+	// result without a second request. The write has already landed, so a
+	// failed re-read still answers ok, just without the values.
+	out := map[string]any{"ok": true}
+	if u, err := h.users.GetByID(r.Context(), id); err == nil && u != nil {
+		resp := toUserResponse(*u, autoApproveDefault(r.Context(), h.settings))
+		out["autoApproveRequests"] = resp.AutoApproveRequests
+		out["autoApproveEffective"] = resp.AutoApproveEffective
+	}
+	writeOK(w, out)
 }
 
 // ResetPassword sets a new password for a user (admin-only).

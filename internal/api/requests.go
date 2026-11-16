@@ -28,6 +28,38 @@ import (
 // have awaiting a decision (security review item S4).
 const SettingRequestsMaxPendingPerUser = "requests.max_pending_per_user"
 
+// SettingRequestsAutoApproveDefault is the install wide answer to "do this
+// account's requests approve themselves" for every account that has no
+// setting of its own (#3900). "true" or "false"; unset or anything else is
+// off, so an upgrade changes nothing. Admin only to read and write: it is not
+// on nonAdminReadableSettings and PUT /setting sits behind RequireAdmin.
+const SettingRequestsAutoApproveDefault = "requests.auto_approve_default"
+
+// autoApproveDefault reads requests.auto_approve_default. An unset key, an
+// unreadable one and any value but "true" all answer false: an auto approval
+// that cannot be confirmed is not run.
+func autoApproveDefault(ctx context.Context, settings *db.SettingsRepo) bool {
+	if settings == nil {
+		return false
+	}
+	s, err := settings.Get(ctx, SettingRequestsAutoApproveDefault)
+	if err != nil || s == nil {
+		return false
+	}
+	return strings.TrimSpace(s.Value) == "true"
+}
+
+// effectiveAutoApprove is the value an account is judged by: its own when it
+// has one, otherwise the system default. The default is only read when the
+// account has no value, so a lookup problem there cannot turn an explicit
+// Always or Never into anything else.
+func effectiveAutoApprove(ctx context.Context, settings *db.SettingsRepo, own *bool) bool {
+	if own != nil {
+		return *own
+	}
+	return autoApproveDefault(ctx, settings)
+}
+
 // defaultRequestsMaxPendingPerUser applies when the setting is unset.
 const defaultRequestsMaxPendingPerUser = 25
 
@@ -717,8 +749,11 @@ func (h *RequestHandler) targetsExistingBook(ctx context.Context, kind string, f
 }
 
 // autoApproveRequests reports whether owner's account approves its requests
-// without a human. A missing user repo, an unreadable row or a lookup error
-// all answer false: an auto approval that cannot be confirmed is not run.
+// without a human: the account's own setting when it has one, otherwise
+// requests.auto_approve_default (#3900). The account's role is not consulted,
+// as before: the setting follows the account that owns the request. A missing
+// user repo, an unreadable row or a lookup error all answer false: an auto
+// approval that cannot be confirmed is not run.
 func (h *RequestHandler) autoApproveRequests(ctx context.Context, owner int64) bool {
 	if h.users == nil {
 		return false
@@ -727,7 +762,7 @@ func (h *RequestHandler) autoApproveRequests(ctx context.Context, owner int64) b
 	if err != nil || u == nil {
 		return false
 	}
-	return u.RequestsAutoApprove
+	return effectiveAutoApprove(ctx, h.settings, u.RequestsAutoApprove)
 }
 
 // autoApprove claims a request just created for owner and runs the same add an

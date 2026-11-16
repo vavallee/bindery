@@ -1938,11 +1938,11 @@ PUT    /api/v1/auth/oidc/providers                update providers (admin)
 GET    /api/v1/auth/oidc/{provider}/login         start an OIDC login
 GET    /api/v1/auth/oidc/{provider}/callback      OIDC redirect target
 
-GET    /api/v1/auth/users                         list users (admin)
+GET    /api/v1/auth/users                         list users (admin); each row carries autoApproveRequests (the account's own value: true, false or null for none) and autoApproveEffective (what its requests get today: its own value, else requests.auto_approve_default)
 POST   /api/v1/auth/users                         create (admin)
 DELETE /api/v1/auth/users/{id}                    delete (admin), ?strategy=reassign|purge[&reassignTo=<id>]; 409 with counts when the user owns data and no strategy was given, 409 for your own account, 400 for the last admin (see multi-user.md)
 PUT    /api/v1/auth/users/{id}/role               change role (admin), body {"role": "admin"|"user"|"requester"}; 404 for an unknown user
-PUT    /api/v1/auth/users/{id}/auto-approve       per-account request auto-approval (admin), body {"enabled": true|false}
+PUT    /api/v1/auth/users/{id}/auto-approve       per-account request auto-approval (admin), body {"enabled": true|false|null}; null clears the account's own setting so it follows requests.auto_approve_default; anything else (a string, a number, a missing key, an extra key) is 400; answers {"ok": true, "autoApproveRequests": ..., "autoApproveEffective": ...}
 PUT    /api/v1/auth/users/{id}/reset-password     reset (admin)
 ```
 
@@ -1990,8 +1990,8 @@ predates the field. The
 request is stored exactly as if that account had made it: they own it, it
 counts against their `requests.max_pending_per_user`, it shows on their My
 requests, and approving it adds the books as theirs. If that account has
-auto-approval on, the request approves itself the usual way; otherwise it
-waits in the queue. There is no option to approve on create. Any other caller
+auto-approval on, whether its own or inherited from `requests.auto_approve_default`, the
+request approves itself the usual way; otherwise it waits in the queue. There is no option to approve on create. Any other caller
 that sends `forUser`, whatever its value, gets `403`, and for them the body
 stays the three fields above. That includes a caller that `disabled` or
 `local-only` mode admits as admin without signing in, because nobody would be

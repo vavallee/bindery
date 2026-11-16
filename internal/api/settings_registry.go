@@ -146,6 +146,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingRequestsAutoApproveDefault, Type: SettingTypeBool, Default: "false",
+		Description: "Approve requests without an admin for every account that has no auto approve setting of its own. An account set to Always or Never on the Users page ignores this. A request for a book already in the catalogue still waits for a person, and requests.max_pending_per_user still caps how many auto approve each day.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: SettingDefaultLibraryRootFolderID, Type: SettingTypeInt, Default: "", Min: "1",
 		Description: "root_folder.id used as the library path for authors with no root folder of their own. Empty falls back to BINDERY_LIBRARY_DIR.",
 		State:       SettingStateActive,

@@ -660,6 +660,7 @@ func main() {
 		WithOIDCGroupClaim(cfg.OIDCGroupClaim).
 		WithLifetimeCtx(appCtx)
 	userMgmtHandler := api.NewUserManagementHandler(userRepo).
+		WithSettings(settingsRepo).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
 	searchHandler := api.NewSearchHandler(metaAgg, bookRepo, authorRepo)
 	librarySearchHandler := api.NewLibrarySearchHandler(authorRepo, bookRepo, seriesRepo)
