@@ -92,6 +92,9 @@ type requestAdder interface {
 	// library: it monitors the formats in mediaType on the existing row, and
 	// searches when asked (#3835).
 	monitorExistingBookCore(ctx context.Context, book *models.Book, mediaType string, searchOnAdd bool) (addBookResult, error)
+	// searchExistingBookCore starts the add search on a book already monitored
+	// for the requested format, writing nothing, and returns the run id (#3961).
+	searchExistingBookCore(ctx context.Context, book *models.Book) string
 }
 
 // requestMetadata is the provider lookup a create uses to learn the title and
@@ -975,6 +978,16 @@ func missingRequestFormats(b *models.Book, mediaType string) (ebook, audiobook b
 	return wantEbook && !ownsEbook && !monEbook, wantAudio && !ownsAudio && !monAudio
 }
 
+// coveredButNotOnDisk reports whether a requested format is monitored on the
+// book but has no file yet, so an approval that asks for a search has
+// something to look for. A format already on disk is never searched again.
+func coveredButNotOnDisk(b *models.Book, mediaType string) bool {
+	wantEbook, wantAudio := requestedFormats(mediaType)
+	ownsEbook, ownsAudio := ownedFormats(b)
+	monEbook, monAudio := monitoredFormats(b)
+	return (wantEbook && monEbook && !ownsEbook) || (wantAudio && monAudio && !ownsAudio)
+}
+
 // existingBookOutcome is what approving a request does to a book that is
 // already in the library.
 type existingBookOutcome int
@@ -1034,6 +1047,17 @@ func (h *RequestHandler) approveExistingBook(ctx context.Context, book *models.B
 		outcome, missingEbook, missingAudio := h.existingBookPlan(book, owner, mediaType)
 		switch outcome {
 		case outcomeCovered:
+			// Covered by monitoring is not covered by a file (#3961). When
+			// the approver asked for a search and a requested format is
+			// monitored but not on disk, search for it now, whatever the
+			// author's monitored flag says: the approval is an explicit act
+			// on this one book, as in the Add dialog. The row is not written.
+			// A book held by another account is left alone, as it is for a
+			// widen.
+			if searchOnAdd && coveredButNotOnDisk(book, mediaType) && !bookHeldByAnotherAccount(book, owner) {
+				runID := h.adder.searchExistingBookCore(ctx, book)
+				return runID, "This book was already in the library and monitored for the requested format, so a search was started and the request is resolved.", nil
+			}
 			return "", "This book was already in the library with the requested format, so nothing was added and the request is resolved.", nil
 		case outcomeRefused:
 			return "", "", errBookHeldElsewhere
