@@ -36,6 +36,9 @@ type Release struct {
 	// the release size charged against the user's download ratio (0 =
 	// freeleech, 1 = normal). nil means the indexer did not report it.
 	DownloadVolumeFactor *float64
+	// Seeders is the torznab seeders count. nil means the indexer did not
+	// report it, which is not the same as a reported 0 (#3953).
+	Seeders *int
 }
 
 // Decision is the result of evaluating a single release.
@@ -112,6 +115,7 @@ func ReleaseFromSearchResult(sr newznab.SearchResult) Release {
 		MediaType:   sr.MediaType,
 
 		DownloadVolumeFactor: sr.DownloadVolumeFactor,
+		Seeders:              sr.Seeders,
 	}
 }
 
