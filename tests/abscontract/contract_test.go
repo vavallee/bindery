@@ -187,8 +187,12 @@ func TestContractHarness_ImporterDryRunAndIdempotentRerun(t *testing.T) {
 	// After the #762 fix, the two non-ASIN fixture items (missing-stats and
 	// ebook-only) are imported rather than parked in the review queue: all six
 	// items become books/authors and no item is queued for review.
-	if dryRunStats.BooksCreated != 6 || dryRunStats.AuthorsCreated != 6 || dryRunStats.SeriesCreated != 2 || dryRunStats.SeriesLinked != 1 || dryRunStats.ReviewQueued != 0 {
-		t.Fatalf("dry-run stats = %+v, want 6 books/authors, 2 created series, 1 linked series membership, and no queued reviews", dryRunStats)
+	//
+	// The six books have five authors: two are by Martha Wells. A dry run used
+	// to count her once per book and report six (#1927); it now reports what
+	// the import below creates.
+	if dryRunStats.BooksCreated != 6 || dryRunStats.AuthorsCreated != 5 || dryRunStats.SeriesCreated != 2 || dryRunStats.SeriesLinked != 1 || dryRunStats.ReviewQueued != 0 {
+		t.Fatalf("dry-run stats = %+v, want 6 books, 5 authors, 2 created series, 1 linked series membership, and no queued reviews", dryRunStats)
 	}
 
 	authors, err := authorRepo.List(context.Background())
@@ -216,6 +220,9 @@ func TestContractHarness_ImporterDryRunAndIdempotentRerun(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("commit Run: %v", err)
+	}
+	if commitStats.AuthorsCreated != dryRunStats.AuthorsCreated {
+		t.Fatalf("import created %d authors, the dry run promised %d", commitStats.AuthorsCreated, dryRunStats.AuthorsCreated)
 	}
 	if commitStats.BooksCreated != 6 || commitStats.SeriesCreated != 2 || commitStats.SeriesLinked != 1 || commitStats.ReviewQueued != 0 {
 		t.Fatalf("commit stats = %+v, want 6 books, repeated series ownership, and no queued reviews", commitStats)
