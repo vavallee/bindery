@@ -323,6 +323,7 @@ Endpoints, authentication and integration examples are in **[docs/API.md](docs/A
 | **Calibre on a Windows desktop**: plugin install, pull mode, push with a share | [docs/Calibre-Windows-Desktop-Wiki.md](docs/Calibre-Windows-Desktop-Wiki.md) |
 | **Audiobookshelf import**: what comes across, review queue, rollback | [docs/ABS-Import-Wiki.md](docs/ABS-Import-Wiki.md) |
 | **BookOrbit import**: read only key, path remap, what comes across, known limits | [docs/BookOrbit-Import.md](docs/BookOrbit-Import.md) |
+| **BookOrbit integration**: Bindery files and BookOrbit reads, External mode with the Book Dock, converting audiobooks, Kubernetes | [docs/BookOrbit-Integration-Wiki.md](docs/BookOrbit-Integration-Wiki.md) |
 | **Hardcover series**: token setup, series linking, missing books | [docs/Hardcover-Series-Wiki.md](docs/Hardcover-Series-Wiki.md) |
 | **Metadata editing**: manual edits, field locks, genre overrides | [docs/Metadata-Editing-Wiki.md](docs/Metadata-Editing-Wiki.md) |
 | **Multi user and requests**: roles, isolation, requesters | [docs/multi-user.md](docs/multi-user.md) |
