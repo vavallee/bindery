@@ -132,6 +132,7 @@ This is the topology for "Bindery keeps my library, CWA should also see new eboo
 
 Choose this when CWA, Calibre auto ingest or Storyteller should be the only thing writing the library and Bindery should stay out of it. Under Settings, General tab, File Naming, set **Import Mode** to `External`; the drop folder fields appear underneath.
 
+- **Reorganize asks for confirmation.** The other tool owns the layout in this mode, so Reorganize (Rename files, Reorganize Library) shows a warning and the Rename button stays disabled until you tick a confirmation box. Without that confirmation the apply API answers 409 and moves nothing. Only formats in External mode are affected; with **Audiobook import mode** set to `Copy`, audiobooks can still be reorganized freely.
 - **Drop folder** (`import.drop_folder`) is the folder the tool ingests from, for example `/cwa-book-ingest`. Empty means Bindery hands off in place: the download stays in the download directory and nothing is copied anywhere.
 - **Layout** (`import.drop_layout`): `flat` puts every book file the download carries in the folder root under a sanely named name, which is what watch folder tools expect, so a download holding two ebook files produces two; `templated` recreates the `{Author}/{Title (Year)}/…` tree from your naming template inside the drop folder.
 - **Placement** (`import.drop_link_mode`): `copy` (the default, safest since the tool usually deletes what it consumes) or `hardlink` (no extra disk, same filesystem only). The download itself is never moved, so torrents keep seeding.

@@ -639,3 +639,35 @@ func pruneEmptyParents(dir string, roots []string) {
 		cur = filepath.Dir(cur)
 	}
 }
+
+// ExternalImportFormats returns the media formats ("ebook", "audiobook") whose
+// effective import mode is External, meaning another tool owns that format's
+// library layout. It reuses configuredImportModeFor, the same resolver the
+// import pipeline uses, so audiobooks follow import.audiobook.mode and fall
+// back to import.mode (#3946).
+func (s *Scanner) ExternalImportFormats(ctx context.Context) []string {
+	var out []string
+	for _, f := range []string{models.MediaTypeEbook, models.MediaTypeAudiobook} {
+		if s.configuredImportModeFor(ctx, f) == "external" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// ReorganizeFileFormats returns the distinct formats of the given tracked
+// files. Ids that no longer resolve are skipped; ApplyReorganize reports them
+// as failed on its own.
+func (s *Scanner) ReorganizeFileFormats(ctx context.Context, fileIDs []int64) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, id := range fileIDs {
+		_, f, err := s.bookFileByID(ctx, id)
+		if err != nil || seen[f.Format] {
+			continue
+		}
+		seen[f.Format] = true
+		out = append(out, f.Format)
+	}
+	return out
+}

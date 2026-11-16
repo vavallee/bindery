@@ -35,6 +35,11 @@ export interface ReorganizeSummary {
 export interface ReorganizeResponse {
   moves: ReorganizeMove[]
   summary: ReorganizeSummary
+  // Set on a preview when the plan holds files of a format in External import
+  // mode, where another tool owns the layout (#3946).
+  externalMode?: boolean
+  externalFormats?: string[]
+  warning?: string
 }
 
 export type ReorganizeScope = 'book' | 'author' | 'library'
@@ -45,9 +50,9 @@ export const reorganizeApi = {
     if (id != null) q.set('id', String(id))
     return request<ReorganizeResponse>(`/reorganize/preview?${q.toString()}`)
   },
-  apply: (fileIds: number[]) =>
+  apply: (fileIds: number[], confirmExternalMode = false) =>
     request<ReorganizeResponse>('/reorganize/apply', {
       method: 'POST',
-      body: JSON.stringify({ fileIds }),
+      body: JSON.stringify(confirmExternalMode ? { fileIds, confirmExternalMode } : { fileIds }),
     }),
 }
