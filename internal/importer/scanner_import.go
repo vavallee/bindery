@@ -116,7 +116,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		s.updateDownloadStatus(ctx, dl.ID, models.StateImportExternal)
-		slog.Info("external import: download handed off, awaiting library scan", "title", dl.Title)
+		slog.Info("external import: download handed off in place, awaiting library scan; the language and content checks do not run without a drop folder", "title", dl.Title)
 		s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{"mode": "external", "status": string(models.StateImportExternal)})
 		return
 	}

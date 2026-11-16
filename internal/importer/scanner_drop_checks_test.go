@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -268,5 +269,159 @@ func TestExternalDropChecks_PairGating(t *testing.T) {
 				t.Errorf("%d file(s) in the drop folder, want 0", n)
 			}
 		})
+	}
+}
+
+// Pair gating stores only the held download's path, so the release and the
+// timeout sweep re-read the files. They must run the same checks again (#3945).
+
+func addSiblingAudiobook(t *testing.T, f *contentFixture) *models.Download {
+	t.Helper()
+	adl := &models.Download{BookID: &f.book.ID, GUID: "guid-sibling-audio", Title: "Sibling", Status: models.StateCompleted, Protocol: "torrent"}
+	if err := f.downloads.Create(context.Background(), adl); err != nil {
+		t.Fatal(err)
+	}
+	return adl
+}
+
+func releaseWithAudiobook(t *testing.T, f *contentFixture) {
+	t.Helper()
+	audioDir := writeAudiobookDownload(t)
+	adl := addSiblingAudiobook(t, f)
+	f.scanner.tryImportInternal(context.Background(), adl, audioDir, "", "", "", nil, nil)
+}
+
+func droppedEpubLanguages(t *testing.T, drop string) []string {
+	t.Helper()
+	var langs []string
+	for _, p := range dropCheckFilesUnder(t, drop) {
+		if !strings.HasSuffix(p, ".epub") {
+			continue
+		}
+		meta, err := ReadEbookMetadata(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		langs = append(langs, meta.Languages...)
+	}
+	return langs
+}
+
+// A release holding a Swedish and an English EPUB is held, then released when
+// the sibling arrives: only the allowed file is dropped.
+func TestExternalDropChecks_HeldMixedLanguageReleasesOnlyAllowed(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		name := "whole download"
+		if shared {
+			name = "explicit files on a shared root"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newLangEnforceFixture(t, langEnforceOpts{allowed: "eng", bookLang: "eng"})
+			f.book.MediaType = models.MediaTypeBoth
+			if err := f.books.Update(ctx, f.book); err != nil {
+				t.Fatal(err)
+			}
+			drop := t.TempDir()
+			for k, v := range map[string]string{"import.mode": "external", "import.drop_folder": drop, "import.drop_pair_gating": "true"} {
+				if err := f.settings.Set(ctx, k, v); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeEpubWithLanguage(t, filepath.Join(f.dir, "The Racketeer.epub"), "sv")
+			writeEpubWithLanguage(t, filepath.Join(f.dir, "Other.epub"), "en")
+			var explicit []string
+			if shared {
+				explicit = []string{filepath.Join(f.dir, "Other.epub")}
+			}
+			f.scanner.tryImportInternal(ctx, f.dl, f.dir, "", "", "", nil, explicit)
+			if dl, _ := f.reload(t); dl.Status != models.StateImportHeld {
+				t.Fatalf("status = %q (%s), want held", dl.Status, dl.ErrorMessage)
+			}
+
+			audioDir := writeAudiobookDownload(t)
+			adl := &models.Download{BookID: &f.book.ID, GUID: "guid-sibling-audio", Title: "Sibling", Status: models.StateCompleted, Protocol: "torrent"}
+			if err := f.downloads.Create(ctx, adl); err != nil {
+				t.Fatal(err)
+			}
+			f.scanner.tryImportInternal(ctx, adl, audioDir, "", "", "", nil, nil)
+
+			if dl, _ := f.reload(t); dl.Status != models.StateImportExternal {
+				t.Fatalf("held ebook status = %q (%s), want %q", dl.Status, dl.ErrorMessage, models.StateImportExternal)
+			}
+			langs := droppedEpubLanguages(t, drop)
+			if len(langs) != 1 || langs[0] != "eng" {
+				t.Errorf("dropped epub languages = %v, want only [eng]", langs)
+			}
+		})
+	}
+}
+
+// A held ebook that now fails a block policy is parked like a managed refusal
+// when the sibling arrives, and nothing of it is placed.
+func TestExternalDropChecks_HeldReleaseNowBlocked(t *testing.T) {
+	f := newContentFixtureFor(t, "Middlemarch", "George Eliot", models.MediaTypeBoth)
+	drop := f.externalDrop(t)
+	f.setMode(t, "import.drop_pair_gating", "true")
+	f.writeEpubTitled(t, "book.epub", "Middlemarch", "George Eliot")
+	f.importExternal(t)
+	if dl, _ := f.reload(t); dl.Status != models.StateImportHeld {
+		t.Fatalf("status = %q, want held", dl.Status)
+	}
+
+	// While held, the policy tightens and the file turns out to be another book.
+	f.setMode(t, ebookCheckKey, "block")
+	f.writeEpubTitled(t, "book.epub", "Jane Eyre: An Autobiography", "Currer Bell")
+	releaseWithAudiobook(t, f)
+
+	dl, _ := f.reload(t)
+	if dl.Status != models.StateImportBlocked {
+		t.Fatalf("held ebook status = %q (%s), want blocked", dl.Status, dl.ErrorMessage)
+	}
+	if !f.blocklisted(t) || dl.ImportPath == "" {
+		t.Error("held release not blocklisted or path not recorded")
+	}
+	for _, p := range dropCheckFilesUnder(t, drop) {
+		if strings.HasSuffix(p, ".epub") {
+			t.Errorf("a refused held ebook was placed: %s", p)
+		}
+	}
+}
+
+// The timeout sweep runs the checks too, and a refusal is recorded once, not
+// on every tick.
+func TestExternalDropChecks_SweepRunsChecksOnce(t *testing.T) {
+	f := newContentFixtureFor(t, "Middlemarch", "George Eliot", models.MediaTypeBoth)
+	drop := f.externalDrop(t)
+	f.setMode(t, "import.drop_pair_gating", "true")
+	f.writeEpubTitled(t, "book.epub", "Middlemarch", "George Eliot")
+	f.importExternal(t)
+	f.setMode(t, ebookCheckKey, "block")
+	f.writeEpubTitled(t, "book.epub", "Jane Eyre: An Autobiography", "Currer Bell")
+
+	ctx := context.Background()
+	old := time.Now().Add(-100 * time.Hour).UTC()
+	if _, err := f.sqlDB.ExecContext(ctx, "UPDATE downloads SET completed_at=? WHERE id=?", old, f.dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.scanner.sweepHeldPairGating(ctx)
+	f.scanner.sweepHeldPairGating(ctx)
+
+	dl, _ := f.reload(t)
+	if dl.Status != models.StateImportBlocked {
+		t.Fatalf("status = %q (%s), want blocked", dl.Status, dl.ErrorMessage)
+	}
+	if !f.blocklisted(t) {
+		t.Error("not blocklisted")
+	}
+	if n := len(dropCheckFilesUnder(t, drop)); n != 0 {
+		t.Errorf("%d file(s) placed for a refused held ebook", n)
+	}
+	events, err := f.history.ListByType(ctx, models.HistoryEventImportFailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Errorf("%d importFailed events, want 1", len(events))
 	}
 }

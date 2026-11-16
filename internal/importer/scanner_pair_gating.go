@@ -82,7 +82,7 @@ func (s *Scanner) dropPairGated(ctx context.Context, dl *models.Download, book *
 	if !siblingFormatOnDisk(book, siblingFormat) && heldSibling == nil {
 		// The other format isn't here yet — hold this one until it arrives (or
 		// the timeout escape hatch fires).
-		s.parkHeldFormat(ctx, dl, format, downloadPath, contentCheck)
+		s.parkHeldFormat(ctx, dl, format, downloadPath)
 		return true
 	}
 
@@ -121,21 +121,19 @@ func siblingFormatOf(format string) string {
 // re-deriving the path) and parks it in StateImportHeld. The source files are
 // left untouched in the download dir — still seeding — until the sibling
 // completes or the timeout drops this format alone.
-func (s *Scanner) parkHeldFormat(ctx context.Context, dl *models.Download, format, downloadPath string, contentCheck map[string]any) {
+func (s *Scanner) parkHeldFormat(ctx context.Context, dl *models.Download, format, downloadPath string) {
 	if err := s.downloads.SetImportPath(ctx, dl.ID, downloadPath); err != nil {
 		slog.Warn("drop: pair gating — failed to record held download path", "title", dl.Title, "path", downloadPath, "error", err)
 	}
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImportHeld)
 	slog.Info("drop: pair gating — holding format until its sibling arrives",
 		"title", dl.Title, "format", format, "path", downloadPath)
-	// The checks ran before the hold (#3945); a warn finding is recorded here
-	// because the later release re-reads the files without the check.
-	s.createHistoryEventData(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(map[string]any{
+	s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{
 		"mode":   "drop-hold",
 		"status": string(models.StateImportHeld),
 		"format": format,
 		"path":   downloadPath,
-	}, contentCheck))
+	})
 }
 
 // findHeldSibling returns a held download for the same book whose format is
@@ -177,6 +175,12 @@ func (s *Scanner) releaseHeldSibling(ctx context.Context, held *models.Download,
 			"pair gating release: held download files are no longer present — retry the import")
 		return
 	}
+	// The files are re-read here, so they get the same checks again (#3945):
+	// the hold stored only the path, and the files may have changed since.
+	files, contentCheck, ok := s.checkBeforeDrop(ctx, held, book, author, held.ImportPath, files, format, true)
+	if !ok {
+		return
+	}
 	dest, blocked, err := s.placeDroppedFormat(ctx, book, author, held.ImportPath, files, nil, format, folder, layout, linkMode)
 	if err != nil {
 		s.failDrop(ctx, held, blocked, err)
@@ -184,7 +188,7 @@ func (s *Scanner) releaseHeldSibling(ctx context.Context, held *models.Download,
 	}
 	slog.Info("drop: pair gating — releasing held format now that its sibling arrived",
 		"title", held.Title, "format", format, "dst", dest)
-	s.finishDrop(ctx, held, layout, linkMode, format, dest, nil)
+	s.finishDrop(ctx, held, layout, linkMode, format, dest, contentCheck)
 }
 
 // sweepHeldPairGating is the escape hatch (#942): it drops any held format whose
@@ -242,12 +246,16 @@ func (s *Scanner) sweepHeldPairGating(ctx context.Context) {
 				"pair gating timeout: held download files are no longer present — retry the import")
 			continue
 		}
+		files, contentCheck, ok := s.checkBeforeDrop(ctx, h, book, author, h.ImportPath, files, format, true)
+		if !ok {
+			continue
+		}
 		dest, blocked, err := s.placeDroppedFormat(ctx, book, author, h.ImportPath, files, nil, format, folder, layout, linkMode)
 		if err != nil {
 			s.failDrop(ctx, h, blocked, err)
 			continue
 		}
-		s.finishDrop(ctx, h, layout, linkMode, format, dest, nil)
+		s.finishDrop(ctx, h, layout, linkMode, format, dest, contentCheck)
 	}
 }
 

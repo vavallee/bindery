@@ -497,7 +497,7 @@ func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloa
 	// The same language and content checks a managed import runs, before any
 	// file is placed or held (#3945). A blocking result has already parked the
 	// download; a warn result rides on the history event written below.
-	bookFiles, contentCheck, ok := s.checkBeforeDrop(ctx, dl, book, author, downloadPath, bookFiles, detectedFormat)
+	bookFiles, contentCheck, ok := s.checkBeforeDrop(ctx, dl, book, author, downloadPath, bookFiles, detectedFormat, false)
 	if !ok {
 		return true
 	}
@@ -659,14 +659,18 @@ func (s *Scanner) finishDrop(ctx context.Context, dl *models.Download, layout, l
 // event, and false when the download was refused: parked in StateImportBlocked
 // with the same reason, path recorded for Match to book and release blocklisted,
 // before anything is placed or held. Manual imports are never refused, and the
-// content check skips them, as in a managed import. The download is a book's
+// content check skips them, as in a managed import. held is true when the
+// download is being released from pair gating (importHeld), which can go to
+// blocked directly. The download is a book's
 // own grab here (a nil book already failed), so the content checks apply.
-func (s *Scanner) checkBeforeDrop(ctx context.Context, dl *models.Download, book *models.Book, author *models.Author, downloadPath string, bookFiles []string, format string) ([]string, map[string]any, bool) {
+func (s *Scanner) checkBeforeDrop(ctx context.Context, dl *models.Download, book *models.Book, author *models.Author, downloadPath string, bookFiles []string, format string, held bool) ([]string, map[string]any, bool) {
 	refuse := func(reason string, data map[string]any) {
 		s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
 		s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, reason)
-		// importPending cannot move straight to importBlocked.
-		s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
+		// importPending cannot move straight to importBlocked; a held download can.
+		if !held {
+			s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
+		}
 		s.failImportWithCheck(ctx, dl, models.StateImportBlocked, reason, data)
 	}
 	manual := isManualImport(ctx)
