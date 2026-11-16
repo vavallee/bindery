@@ -84,6 +84,7 @@ const bareDefaults: AuthorAddDefaults = {
   mediaType: 'ebook',
   monitorMode: 'all',
   monitorLatestCount: 1,
+  monitorNewItems: 'all',
   qualityProfiles: [],
   qualityProfileId: null,
 }
@@ -214,6 +215,37 @@ describe('AddAuthorConfirm', () => {
       monitorLatestCount: 3,
       monitorNewItems: 'none',
     })
+  })
+
+  // #3958: the control preselects the install default, but an untouched
+  // control still sends nothing, so the server applies the default itself.
+  it('preselects the install default for monitor new items and does not send it untouched', async () => {
+    renderConfirm(author({}), { defaults: { ...bareDefaults, monitorNewItems: 'none' } })
+    expect(screen.getByLabelText('Monitor newly discovered books')).toHaveValue('none')
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+    await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+    expect('monitorNewItems' in vi.mocked(api.addAuthor).mock.calls[0][0]).toBe(false)
+  })
+
+  it('sends monitorNewItems when the user moves it away from the install default', async () => {
+    renderConfirm(author({}), { defaults: { ...bareDefaults, monitorNewItems: 'none' } })
+    fireEvent.change(screen.getByLabelText('Monitor newly discovered books'), { target: { value: 'all' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
+    await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.addAuthor).mock.calls[0][0]).toMatchObject({ monitorNewItems: 'all' })
+  })
+
+  it('reads the install monitor new items default, treating anything but none as all', async () => {
+    vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
+      if (key === 'author.default_monitor_new_items') return { key, value: 'none' }
+      throw new Error('HTTP 404')
+    })
+    expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ monitorNewItems: 'none' }))
+    vi.mocked(api.getSetting).mockImplementation(async (key: string) => {
+      if (key === 'author.default_monitor_new_items') return { key, value: 'bogus' }
+      throw new Error('HTTP 404')
+    })
+    expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ monitorNewItems: 'all' }))
   })
 
   it('sends auto-grab off once it is unticked, and remembers the choice', async () => {
@@ -422,7 +454,7 @@ describe('AddAuthorConfirm', () => {
       vi.mocked(api.getSetting).mockRejectedValue(new Error('HTTP 404'))
       vi.mocked(api.listMetadataProfiles).mockRejectedValue(new Error('HTTP 500'))
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, audiobookRootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1, qualityProfiles: [], qualityProfileId: null })
+      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, audiobookRootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1, monitorNewItems: 'all', qualityProfiles: [], qualityProfileId: null })
       consoleError.mockRestore()
     })
   })

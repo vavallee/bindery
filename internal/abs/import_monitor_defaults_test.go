@@ -66,3 +66,37 @@ func TestImporter_HonoursDefaultMonitorMode(t *testing.T) {
 		})
 	}
 }
+
+// The ABS importer pins monitor new items to none (partial catalogues by
+// design). The install wide default (#3958) must not move that pin.
+func TestImporter_PinsMonitorNewItemsWhateverTheDefault(t *testing.T) {
+	for _, setting := range []string{"all", "none"} {
+		t.Run("default "+setting, func(t *testing.T) {
+			importer, authorRepo, _, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+			ctx := context.Background()
+			if err := importer.settings.Set(ctx, db.SettingAuthorDefaultMonitorNewItems, setting); err != nil {
+				t.Fatal(err)
+			}
+			item := sampleABSItem()
+			importer.enumerateFn = func(ctx context.Context, _ string, fn func(context.Context, NormalizedLibraryItem) error) (EnumerationStats, error) {
+				if err := fn(ctx, item); err != nil {
+					return EnumerationStats{}, err
+				}
+				return EnumerationStats{PagesScanned: 1, ItemsSeen: 1, ItemsNormalized: 1}, nil
+			}
+			if _, err := importer.Run(ctx, ImportConfig{
+				SourceID: DefaultSourceID, BaseURL: "https://abs.example.com", APIKey: "secret",
+				LibraryID: item.LibraryID, Label: "Shelf", Enabled: true,
+			}); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			authors, err := authorRepo.List(ctx)
+			if err != nil || len(authors) != 1 {
+				t.Fatalf("authors = %d, err %v", len(authors), err)
+			}
+			if got := authors[0].MonitorNewItems; got != models.AuthorMonitorNewItemsNone {
+				t.Errorf("MonitorNewItems = %q, want the importer's pin (none)", got)
+			}
+		})
+	}
+}

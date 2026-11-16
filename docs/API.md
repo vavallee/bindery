@@ -215,7 +215,14 @@ list sets no profile of its own) gives it the default quality profile too.
 `POST /api/v1/author` accepts an optional `monitorNewItems` (#2541), the same
 field `PUT /api/v1/author/{id}` takes: `all` (the default) lets a refresh add
 newly discovered books, `none` keeps the catalogue as it was added. Any other
-value is rejected with 400.
+value is rejected with 400. When the request leaves it out, a new author gets the
+install wide `author.default_monitor_new_items` setting (#3958), `all` or `none`,
+`all` when unset. Setting it needs an admin and rejects any other value with 400.
+It applies to authors created from now on, on every path that does not pin its
+own value: this endpoint, request approval, adding a book, series fill and the CSV,
+Readarr and Goodreads imports. The ABS and Calibre imports and Hardcover list sync
+keep `none`, and an author that already exists keeps its own value, including when
+`POST /api/v1/author` relinks it and the request names none.
 
 `POST /api/v1/author` responses include a `providerMismatch` object when the
 linked record routes its catalogue syncs to a provider other than the
@@ -1866,6 +1873,7 @@ unset key:
 | `default.media_type` | add author dialog |
 | `author.default_monitor_mode` | add author dialog |
 | `author.default_monitor_latest_count` | add author dialog |
+| `author.default_monitor_new_items` | add author dialog |
 | `author.default_quality_profile_id` | add author dialog |
 
 `author.default_quality_profile_id` (#3831) is the quality profile id given to

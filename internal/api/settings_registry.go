@@ -136,6 +136,12 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingAuthorDefaultMonitorNewItems, Type: SettingTypeEnum, Default: "all",
+		Values:      []string{"all", "none"},
+		Description: "Whether a metadata refresh may add books it newly discovers, for authors added without an explicit monitor new items choice. Authors that already exist keep their own value.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: SettingAuthorDefaultQualityProfileID, Type: SettingTypeInt, Default: "", Min: "1",
 		Description: "quality_profiles.id given to authors added without a quality profile. Empty means none, and an author with no quality profile accepts every format at grab and at import. A deleted profile is treated as empty.",
 		State:       SettingStateActive,

@@ -1,0 +1,2 @@
+### Added
+- **Install wide default for monitoring newly discovered books** (#3958). If you curate a few books per author and do not want a refresh pulling in the rest, set Settings, Metadata Profiles, Library Defaults, Default for monitoring newly discovered books to Don't add them. New authors start with that choice, and the Add Author dialog preselects it. Nothing changes unless you set it, existing authors keep their own value, and the Audiobookshelf and Calibre imports and Hardcover list sync still keep their own.

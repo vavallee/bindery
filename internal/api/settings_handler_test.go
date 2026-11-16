@@ -1257,6 +1257,7 @@ var nonAdminUIKeys = map[string]string{
 	SettingDefaultMediaType:                "both",
 	SettingAuthorDefaultMonitorMode:        "latest",
 	SettingAuthorDefaultMonitorLatestCount: "2",
+	SettingAuthorDefaultMonitorNewItems:    "none",
 	SettingAuthorDefaultQualityProfileID:   "5",
 }
 
