@@ -228,7 +228,10 @@ func volumeNamedSeriesWrapsBook(seriesTitle, bookTitle string) bool {
 	if len(bb) == 0 || len(sb) <= len(bb) {
 		return false
 	}
-	if volumeMarkerNumber(seriesTitle[loc[0]:]) != volumeMarkerNumber(bookTitle[bloc[0]:]) {
+	// A number of 0 (unparseable or literal zero) on either side is no match,
+	// so two malformed markers never count as the same volume.
+	sn, bn := volumeMarkerNumber(seriesTitle[loc[0]:]), volumeMarkerNumber(bookTitle[bloc[0]:])
+	if sn == 0 || bn == 0 || sn != bn {
 		return false
 	}
 	off := len(sb) - len(bb)

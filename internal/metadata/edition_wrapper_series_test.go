@@ -162,6 +162,10 @@ func TestIsEditionWrapperSeriesRef_SeriesTitleNeedsTheBook(t *testing.T) {
 		{"The Complete Collection of Y", "The Complete Collection of Y, Vol. 3"},
 		{"The Complete Collection of Y", "Hero Tale"},
 		{"Dresden Files: Storm Front Volume XI", "Storm Front, Volume 12"},
+		{"Dresden Files: Storm Front Volume IIII", "Storm Front, Volume VX"},
+		{"Dresden Files: Storm Front Volume XXXX", "Storm Front, Volume XXXX"},
+		{"Dresden Files: Storm Front Volume IIX", "Storm Front, Volume VX"},
+		{"Dresden Files: Storm Front Volume 0", "Storm Front, Volume IIII"},
 		{"Dresden Files: Storm Front Volume II", "Storm Front, Volume 3"},
 	}
 	for _, c := range cases {
