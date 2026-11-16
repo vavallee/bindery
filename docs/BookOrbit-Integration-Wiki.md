@@ -73,7 +73,7 @@ The lab for this recipe ran on Bindery 1.51.1, before the External mode changes 
 
 1. Bindery grabs a release and the download client finishes it.
 2. Bindery copies or hardlinks the book into the drop folder under a clean name. The download is never moved, so a torrent would keep seeding. The download shows as handed off and the book stays Wanted.
-3. BookOrbit's Book Dock sees the file, looks the book up and, if it is confident enough, moves it into its library under its own naming. In the lab this took 12 to 18 seconds, with no rescan and no restart.
+3. BookOrbit's Book Dock sees the file, looks the book up and, if it is confident enough, moves it into its library under its own naming. In the lab this took about 17 to 18 seconds, with no rescan and no restart.
 4. Bindery's next library scan finds the file and the book becomes Imported. The scan runs every 6 hours by default (`library.scan_interval`, 15 minutes at the lowest, applied on restart) or on demand from Settings, General tab, Library, **Scan Library**.
 
 ### One tree, mounted in both
