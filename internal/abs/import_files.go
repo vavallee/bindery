@@ -52,6 +52,24 @@ func (i *Importer) reconcileOwnedState(ctx context.Context, cfg ImportConfig, au
 		}
 	}
 
+	for _, extraPath := range item.ExtraEbookPaths {
+		extraPath = strings.TrimSpace(extraPath)
+		if extraPath == "" || extraPath == strings.TrimSpace(item.EbookPath) {
+			continue
+		}
+		ok, changed, message, pathUnreadable := i.reconcileFormatPath(ctx, cfg, author, book, models.MediaTypeEbook, extraPath)
+		if ok {
+			if changed {
+				ownedMarked++
+			}
+			continue
+		}
+		pendingManual++
+		reconcileMessages = append(reconcileMessages, message)
+		skipped = append(skipped, message)
+		unreadable = unreadable || pathUnreadable
+	}
+
 	if audiobookPath := strings.TrimSpace(item.Path); audiobookPath != "" && len(item.AudioFiles) > 0 {
 		ok, changed, message, pathUnreadable := i.reconcileFormatPath(ctx, cfg, author, book, models.MediaTypeAudiobook, audiobookPath)
 		if ok {

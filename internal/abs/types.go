@@ -202,6 +202,12 @@ type NormalizedLibraryItem struct {
 	ResolvedBookForeignID   string                `json:"resolvedBookForeignId,omitempty"`
 	ResolvedBookTitle       string                `json:"resolvedBookTitle,omitempty"`
 	EditedTitle             string                `json:"editedTitle,omitempty"`
+
+	// ExtraEbookPaths lists further ebook files of the same book, beyond
+	// EbookPath: a second format kept beside the first. Audiobookshelf never
+	// sets it, since it promotes one ebook per item. Each is registered as an
+	// owned ebook file but none takes part in matching.
+	ExtraEbookPaths []string `json:"extraEbookPaths,omitempty"`
 }
 
 // SupplementaryEbookFile returns the libraryFiles entry to use as the item's

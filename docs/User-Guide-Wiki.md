@@ -919,6 +919,7 @@ matches where your metadata lives, then scan:
 | A Calibre library | Settings → Calibre → **Library import** (reads `metadata.db`, creates authors + books) |
 | A Readarr install | Settings → Import / Migrate → upload `readarr.db` ([guide](Migrating-From-Readarr-Wiki.md)) |
 | An Audiobookshelf server | Settings → Audiobookshelf → configure + **Import** ([guide](ABS-Import-Wiki.md)) |
+| A BookOrbit server | Settings → BookOrbit → configure + **Import libraries** ([guide](BookOrbit-Import.md)) |
 | A Goodreads account | Settings → Import / Migrate → **Goodreads CSV** (export, filter by shelf, preview, commit) |
 | Just a list of authors | Settings → Import / Migrate → **Upload CSV**, one author name per line |
 | Only folders of files | Scan the library, then adopt on **Import → In your library**; or use **Import → From a folder** for files outside the library |

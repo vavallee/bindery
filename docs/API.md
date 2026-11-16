@@ -1810,6 +1810,30 @@ leaves them out, which clients should read as no backfill.
 The CSV upload has no status endpoint. Its catalogue backfill runs the same way
 but is not reported.
 
+### BookOrbit import (admin)
+
+Reads a BookOrbit server and registers the files it lists as owned. Every route
+is admin only. Bindery only ever reads from BookOrbit. See
+[BookOrbit-Import.md](BookOrbit-Import.md).
+
+```
+GET    /api/v1/bookorbit/config            saved connection: {baseUrl, libraryIds[], pathRemap, apiKeyConfigured}. The API key is never returned
+PUT    /api/v1/bookorbit/config            save it: {"baseUrl":"http://bookorbit:3000","apiKey":"bok_...","libraryIds":["2"],"pathRemap":"/books:/media/books"}. Omit apiKey or send it empty to keep the saved key. 400 for a bad URL, a refused address, a bad library id or a bad remap
+POST   /api/v1/bookorbit/test              call BookOrbit with the saved URL: {message, username, authenticationMethod, libraryCount}. Optional {"apiKey":"bok_..."} tries a key before saving it. 400 when no URL or key is available, 502 with a reason when BookOrbit refuses or cannot be reached
+POST   /api/v1/bookorbit/libraries         libraries the key can see: [{id, name, folders[]}]. Same body and errors as /test
+POST   /api/v1/bookorbit/import            start a run: {"dryRun":true,"libraryIds":["2"]}. A dry run unless dryRun is exactly false. libraryIds is optional and must be a subset of the saved libraries (400 otherwise). 202 with the progress object, 409 while this or an Audiobookshelf import is running
+GET    /api/v1/bookorbit/import/status     progress of the current or last run: {running, dryRun, processed, message, error, stats, results[]}, the same shape as /abs/import/status
+GET    /api/v1/bookorbit/import/runs       recorded BookOrbit runs, newest first: ?limit (default 10, max 200) and ?offset. One row per library
+```
+
+The test and library routes always call the saved base URL. A URL in the
+request body is ignored, so the routes cannot be pointed at an address that
+was not saved through `PUT /bookorbit/config`.
+
+A run reads every selected library and validates it before writing anything.
+When BookOrbit answers in a shape the importer does not understand, the run
+fails with an error naming the request and the field, and nothing is imported.
+
 ### Settings
 
 ```

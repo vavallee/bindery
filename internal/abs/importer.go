@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -25,6 +26,75 @@ var ErrAlreadyRunning = errors.New("abs import already running")
 // and progress snapshot are rolled back before it is returned, so a restarted
 // process starts clean. Matches hardcoverlistsyncer.ErrShuttingDown.
 var ErrShuttingDown = errors.New("server is shutting down")
+
+// ErrOtherImportRunning is returned by Start and Run when a different importer
+// sharing this one's RunGate is mid run. It wraps ErrAlreadyRunning so callers
+// that only know that sentinel still answer "busy" rather than "broken".
+var ErrOtherImportRunning = fmt.Errorf("%w: another library import is in progress", ErrAlreadyRunning)
+
+// RunGate serialises importers that write the same catalogue through separate
+// Importer values. Each run loads the author list once and matches against that
+// snapshot, so two runs side by side can each miss the author the other just
+// created and create it twice. A nil gate allows everything, which is what an
+// importer built without WithRunGate gets.
+type RunGate struct {
+	mu   sync.Mutex
+	held bool
+}
+
+func NewRunGate() *RunGate { return &RunGate{} }
+
+func (g *RunGate) tryAcquire() bool {
+	if g == nil {
+		return true
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.held {
+		return false
+	}
+	g.held = true
+	return true
+}
+
+func (g *RunGate) release() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	g.held = false
+	g.mu.Unlock()
+}
+
+// EnumerateFunc walks one library of a source and hands each item to fn in
+// turn. Returning an error from fn stops the walk.
+type EnumerateFunc = enumerateFunc
+
+// WithEnumerator replaces the Audiobookshelf enumerator with fn, so another
+// source that can describe its books as NormalizedLibraryItem values gets the
+// same author, book and series matching, the same file registration and the
+// same run records. The BookOrbit importer is built this way. Such a source
+// must use its own ImportConfig.SourceID and library ids that cannot collide
+// with Audiobookshelf's, since both feed the same provenance table and the
+// same placeholder ids.
+func (i *Importer) WithEnumerator(fn EnumerateFunc) *Importer {
+	i.enumerateFn = fn
+	return i
+}
+
+// WithRunGate makes this importer refuse to start while another importer
+// holding the same gate is running, and the other way round.
+func (i *Importer) WithRunGate(gate *RunGate) *Importer {
+	i.gate = gate
+	return i
+}
+
+// WithRunSource limits RunsPage to runs recorded under sourceID. Without it
+// RunsPage lists every source's runs.
+func (i *Importer) WithRunSource(sourceID string) *Importer {
+	i.runSourceID = strings.TrimSpace(sourceID)
+	return i
+}
 
 func NewImporter(
 	authors *db.AuthorRepo,
@@ -240,12 +310,16 @@ func (i *Importer) Start(ctx context.Context, cfg ImportConfig) error {
 		i.mu.Unlock()
 		return ErrAlreadyRunning
 	}
+	if !i.gate.tryAcquire() {
+		i.mu.Unlock()
+		return ErrOtherImportRunning
+	}
 	i.running = true
 	i.progress = ImportProgress{
 		Running:   true,
 		DryRun:    cfg.DryRun,
 		StartedAt: time.Now().UTC(),
-		Message:   importStartMessage(cfg.DryRun),
+		Message:   importStartMessage(cfg),
 	}
 	i.mu.Unlock()
 
@@ -276,6 +350,7 @@ func (i *Importer) abandonStart(err error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.running = false
+	i.gate.release()
 	i.progress.Running = false
 	i.progress.FinishedAt = &now
 	i.progress.Error = err.Error()
@@ -288,12 +363,16 @@ func (i *Importer) Run(ctx context.Context, cfg ImportConfig) (*ImportStats, err
 		i.mu.Unlock()
 		return nil, ErrAlreadyRunning
 	}
+	if !i.gate.tryAcquire() {
+		i.mu.Unlock()
+		return nil, ErrOtherImportRunning
+	}
 	i.running = true
 	i.progress = ImportProgress{
 		Running:   true,
 		DryRun:    cfg.DryRun,
 		StartedAt: time.Now().UTC(),
-		Message:   importStartMessage(cfg.DryRun),
+		Message:   importStartMessage(cfg),
 	}
 	i.mu.Unlock()
 
@@ -313,6 +392,7 @@ func (i *Importer) run(ctx context.Context, cfg ImportConfig) *ImportStats {
 		now := time.Now().UTC()
 		i.mu.Lock()
 		i.running = false
+		i.gate.release()
 		i.progress.Running = false
 		i.progress.FinishedAt = &now
 		i.progress.Stats = stats
@@ -686,6 +766,12 @@ func (i *Importer) importOne(ctx context.Context, cfg ImportConfig, runID int64,
 	stats.MetadataConflicts += authorMeta.Conflicts
 	stats.MetadataAutoResolved += authorMeta.AutoResolved
 	result.AuthorID = author.ID
+	// A dry run creates nothing, so the next book by the same new author
+	// finds no row and reports the author as created again. Count the author
+	// once, as the real run will.
+	if authorCreated && cfg.DryRun && stats.dryRunAuthorAlreadyPlanned(author.Name) {
+		authorCreated = false
+	}
 	if authorCreated {
 		stats.AuthorsCreated++
 	} else {
@@ -1007,11 +1093,17 @@ func resumeConfigFromRun(run models.ABSImportRun, fallback ImportConfig) ImportC
 	return cfg.normalized()
 }
 
-func importStartMessage(dryRun bool) string {
-	if dryRun {
-		return "starting ABS dry-run…"
+func importStartMessage(cfg ImportConfig) string {
+	// Audiobookshelf keeps its short name. Any other source feeding this
+	// importer (see WithEnumerator) is named by its label.
+	name := "ABS"
+	if source := strings.TrimSpace(cfg.SourceID); source != "" && source != DefaultSourceID {
+		name = firstNonEmpty(cfg.Label, source)
 	}
-	return "starting ABS import…"
+	if cfg.DryRun {
+		return "starting " + name + " dry-run…"
+	}
+	return "starting " + name + " import…"
 }
 
 func importItemMessage(dryRun bool, label string) string {

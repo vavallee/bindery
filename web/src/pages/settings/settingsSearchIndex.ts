@@ -13,7 +13,7 @@ import { FIELDS } from './settingsFieldIndex'
 
 export type SettingsTabId =
   | 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general'
-  | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory'
+  | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'bookorbit' | 'grimmory'
   | 'api-keys' | 'advanced' | 'about'
 
 export interface HeadingEntry {
@@ -63,6 +63,8 @@ export const HEADINGS: HeadingEntry[] = [
   { tab: 'import', key: 'settings.import.goodreadsHeading' },
   { tab: 'calibre', literal: 'Calibre-Web-Automated (CWA)' },
   { tab: 'abs', key: 'settings.abs.libraries.heading' },
+  { tab: 'bookorbit', key: 'settings.bookorbit.libraries.heading' },
+  { tab: 'bookorbit', key: 'settings.bookorbit.import.heading' },
   { tab: 'grimmory', key: 'settings.grimmory.push.heading' },
   { tab: 'api-keys', key: 'settings.general.apiKeys' },
   { tab: 'api-keys', key: 'settings.general.opds' },

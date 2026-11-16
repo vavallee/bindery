@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { apiUrl, server } from '../test/msw'
 import { absApi } from './abs'
+import { bookOrbitApi } from './bookorbit'
 import { seriesApi } from './series'
 import { authApi } from './auth'
 
@@ -196,8 +197,28 @@ const authCases: Case[] = [
   ['resetUserPassword', () => authApi.resetUserPassword(4, 'pw2'), 'PUT', '/auth/users/4/reset-password', { password: 'pw2' }],
 ]
 
+const bookOrbitCases: Case[] = [
+  ['bookOrbitConfig', () => bookOrbitApi.bookOrbitConfig(), 'GET', '/bookorbit/config'],
+  [
+    'bookOrbitSetConfig',
+    () => bookOrbitApi.bookOrbitSetConfig({ baseUrl: 'http://bo', libraryIds: ['2'], pathRemap: '/a:/b', apiKey: 'k' }),
+    'PUT',
+    '/bookorbit/config',
+    { baseUrl: 'http://bo', libraryIds: ['2'], pathRemap: '/a:/b', apiKey: 'k' },
+  ],
+  ['bookOrbitTest with no args sends an empty object', () => bookOrbitApi.bookOrbitTest(), 'POST', '/bookorbit/test', {}],
+  ['bookOrbitTest with a key', () => bookOrbitApi.bookOrbitTest({ apiKey: 'k' }), 'POST', '/bookorbit/test', { apiKey: 'k' }],
+  ['bookOrbitLibraries', () => bookOrbitApi.bookOrbitLibraries(), 'POST', '/bookorbit/libraries', {}],
+  ['bookOrbitImportStart dry run', () => bookOrbitApi.bookOrbitImportStart({ dryRun: true }), 'POST', '/bookorbit/import', { dryRun: true }],
+  ['bookOrbitImportStart apply', () => bookOrbitApi.bookOrbitImportStart({ dryRun: false }), 'POST', '/bookorbit/import', { dryRun: false }],
+  ['bookOrbitImportStatus', () => bookOrbitApi.bookOrbitImportStatus(), 'GET', '/bookorbit/import/status'],
+  ['bookOrbitImportRuns without paging', () => bookOrbitApi.bookOrbitImportRuns(), 'GET', '/bookorbit/import/runs'],
+  ['bookOrbitImportRuns with paging', () => bookOrbitApi.bookOrbitImportRuns({ limit: 11, offset: 10 }), 'GET', '/bookorbit/import/runs?limit=11&offset=10'],
+]
+
 describe.each([
   ['absApi', absCases],
+  ['bookOrbitApi', bookOrbitCases],
   ['seriesApi', seriesCases],
   ['authApi', authCases],
 ])('%s wire contract', (_group, cases) => {

@@ -132,6 +132,7 @@ type ImportStats struct {
 	// read as clean while their series never linked.
 	SeriesLinkFailed int `json:"seriesLinkFailed"`
 
+	dryRunAuthors           map[string]struct{}
 	dryRunSeriesExternalIDs map[string]struct{}
 	dryRunSeriesTitles      map[string]struct{}
 	dryRunSeriesMemberships map[string]struct{}
@@ -229,6 +230,8 @@ type Importer struct {
 	hardcoverSeriesEnabled enhancedHardcoverSeriesEnabledFunc
 	userAgent              string
 	enumerateFn            enumerateFunc
+	gate                   *RunGate
+	runSourceID            string
 	rootFolders            *db.RootFolderRepo
 	libraryDir             string
 	audiobookDir           string
@@ -268,6 +271,20 @@ type upstreamAuthorLookup struct {
 	author    *models.Author
 	ambiguous bool
 	err       error
+}
+
+// dryRunAuthorAlreadyPlanned reports whether an earlier item of this dry run
+// already planned to create the author, and records the name either way.
+func (s *ImportStats) dryRunAuthorAlreadyPlanned(name string) bool {
+	key := normalizeAuthorName(name)
+	if _, ok := s.dryRunAuthors[key]; ok {
+		return true
+	}
+	if s.dryRunAuthors == nil {
+		s.dryRunAuthors = make(map[string]struct{})
+	}
+	s.dryRunAuthors[key] = struct{}{}
+	return false
 }
 
 func (s ImportStats) String() string {
