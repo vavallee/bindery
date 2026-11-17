@@ -203,7 +203,7 @@ Since #3947, Reorganize shows a warning in External mode that names the affected
 
 ## Recipe 3: Import an existing BookOrbit library
 
-If BookOrbit already holds your books, Bindery can read them with a read only API key and register each file as owned, where it sits. Nothing is moved, renamed or written to BookOrbit, and running it again is safe. This is separate from recipes 1 and 2 and can be combined with either. Setup, path remap and limits are in [BookOrbit Import](./BookOrbit-Import.md).
+If BookOrbit already holds your books, Bindery can read them with a read only API key and register each file as owned, where it sits. Nothing is moved, renamed or written to BookOrbit, and running it again is safe. This is separate from recipes 1 and 2 and can be combined with either. Setup, path remap and limits are in [BookOrbit Import](./BookOrbit-Import.md). Books it matches or creates also get an Open in BookOrbit link on their page for admins, and the same page covers the optional browser address setting for it.
 
 ## Converting audiobooks in place
 

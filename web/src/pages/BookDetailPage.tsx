@@ -1268,6 +1268,22 @@ function BookDetailPageInner() {
                 <MetadataLinksMenu links={sourceLinks} />
               </>
             )}
+            {/* The server only sends this to an admin, for a book a BookOrbit
+                import matched or created. */}
+            {isAdmin && book.bookOrbitUrl && (
+              <>
+                <span aria-hidden className="text-fg-muted">·</span>
+                <a
+                  href={book.bookOrbitUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent-text hover:underline"
+                  aria-label={t('bookDetail.openInBookOrbitLabel')}
+                >
+                  {t('bookDetail.openInBookOrbit')} <span aria-hidden>↗</span>
+                </a>
+              </>
+            )}
           </div>
 
           {/* Genres were saved and editable but shown nowhere on the page. */}

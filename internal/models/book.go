@@ -122,6 +122,11 @@ type Book struct {
 	// (#1707). Omitted from list responses: it is a per-book join.
 	Identifiers []BookIdentifier `json:"identifiers,omitempty"`
 
+	// BookOrbitURL is the address of this book in BookOrbit's web UI, set on
+	// the single-book responses for an admin when the book came from a
+	// BookOrbit import. Never stored, never set for other callers.
+	BookOrbitURL string `json:"bookOrbitUrl,omitempty"`
+
 	// SearchRunID is the id of the search a write started, for GET
 	// /search/runs/{id} (#3133). Never stored; set only on the response of a
 	// call that started a search.

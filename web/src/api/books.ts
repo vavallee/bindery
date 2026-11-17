@@ -64,6 +64,10 @@ export interface Book {
   // its way into the library. The book page refreshes itself while it is set
   // (#2423).
   importInFlight?: boolean
+  // Link to this book in BookOrbit's web UI. Only present on the single-book
+  // response for an admin, and only for a book a BookOrbit import matched or
+  // created.
+  bookOrbitUrl?: string
   excluded: boolean
   // Fields manually edited by the user and locked against metadata refresh
   // (#1237, #1446): title | description | genres | language | releaseDate.

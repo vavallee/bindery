@@ -28,6 +28,9 @@ const (
 	SettingBookOrbitAPIKey     = "bookorbit.api_key" //nolint:gosec // #nosec G101 -- settings key name, not a credential value
 	SettingBookOrbitLibraryIDs = "bookorbit.library_ids"
 	SettingBookOrbitPathRemap  = "bookorbit.path_remap"
+	// SettingBookOrbitPublicURL is the address a browser uses to reach
+	// BookOrbit, for the "Open in BookOrbit" link. Empty means the base URL.
+	SettingBookOrbitPublicURL = "bookorbit.public_url"
 )
 
 type bookOrbitClient interface {
@@ -58,10 +61,12 @@ type BookOrbitStoredConfig struct {
 	APIKey     string
 	LibraryIDs []int64
 	PathRemap  string
+	PublicURL  string
 }
 
 type bookOrbitConfigResponse struct {
 	BaseURL          string   `json:"baseUrl"`
+	PublicURL        string   `json:"publicUrl"`
 	LibraryIDs       []string `json:"libraryIds"`
 	PathRemap        string   `json:"pathRemap"`
 	APIKeyConfigured bool     `json:"apiKeyConfigured"`
@@ -72,6 +77,7 @@ type bookOrbitConfigRequest struct {
 	APIKey     *string   `json:"apiKey"`
 	LibraryIDs *[]string `json:"libraryIds"`
 	PathRemap  *string   `json:"pathRemap"`
+	PublicURL  *string   `json:"publicUrl"`
 }
 
 type bookOrbitProbeRequest struct {
@@ -126,6 +132,7 @@ func LoadBookOrbitConfig(ctx context.Context, settings *db.SettingsRepo) BookOrb
 		APIKey:     get(SettingBookOrbitAPIKey),
 		LibraryIDs: ids,
 		PathRemap:  get(SettingBookOrbitPathRemap),
+		PublicURL:  get(SettingBookOrbitPublicURL),
 	}
 }
 
@@ -164,6 +171,7 @@ func formatBookOrbitLibraryIDs(ids []int64) []string {
 func bookOrbitConfigResponseFor(cfg BookOrbitStoredConfig) bookOrbitConfigResponse {
 	return bookOrbitConfigResponse{
 		BaseURL:          cfg.BaseURL,
+		PublicURL:        cfg.PublicURL,
 		LibraryIDs:       formatBookOrbitLibraryIDs(cfg.LibraryIDs),
 		PathRemap:        cfg.PathRemap,
 		APIKeyConfigured: cfg.APIKey != "",
@@ -222,6 +230,15 @@ func (h *BookOrbitHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if req.PublicURL != nil {
+		normalized, err := bookorbit.NormalizePublicURL(*req.PublicURL)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		cfg.PublicURL = normalized
+	}
+
 	idsJSON, err := json.Marshal(formatBookOrbitLibraryIDs(cfg.LibraryIDs))
 	if err != nil {
 		writeServerError(w, r, err)
@@ -233,6 +250,7 @@ func (h *BookOrbitHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		{Key: SettingBookOrbitBaseURL, Value: cfg.BaseURL},
 		{Key: SettingBookOrbitLibraryIDs, Value: string(idsJSON)},
 		{Key: SettingBookOrbitPathRemap, Value: cfg.PathRemap},
+		{Key: SettingBookOrbitPublicURL, Value: cfg.PublicURL},
 	}
 	if newKey != "" {
 		kvs = append(kvs, db.SettingKV{Key: SettingBookOrbitAPIKey, Value: newKey})

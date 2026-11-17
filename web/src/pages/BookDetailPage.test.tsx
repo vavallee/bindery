@@ -397,6 +397,33 @@ describe('BookDetailPage — header & metadata', () => {
   })
 })
 
+describe('BookDetailPage Open in BookOrbit', () => {
+  it('links to the book in BookOrbit in a new tab', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ bookOrbitUrl: 'https://books.example.com/bookorbit/book/61' }))
+    renderBookDetailPage()
+    const link = await screen.findByRole('link', { name: /Open this book in BookOrbit/ })
+    expect(link).toHaveAttribute('href', 'https://books.example.com/bookorbit/book/61')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link.getAttribute('rel')).toContain('noopener')
+    expect(link.getAttribute('rel')).toContain('noreferrer')
+    expect(link).toHaveTextContent('Open in BookOrbit')
+  })
+
+  it('renders nothing when the book has no BookOrbit link', async () => {
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByText(/Open in BookOrbit/)).not.toBeInTheDocument()
+  })
+
+  it('renders nothing for a non admin even if a link slipped into the payload', async () => {
+    asAnotherUser()
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ bookOrbitUrl: 'https://books.example.com/book/61' }))
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByText(/Open in BookOrbit/)).not.toBeInTheDocument()
+  })
+})
+
 // Every delete lives in the File section's More menu. Opens it and picks one.
 async function sectionDelete(name: string | RegExp) {
   const actions = within(await screen.findByTestId('file-section-actions'))

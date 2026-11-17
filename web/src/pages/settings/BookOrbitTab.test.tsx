@@ -19,7 +19,7 @@ import '../../i18n'
 
 const mocked = api as unknown as Record<string, ReturnType<typeof vi.fn>>
 
-const saved: BookOrbitConfig = { baseUrl: 'http://bookorbit:3000', libraryIds: ['2'], pathRemap: '/books:/media/books', apiKeyConfigured: true }
+const saved: BookOrbitConfig = { baseUrl: 'http://bookorbit:3000', publicUrl: '', libraryIds: ['2'], pathRemap: '/books:/media/books', apiKeyConfigured: true }
 const idle: ABSImportProgress = { running: false, processed: 0 }
 
 function stats(overrides: Partial<ABSImportStats> = {}): ABSImportStats {
@@ -61,7 +61,27 @@ describe('BookOrbitTab', () => {
     fireEvent.change(screen.getByLabelText('BookOrbit path remap'), { target: { value: '/books:/srv/books' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(mocked.bookOrbitSetConfig).toHaveBeenCalledTimes(1))
-    expect(mocked.bookOrbitSetConfig).toHaveBeenCalledWith({ baseUrl: 'http://bookorbit:3000', libraryIds: ['2'], pathRemap: '/books:/srv/books' })
+    expect(mocked.bookOrbitSetConfig).toHaveBeenCalledWith({ baseUrl: 'http://bookorbit:3000', publicUrl: '', libraryIds: ['2'], pathRemap: '/books:/srv/books' })
+  })
+
+  it('shows the browser address field with its hint and saves it', async () => {
+    mocked.bookOrbitSetConfig.mockImplementation(async data => ({ ...saved, ...data, apiKeyConfigured: true }))
+    render(<BookOrbitTab />)
+    const field = await screen.findByLabelText('BookOrbit address for your browser')
+    expect((field as HTMLInputElement).value).toBe('')
+    expect(screen.getByText(/uses a different address than the server URL/)).toBeTruthy()
+    expect(field.getAttribute('aria-describedby')).toBeTruthy()
+
+    fireEvent.change(field, { target: { value: ' https://books.example.com/bookorbit ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(mocked.bookOrbitSetConfig).toHaveBeenCalledTimes(1))
+    expect(mocked.bookOrbitSetConfig).toHaveBeenCalledWith(expect.objectContaining({ publicUrl: 'https://books.example.com/bookorbit' }))
+  })
+
+  it('treats an unsaved browser address as an unsaved change', async () => {
+    render(<BookOrbitTab />)
+    fireEvent.change(await screen.findByLabelText('BookOrbit address for your browser'), { target: { value: 'https://b.example.com' } })
+    expect((screen.getByRole('button', { name: 'Preview changes' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('loads libraries, shows their folders and saves the ticked ones', async () => {
