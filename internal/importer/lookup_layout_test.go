@@ -533,3 +533,62 @@ func TestLookupBatchLayout_TitleNamingItsAuthorIsNotOverridden(t *testing.T) {
 		})
 	}
 }
+
+// TestLookupBatchLayout_ReleaseFolders covers release folders dropped straight
+// into the folder a manual import scans. Such a folder sits where an author
+// folder would, but it names a release: "TEST-bare [epub]" came back as the
+// author "TEST-bare [epub]", and an audiobook folder "… - H. G. Wells [m4b]"
+// as the author "H G", which matched nothing.
+func TestLookupBatchLayout_ReleaseFolders(t *testing.T) {
+	t.Parallel()
+	s, books, authors, ctx := scannerFixture(t, t.TempDir())
+	wells := seedLayoutBook(t, books, authors, ctx, "H. G. Wells", "The War of the Worlds")
+	weir := seedLayoutBook(t, books, authors, ctx, "Andy Weir", "Project Hail Mary")
+
+	root := t.TempDir()
+	audioDir := filepath.Join(root, "The War of the Worlds - H. G. Wells [m4b]")
+	writeFileAt(t, filepath.Join(audioDir, "01.mp3"))
+	bare := filepath.Join(root, "TEST-bare [epub]", "TEST-bare.epub")
+	writeFileAt(t, bare)
+	tagged := filepath.Join(root, "Project Hail Mary - Andy Weir (2021) [epub]", "Project Hail Mary.epub")
+	writeFileAt(t, tagged)
+	// A plain author folder still feeds the author, as it always has.
+	plain := filepath.Join(root, "Andy Weir", "Project Hail Mary.epub")
+	writeFileAt(t, plain)
+	// An author folder carrying a format tag, with a book folder below it,
+	// is still the author, tag stripped: the audiobook unit is the book
+	// folder, and the ebook sits one folder further down.
+	mistborn := seedLayoutBook(t, books, authors, ctx, "Brandon Sanderson", "Mistborn")
+	sandersonDir := filepath.Join(root, "Brandon Sanderson [M4B]", "Mistborn")
+	writeFileAt(t, filepath.Join(sandersonDir, "01.mp3"))
+	guards := seedLayoutBook(t, books, authors, ctx, "Terry Pratchett", "Guards! Guards!")
+	pratchett := filepath.Join(root, "Terry Pratchett (pdf)", "Guards! Guards!", "Guards! Guards!.pdf")
+	writeFileAt(t, pratchett)
+
+	res, err := s.LookupBatchLayout(ctx, root, []string{audioDir, bare, tagged, plain, sandersonDir, pratchett})
+	if err != nil {
+		t.Fatalf("LookupBatchLayout: %v", err)
+	}
+	for i, want := range []struct {
+		title, author, match string
+		book                 *models.Book
+	}{
+		{"The War of the Worlds", "H. G. Wells", "confident", wells},
+		{"TEST-bare", "", "none", nil},
+		{"Project Hail Mary", "Andy Weir", "confident", weir},
+		{"Project Hail Mary", "Andy Weir", "confident", weir},
+		{"Mistborn", "Brandon Sanderson", "confident", mistborn},
+		{"Guards! Guards!", "Terry Pratchett", "confident", guards},
+	} {
+		got := res[i]
+		if got.ParsedTitle != want.title || got.ParsedAuthor != want.author {
+			t.Errorf("unit %d: parsed %q / %q, want %q / %q", i, got.ParsedTitle, got.ParsedAuthor, want.title, want.author)
+		}
+		if got.Match != want.match {
+			t.Errorf("unit %d: match %q, want %q", i, got.Match, want.match)
+		}
+		if want.book != nil && (got.Book == nil || got.Book.ID != want.book.ID) {
+			t.Errorf("unit %d: book %+v, want id=%d", i, got.Book, want.book.ID)
+		}
+	}
+}
