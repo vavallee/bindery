@@ -3006,7 +3006,7 @@
     "autoApproveEffectiveOn": "Approves on its own",
     "autoApproveEffectiveOff": "Waits for an admin",
     "autoApproveFor": "Auto-approve requests for {{username}}",
-    "autoApproveHint": "Use default follows the requests.auto_approve_default setting in Settings, Advanced, which covers requesters only. Always adds this requester's requests straight away, Never queues them for an admin whatever the default says. A request for a book already in the catalogue always waits for a person, and requests already waiting stay in the queue.",
+    "autoApproveHint": "Use default follows the requests.auto_approve_default setting in Settings, Advanced, which covers requesters only. Always adds this requester's requests straight away, Never queues them for an admin whatever the default says. A request for a book an admin skipped still waits for a person, and requests already waiting stay in the queue.",
     "autoApproveFail": "Failed to change auto-approve",
     "createButton": "Create User",
     "promote": "Make admin",

@@ -385,10 +385,10 @@ func TestUserMgmt_SetAutoApprove_BadRequests(t *testing.T) {
 	}
 }
 
-// Only a brand new book auto approves (#3898). A book an admin skipped is in
-// the library without a file, so a requester may ask for it, but approving
-// that request turns the book back into a wanted one. That is a human's call:
-// the request waits in the queue and the book is left exactly as it was.
+// A book an admin skipped does not auto approve (#3898, #3954). It is in the
+// library without a file, so a requester may ask for it, but approving that
+// request turns the book back into a wanted one. That is a human's call: the
+// request waits in the queue and the book is left exactly as it was.
 func TestRequestsCreate_AutoApproveLeavesExistingBookForAHuman(t *testing.T) {
 	f := newRequestsFixture(t, wellsRequestStub(), nil)
 	setAutoApprove(t, f, f.requester.ID, true)

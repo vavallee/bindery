@@ -405,10 +405,12 @@ func TestToRequestResponse_ApproverFieldsStayOffRequesterResponses(t *testing.T)
 	}
 }
 
-// A book that reaches the library between the create check and the answer is
-// not auto approved either (#3898): only a brand new book skips the queue, so
-// the request stays pending, the existing row is not touched, and the create
-// response the requester gets carries no notice.
+// A skipped book that reaches the library between the create check and the
+// answer is not auto approved (#3898, #3954): Skipped is an admin's decision,
+// so the request stays pending, the existing row is not touched, and the
+// create response the requester gets carries no notice. This test used to pin
+// a monitored book here, which the old rule kept pending as any existing book;
+// that rule is gone, so it now uses the case that still waits.
 func TestRequestsCreate_AutoApproveInLibraryStaysPendingWithNoNotice(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	adder := &fakeAdder{}
@@ -418,7 +420,7 @@ func TestRequestsCreate_AutoApproveInLibraryStaysPendingWithNoNotice(t *testing.
 	author := seedWells(t, f.authors)
 	if err := f.books.Create(ctx, &models.Book{
 		ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war",
-		OwnerUserID: f.admin.ID, MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusWanted,
+		OwnerUserID: f.admin.ID, MediaType: models.MediaTypeEbook, Monitored: false, Status: models.BookStatusSkipped,
 	}); err != nil {
 		t.Fatal(err)
 	}
