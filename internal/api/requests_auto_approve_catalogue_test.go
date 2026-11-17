@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/notifier"
 )
@@ -173,5 +175,134 @@ func TestRequestsCreate_AutoApproveUnmonitoredCatalogueBookEndToEnd(t *testing.T
 	}
 	if a, _ := f.authors.GetByID(ctx, author.ID); a.Monitored {
 		t.Fatal("the author was monitored by a book request")
+	}
+}
+
+// seedCatalogueBooks puts the requested book and an unrelated sibling by the
+// same author in the library, and files an auto approving requester's request
+// for the first. The handler is built with the real add core (no fake), so a
+// write to the wrong row would show.
+func seedCatalogueBooks(t *testing.T, f *requestsFixture, target models.Book) (*models.Book, *models.Book, *models.Author, models.LibraryRequest) {
+	t.Helper()
+	ctx := context.Background()
+	author := seedWells(t, f.authors)
+	author.Monitored = false
+	if err := f.authors.Update(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	target.ForeignID, target.AuthorID, target.Title, target.SortTitle = "OL27482W", author.ID, "The War of the Worlds", "war"
+	sibling := &models.Book{ForeignID: "OL9999W", AuthorID: author.ID, Title: "The Time Machine", SortTitle: "time",
+		Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook}
+	for _, b := range []*models.Book{&target, sibling} {
+		if err := f.books.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := models.LibraryRequest{
+		OwnerUserID: f.requester.ID, Kind: models.RequestKindBook, ForeignID: "OL27482W", MediaType: "ebook",
+		Title: "The War of the Worlds", PayloadJSON: `{"kind":"book","foreignId":"OL27482W","mediaType":"ebook"}`,
+	}
+	if err := f.requests.Create(ctx, &req, 0); err != nil {
+		t.Fatal(err)
+	}
+	return &target, sibling, author, req
+}
+
+// Against the real book repo and add core: a Skipped book's row is exactly as
+// it was and the request waits.
+func TestRequestsCreate_AutoApproveSkippedRowUntouchedRealRepo(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	setAutoApprove(t, f, f.requester.ID, true)
+	ctx := context.Background()
+	target, sibling, author, req := seedCatalogueBooks(t, f, models.Book{Status: models.BookStatusSkipped, MediaType: models.MediaTypeEbook})
+	beforeT, _ := f.books.GetByID(ctx, target.ID)
+	beforeS, _ := f.books.GetByID(ctx, sibling.ID)
+	beforeA, _ := f.authors.GetByID(ctx, author.ID)
+
+	rec := httptest.NewRecorder()
+	f.h.writeCreated(ctx, rec, req, f.requester.ID, "")
+	if got := decodeRequest(t, rec); got.Status != models.RequestStatusPending {
+		t.Fatalf("status %q, want pending", got.Status)
+	}
+	afterT, _ := f.books.GetByID(ctx, target.ID)
+	afterS, _ := f.books.GetByID(ctx, sibling.ID)
+	afterA, _ := f.authors.GetByID(ctx, author.ID)
+	if !reflect.DeepEqual(beforeT, afterT) || !reflect.DeepEqual(beforeS, afterS) || !reflect.DeepEqual(beforeA, afterA) {
+		t.Fatalf("rows changed: book %+v -> %+v", beforeT, afterT)
+	}
+}
+
+// A widen writes the requested book and nothing else: the author and a sibling
+// book keep their rows exactly.
+func TestRequestsCreate_AutoApproveWidenTouchesOnlyThatBook(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	setAutoApprove(t, f, f.requester.ID, true)
+	ctx := context.Background()
+	target, sibling, author, req := seedCatalogueBooks(t, f, models.Book{Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook})
+	beforeT, _ := f.books.GetByID(ctx, target.ID)
+	beforeS, _ := f.books.GetByID(ctx, sibling.ID)
+	beforeA, _ := f.authors.GetByID(ctx, author.ID)
+
+	rec := httptest.NewRecorder()
+	f.h.writeCreated(ctx, rec, req, f.requester.ID, "")
+	if got := decodeRequest(t, rec); got.Status != models.RequestStatusApproved {
+		t.Fatalf("status %q, want approved: %s", got.Status, rec.Body.String())
+	}
+	afterT, _ := f.books.GetByID(ctx, target.ID)
+	afterS, _ := f.books.GetByID(ctx, sibling.ID)
+	afterA, _ := f.authors.GetByID(ctx, author.ID)
+	if !afterT.Monitored || afterT.Status != models.BookStatusWanted {
+		t.Fatalf("requested book not monitored and wanted: %+v", afterT)
+	}
+	if beforeT.Monitored {
+		t.Fatal("test setup: the book was already monitored")
+	}
+	if !reflect.DeepEqual(beforeS, afterS) || !reflect.DeepEqual(beforeA, afterA) {
+		t.Fatalf("sibling or author changed: %+v -> %+v, author %+v -> %+v", beforeS, afterS, beforeA, afterA)
+	}
+}
+
+// Under tenancy a book held by another account is never widened by an auto
+// approval: the request stays pending, nothing is written, and an admin is told.
+func TestRequestsCreate_AutoApproveBookHeldByAnotherAccountStaysPending(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	adder := &fakeAdder{}
+	f := newRequestsFixture(t, wellsRequestStub(), adder)
+	capture := &capturingNotifier{events: make(chan capturedEvent, 4)}
+	f.h.WithNotifier(capture)
+	setAutoApprove(t, f, f.requester.ID, true)
+	ctx := context.Background()
+	author := seedWells(t, f.authors)
+	book := &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war",
+		OwnerUserID: f.other.ID, Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook}
+	if err := f.books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := f.books.GetByID(ctx, book.ID)
+	req := models.LibraryRequest{
+		OwnerUserID: f.requester.ID, Kind: models.RequestKindBook, ForeignID: "OL27482W", MediaType: "ebook",
+		Title: "The War of the Worlds", PayloadJSON: `{"kind":"book","foreignId":"OL27482W","mediaType":"ebook"}`,
+	}
+	if err := f.requests.Create(ctx, &req, 0); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	f.h.writeCreated(ctx, rec, req, f.requester.ID, "")
+	if got := decodeRequest(t, rec); got.Status != models.RequestStatusPending {
+		t.Fatalf("status %q, want pending", got.Status)
+	}
+	if n := adder.existingCalls.Load() + adder.searchCalls.Load() + adder.calls.Load(); n != 0 {
+		t.Fatalf("add core ran %d times for another account's book", n)
+	}
+	if after, _ := f.books.GetByID(ctx, book.ID); !reflect.DeepEqual(before, after) {
+		t.Fatalf("another account's book changed: %+v -> %+v", before, after)
+	}
+	select {
+	case ev := <-capture.events:
+		if ev.event != notifier.EventRequestCreated {
+			t.Fatalf("event %q, want %q", ev.event, notifier.EventRequestCreated)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a pending request sent no requestCreated event")
 	}
 }
