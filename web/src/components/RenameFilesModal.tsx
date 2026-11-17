@@ -92,7 +92,8 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
   // The warning shows only when the API reports External mode for at least one
   // format in the plan; a 409 on apply turns it on when the mode flipped late.
   const externalMode = (preview?.externalMode === true && previewFormats.length > 0) || externalRefused
-  const externalFormats = previewFormats.length > 0 ? previewFormats : refusedFormats
+  // A 409 reflects the mode as it is now, so its formats win over the preview's.
+  const externalFormats = externalRefused ? refusedFormats : previewFormats
   const formatWords = externalFormats.map(f =>
     f === 'ebook' ? t('renameFiles.formatEbook', 'ebook files') : t('renameFiles.formatAudiobook', 'audiobook files'),
   )

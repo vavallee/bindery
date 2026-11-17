@@ -200,6 +200,21 @@ describe('RenameFilesModal', () => {
         expect(screen.queryByRole('alert')).toBeNull()
       })
 
+      it('prefers the formats from a 409 over the preview ones', async () => {
+        previewMock.mockResolvedValue(withFormats(['ebook']))
+        applyMock.mockRejectedValueOnce(
+          new ApiError(409, { error: 'raw', code: 'reorganize_external_mode', formats: ['ebook', 'audiobook'] }, 'Conflict'),
+        )
+        render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
+        await screen.findByRole('alert')
+        fireEvent.click(screen.getByRole('checkbox'))
+        fireEvent.click(screen.getByRole('button', { name: /Rename 2 files/ }))
+        await waitFor(() =>
+          expect(screen.getByRole('alert').textContent).toContain('External for ebook files and audiobook files'),
+        )
+        expect(screen.getByRole('checkbox')).not.toBeChecked()
+      })
+
       it('names the formats from a 409 when the preview did not know', async () => {
         previewMock.mockResolvedValue({ ...withFormats([], false) })
         applyMock.mockRejectedValueOnce(

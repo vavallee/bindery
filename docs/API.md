@@ -972,7 +972,7 @@ POST   /api/v1/queue/manual-import/match          attach an importFailed downloa
 GET    /api/v1/reorganize/preview                 preview renaming tracked files to the current template (admin)
                                                     ?scope=book|author|library (&id=N for book/author)
                                                     response adds externalMode (bool), externalFormats and warning
-                                                    when the plan holds files of a format in External import mode (#3946)
+                                                    when files that would move are of a format in External import mode (#3946)
 POST   /api/v1/reorganize/apply                   move the selected files {fileIds:[…]} to their templated paths (admin)
                                                     409 {error, code:"reorganize_external_mode", formats:[…]} when any file is of a
                                                     format in External import mode, unless the body has "confirmExternalMode": true;
