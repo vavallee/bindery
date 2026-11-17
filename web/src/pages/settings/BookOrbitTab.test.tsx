@@ -211,4 +211,22 @@ describe('BookOrbitTab', () => {
     expect(await screen.findByText('Host not found')).toBeTruthy()
     expect(screen.queryByText(/Connected as reader/)).toBeNull()
   })
+
+  it('drops a slow name lookup from before a save, so the new server names win', async () => {
+    let resolveOld: (v: unknown) => void = () => {}
+    mocked.bookOrbitConfig.mockResolvedValue({ ...saved, libraryIds: ['1'] })
+    mocked.bookOrbitLibraries
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+      .mockResolvedValueOnce([{ id: '1', name: 'New Books', folders: [] }])
+    mocked.bookOrbitSetConfig.mockResolvedValue({ ...saved, baseUrl: 'http://other:3000', libraryIds: ['1'] })
+    render(<BookOrbitTab />)
+    fireEvent.change(await screen.findByLabelText('Server URL'), { target: { value: 'http://other:3000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByLabelText(/New Books/)).toBeTruthy()
+
+    resolveOld([{ id: '1', name: 'Old Books', folders: [] }])
+    await new Promise(r => setTimeout(r, 20))
+    expect(screen.queryByText(/Old Books/)).toBeNull()
+    expect(screen.getByLabelText(/New Books/)).toBeTruthy()
+  })
 })

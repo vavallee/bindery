@@ -35,6 +35,10 @@ export default function BookOrbitTab() {
   // Names resolved quietly from the live library list, so the saved selection
   // and the run history read "Books" after a reload instead of "Library 1".
   const [knownLibraries, setKnownLibraries] = useState<BookOrbitLibrary[]>([])
+  // Bumped by every save and every library listing. A quiet lookup that
+  // started before the latest one is dropped, so a slow answer from the old
+  // server cannot overwrite names from the new one.
+  const namesReq = useRef(0)
   const [progress, setProgress] = useState<ABSImportProgress | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [runs, setRuns] = useState<ABSImportRun[]>([])
@@ -58,9 +62,10 @@ export default function BookOrbitTab() {
   // nothing is shown, since the admin did not ask for the list.
   const resolveNames = useCallback(async (cfg: BookOrbitConfig) => {
     if (!cfg.baseUrl || !cfg.apiKeyConfigured) return
+    const seq = ++namesReq.current
     try {
       const list = await api.bookOrbitLibraries()
-      if (Array.isArray(list)) setKnownLibraries(list)
+      if (seq === namesReq.current && Array.isArray(list)) setKnownLibraries(list)
     } catch {
       // Falls back to "Library N".
     }
@@ -121,6 +126,7 @@ export default function BookOrbitTab() {
   const save = async () => {
     setSaving(true)
     clearFeedback()
+    namesReq.current++
     try {
       const payload: { baseUrl: string; libraryIds: string[]; pathRemap: string; apiKey?: string } = {
         baseUrl: draft.baseUrl.trim(),
@@ -158,6 +164,7 @@ export default function BookOrbitTab() {
 
   const listLibraries = async () => {
     clearFeedback()
+    namesReq.current++
     try {
       const list = await api.bookOrbitLibraries(probeBody())
       setLibraries(list)

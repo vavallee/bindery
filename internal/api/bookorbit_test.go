@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
@@ -476,6 +477,9 @@ func TestBookOrbitTransportErrorsArePlain(t *testing.T) {
 	}{
 		"dns":               {wrap(&net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", Name: "test-unreachable.invalid", Server: "10.43.0.10:53", IsNotFound: true}}), "Host not found"},
 		"refused":           {wrap(&net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}), "Connection refused"},
+		"refused windows":   {wrap(&net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connectex", syscall.Errno(10061))}), "Connection refused"},
+		"dns timeout":       {wrap(&net.OpError{Op: "dial", Err: &net.DNSError{Err: "i/o timeout", Name: "bookorbit.lan", Server: "10.43.0.10:53", IsTimeout: true}}), "did not answer in time"},
+		"scheme mismatch":   {wrap(http.ErrSchemeMismatch), "Use an http:// URL"},
 		"deadline":          {wrap(context.DeadlineExceeded), "did not answer in time"},
 		"unknown authority": {wrap(x509.UnknownAuthorityError{}), "TLS problem"},
 		"hostname mismatch": {wrap(x509.HostnameError{Certificate: &x509.Certificate{}, Host: "10.9.9.9"}), "TLS problem"},
@@ -496,5 +500,43 @@ func TestBookOrbitTransportErrorsArePlain(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A scheme mixup against a real server: https:// at a plain http listener
+// and http:// at a TLS one each name the scheme to use.
+func TestBookOrbitSchemeMixups(t *testing.T) {
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer plain.Close()
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer secure.Close()
+
+	for name, tc := range map[string]struct {
+		baseURL string
+		want    string
+	}{
+		"https to plain": {"https://" + strings.TrimPrefix(plain.URL, "http://"), "Use an http:// URL"},
+		"http to tls":    {"http://" + strings.TrimPrefix(secure.URL, "https://"), "Try https://"},
+	} {
+		database, err := db.OpenMemory()
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := NewBookOrbitHandler(db.NewSettingsRepo(database), &stubBookOrbitImporter{})
+		rec := httptest.NewRecorder()
+		h.SetConfig(rec, httptest.NewRequest(http.MethodPut, "/api/v1/bookorbit/config", bytes.NewBufferString(`{"baseUrl":"`+tc.baseURL+`","apiKey":"`+bookOrbitTestKey+`"}`)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: save %d %s", name, rec.Code, rec.Body)
+		}
+		rec = httptest.NewRecorder()
+		h.Test(rec, httptest.NewRequest(http.MethodPost, "/api/v1/bookorbit/test", nil))
+		got := errorOf(t, rec)
+		if rec.Code != http.StatusBadGateway || !strings.Contains(got, tc.want) {
+			t.Errorf("%s: %d %q, want %q", name, rec.Code, got, tc.want)
+		}
+		if strings.Contains(got, bookOrbitTestKey) || strings.Contains(got, "/api/v1") {
+			t.Errorf("%s: message %q leaks", name, got)
+		}
+		_ = database.Close()
 	}
 }
