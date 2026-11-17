@@ -14,7 +14,7 @@ import (
 )
 
 // Tests for #3954: an auto approving account's request for a book the library
-// already has a row for. Only a book an admin skipped waits; everything else
+// already has a row for. Only a book an admin excluded or skipped waits; everything else
 // goes through the approval an admin would run.
 
 func TestRequestsCreate_AutoApproveCatalogueBookTable(t *testing.T) {
@@ -26,6 +26,7 @@ func TestRequestsCreate_AutoApproveCatalogueBookTable(t *testing.T) {
 	}
 	cases := []struct {
 		name      string
+		excluded  bool
 		book      models.Book
 		requested string
 		account   *bool // the account's own setting, nil follows the default
@@ -61,6 +62,14 @@ func TestRequestsCreate_AutoApproveCatalogueBookTable(t *testing.T) {
 			book: models.Book{MediaType: models.MediaTypeEbook, Status: models.BookStatusSkipped}, sysOn: true},
 		{name: "skipped but still flagged monitored, account on", requested: "ebook",
 			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusSkipped}, account: bptr(true)},
+		{name: "excluded book, account on", requested: "ebook", excluded: true,
+			book: models.Book{MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted}, account: bptr(true)},
+		{name: "excluded book, default on", requested: "ebook", excluded: true,
+			book: models.Book{MediaType: models.MediaTypeEbook, Status: models.BookStatusWanted}, sysOn: true},
+		{name: "excluded but monitored, account on", requested: "ebook", excluded: true,
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusWanted}, account: bptr(true)},
+		{name: "excluded and skipped, account on", requested: "ebook", excluded: true,
+			book: models.Book{MediaType: models.MediaTypeEbook, Status: models.BookStatusSkipped}, account: bptr(true)},
 		{name: "requested format on disk resolves without a write or search", requested: "ebook",
 			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusImported, EbookFilePath: ebookPath}, account: bptr(true),
 			want: want{approved: true}},
@@ -89,6 +98,11 @@ func TestRequestsCreate_AutoApproveCatalogueBookTable(t *testing.T) {
 			}
 			if file != "" {
 				if err := f.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, file); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.excluded {
+				if err := f.books.SetExcluded(ctx, book.ID, true); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -124,7 +138,7 @@ func TestRequestsCreate_AutoApproveCatalogueBookTable(t *testing.T) {
 				t.Errorf("addBookCore ran %d times for a book already in the library", n)
 			}
 			after, _ := f.books.GetByID(ctx, book.ID)
-			if before.Status != after.Status || before.Monitored != after.Monitored || before.UpdatedAtRaw != after.UpdatedAtRaw {
+			if before.Status != after.Status || before.Monitored != after.Monitored || before.Excluded != after.Excluded || before.UpdatedAtRaw != after.UpdatedAtRaw {
 				t.Errorf("book row changed outside the monitor core: %+v -> %+v", before, after)
 			}
 			// requestCreated goes out only when the request stays pending.
@@ -227,6 +241,37 @@ func TestRequestsCreate_AutoApproveSkippedRowUntouchedRealRepo(t *testing.T) {
 	afterT, _ := f.books.GetByID(ctx, target.ID)
 	afterS, _ := f.books.GetByID(ctx, sibling.ID)
 	afterA, _ := f.authors.GetByID(ctx, author.ID)
+	if !reflect.DeepEqual(beforeT, afterT) || !reflect.DeepEqual(beforeS, afterS) || !reflect.DeepEqual(beforeA, afterA) {
+		t.Fatalf("rows changed: book %+v -> %+v", beforeT, afterT)
+	}
+}
+
+// Against the real book repo and add core: an Excluded book's row is exactly as
+// it was (still excluded, still unmonitored) and the request waits. Excluded is
+// what the web UI's Exclude action sets; it has no Skip action.
+func TestRequestsCreate_AutoApproveExcludedRowUntouchedRealRepo(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	setAutoApprove(t, f, f.requester.ID, true)
+	ctx := context.Background()
+	target, sibling, author, req := seedCatalogueBooks(t, f, models.Book{Status: models.BookStatusWanted, MediaType: models.MediaTypeEbook})
+	if err := f.books.SetExcluded(ctx, target.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	beforeT, _ := f.books.GetByID(ctx, target.ID)
+	beforeS, _ := f.books.GetByID(ctx, sibling.ID)
+	beforeA, _ := f.authors.GetByID(ctx, author.ID)
+
+	rec := httptest.NewRecorder()
+	f.h.writeCreated(ctx, rec, req, f.requester.ID, "")
+	if got := decodeRequest(t, rec); got.Status != models.RequestStatusPending {
+		t.Fatalf("status %q, want pending: %s", got.Status, rec.Body.String())
+	}
+	afterT, _ := f.books.GetByID(ctx, target.ID)
+	afterS, _ := f.books.GetByID(ctx, sibling.ID)
+	afterA, _ := f.authors.GetByID(ctx, author.ID)
+	if !afterT.Excluded {
+		t.Fatal("the book is no longer excluded")
+	}
 	if !reflect.DeepEqual(beforeT, afterT) || !reflect.DeepEqual(beforeS, afterS) || !reflect.DeepEqual(beforeA, afterA) {
 		t.Fatalf("rows changed: book %+v -> %+v", beforeT, afterT)
 	}
