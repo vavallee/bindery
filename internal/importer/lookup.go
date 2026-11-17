@@ -182,7 +182,7 @@ const lookupBatchConcurrency = 8
 func lookupUnit(root, path string, books []models.Book, authorNames map[int64]string) LookupResult {
 	parsed := ParseFilename(path)
 	layoutAuthor, layoutTitle, _ := authorTitleFromLayout(path, root)
-	layoutAuthor, layoutTitle = releaseFolderLayout(layoutAuthor, layoutTitle, isDirPath(path))
+	layoutAuthor, layoutTitle = releaseFolderLayout(layoutAuthor, layoutTitle, isFolderUnit(path))
 	var embedded EpubMetadata
 	if ep := firstEpubIn(path); ep != "" {
 		if meta, err := ReadEbookMetadata(ep); err == nil {
@@ -249,10 +249,11 @@ func releaseFolderLayout(author, title string, unitIsDir bool) (string, string) 
 	return rel.Author, rel.Title
 }
 
-// isDirPath reports whether path is a directory.
-func isDirPath(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+// isFolderUnit reports whether a bulk import unit is a folder. The walk only
+// ever hands over book and audio files as file units, so anything else is a
+// folder, and this needs no filesystem call.
+func isFolderUnit(path string) bool {
+	return !IsBookFile(path) && !IsAudioFile(path)
 }
 
 // isReleaseFolderName reports whether a folder name carries a bracketed format
