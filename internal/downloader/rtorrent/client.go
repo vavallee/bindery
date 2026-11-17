@@ -42,6 +42,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/torrentfetch"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/textutil"
 	"github.com/vavallee/bindery/internal/useragent"
 )
 
@@ -730,15 +731,7 @@ func readRPCBody(r io.Reader) ([]byte, error) {
 // entry and any webhook payload.
 func snippet(body []byte) string {
 	const maxSnippet = 256
-	s := strings.TrimSpace(string(body))
-	if len(s) <= maxSnippet {
-		return s
-	}
-	cut := maxSnippet
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
+	return textutil.TruncateUTF8(strings.TrimSpace(string(body)), maxSnippet)
 }
 
 func (c *Client) validateRequestTarget(target *url.URL) error {

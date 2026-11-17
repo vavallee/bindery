@@ -19,6 +19,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // MaxErrorBody is how much of a failed response body callers should read and
@@ -97,11 +99,7 @@ func newznabDetail(status int, body []byte) string {
 
 // snippet renders body as a trimmed, capped excerpt for an error message.
 func snippet(body []byte) string {
-	s := strings.TrimSpace(string(body))
-	if len(s) > rawBodyCap {
-		s = s[:rawBodyCap]
-	}
-	return s
+	return textutil.TruncateUTF8(strings.TrimSpace(string(body)), rawBodyCap)
 }
 
 // crossHostHop returns a diagnostic suffix when the final response host
