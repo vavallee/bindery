@@ -33,6 +33,17 @@ const statusStyles: Record<string, string> = {
   failed: 'text-red-700 dark:text-red-400',
 }
 
+// knownFormats keeps the media formats the dialog can name, in the order the
+// API sent them, without duplicates.
+function knownFormats(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const f of raw) {
+    if ((f === 'ebook' || f === 'audiobook') && !out.includes(f)) out.push(f)
+  }
+  return out
+}
+
 const statusLabel: Record<string, string> = {
   move: 'Will move',
   moved: 'Moved',
@@ -54,6 +65,8 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
   // Set when apply answers 409 reorganize_external_mode: the mode flipped after
   // the preview loaded, so the confirmation is needed now.
   const [externalRefused, setExternalRefused] = useState(false)
+  // Formats the 409 named, for the case where the preview did not know.
+  const [refusedFormats, setRefusedFormats] = useState<string[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -75,7 +88,22 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
   }, [scope, id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const movable = (preview?.moves ?? []).filter(m => m.status === 'move')
-  const externalMode = preview?.externalMode === true || externalRefused
+  const previewFormats = knownFormats(preview?.externalFormats)
+  // The warning shows only when the API reports External mode for at least one
+  // format in the plan; a 409 on apply turns it on when the mode flipped late.
+  const externalMode = (preview?.externalMode === true && previewFormats.length > 0) || externalRefused
+  const externalFormats = previewFormats.length > 0 ? previewFormats : refusedFormats
+  const formatWords = externalFormats.map(f =>
+    f === 'ebook' ? t('renameFiles.formatEbook', 'ebook files') : t('renameFiles.formatAudiobook', 'audiobook files'),
+  )
+  const externalWarning = formatWords.length === 0
+    ? t('renameFiles.externalWarning', 'Import mode is External, so another tool owns this layout. Renaming here can fight that tool.')
+    : t('renameFiles.externalWarningFor', {
+        formats: formatWords.length === 1
+          ? formatWords[0]
+          : t('renameFiles.formatsJoin', { first: formatWords[0], second: formatWords[1], defaultValue: '{{first}} and {{second}}' }),
+        defaultValue: 'Import mode is External for {{formats}}, so another tool owns this layout. Renaming here can fight that tool.',
+      })
 
   const apply = async () => {
     if (movable.length === 0) return
@@ -91,6 +119,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
     } catch (err) {
       if (err instanceof ApiError && err.status === 409 && err.body?.code === 'reorganize_external_mode') {
         setExternalRefused(true)
+        setRefusedFormats(knownFormats(err.body?.formats))
         setConfirmExternal(false)
       } else {
         setError(errorText(err, t('renameFiles.renameFailed', 'Rename failed')))
@@ -122,7 +151,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
 
         {externalMode && !applied && (
           <div role="alert" className="mb-3 p-3 rounded border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/40 text-xs text-amber-900 dark:text-amber-200">
-            <p>{t('renameFiles.externalWarning', 'Import mode is External, so another tool owns this layout. Renaming here can fight that tool.')}</p>
+            <p>{externalWarning}</p>
             <label className="mt-2 flex items-start gap-2">
               <input
                 type="checkbox"

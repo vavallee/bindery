@@ -1,0 +1,2 @@
+### Fixed
+- **The Rename files warning now says which files are in External mode** (#3947). The warning used to say only that import mode is External, and left you to guess whether it meant ebooks, audiobooks or both. It now names exactly the formats Bindery reports, like "ebook files" or "ebook files and audiobook files", and it still stays out of the way when nothing in the plan is in External mode.
