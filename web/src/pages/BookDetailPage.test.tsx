@@ -2675,6 +2675,14 @@ describe('BookDetailPage history rows', () => {
     expect(await screen.findByText('no files matched the book')).toBeInTheDocument()
   })
 
+  it('renders a row whose data is the string null without throwing', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ eventType: 'downloadFolderImported', data: 'null' })], total: 1, limit: 100, offset: 0,
+    })
+    renderBookDetailPage()
+    expect(await screen.findByText('Folder imported')).toBeInTheDocument()
+  })
+
   it('does not print the message of an event that is not a failure', async () => {
     vi.mocked(api.listHistory).mockResolvedValue({
       items: [makeHistory({ eventType: 'grabbed', data: '{"message":"queued"}' })], total: 1, limit: 100, offset: 0,

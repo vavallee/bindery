@@ -10,7 +10,11 @@ export interface ParsedEventData {
 
 export function parseEventData(data: string): ParsedEventData {
   if (!data) return {}
-  try { return JSON.parse(data) } catch { return {} }
+  try {
+    const v: unknown = JSON.parse(data)
+    // "null", a string, a number or an array parse fine but are not event data.
+    return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as ParsedEventData) : {}
+  } catch { return {} }
 }
 
 // Pair gating parks the first format to finish and records it as a

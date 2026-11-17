@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TFunction } from 'i18next'
 import { api } from '../api/client'
 import { grabErrorText } from './forceGrab'
-import { humanizeEventType, isHeldEvent } from './historyEvents'
+import { humanizeEventType, isHeldEvent, parseEventData } from './historyEvents'
 
 const t = ((key: string, opts?: { status?: number }) => {
   if (key === 'search.grabFailedStatus') return `The server could not start that download (${opts?.status}). Try again.`
@@ -45,5 +45,15 @@ describe('history event helpers', () => {
     expect(isHeldEvent('downloadFolderImported', { status: 'importHeld' })).toBe(true)
     expect(isHeldEvent('downloadFolderImported', { mode: 'drop' })).toBe(false)
     expect(isHeldEvent('bookImported', { mode: 'drop-hold' })).toBe(false)
+  })
+})
+
+describe('parseEventData', () => {
+  it.each(['null', '"x"', 'x', '5', '[]', '', '{bad'])('returns an empty object for %j', raw => {
+    expect(parseEventData(raw)).toEqual({})
+    expect(isHeldEvent('downloadFolderImported', parseEventData(raw))).toBe(false)
+  })
+  it('parses an object', () => {
+    expect(parseEventData('{"mode":"drop-hold"}')).toEqual({ mode: 'drop-hold' })
   })
 })
