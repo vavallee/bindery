@@ -32,6 +32,9 @@ export default function BookOrbitTab() {
   const [testError, setTestError] = useState<string | null>(null)
   const [libraries, setLibraries] = useState<BookOrbitLibrary[] | null>(null)
   const [librariesError, setLibrariesError] = useState<string | null>(null)
+  // Names resolved quietly from the live library list, so the saved selection
+  // and the run history read "Books" after a reload instead of "Library 1".
+  const [knownLibraries, setKnownLibraries] = useState<BookOrbitLibrary[]>([])
   const [progress, setProgress] = useState<ABSImportProgress | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [runs, setRuns] = useState<ABSImportRun[]>([])
@@ -50,6 +53,28 @@ export default function BookOrbitTab() {
       // The history is secondary; a failure here must not hide the form.
     }
   }, [])
+
+  // Best effort: when BookOrbit cannot be reached the ids stay as they are and
+  // nothing is shown, since the admin did not ask for the list.
+  const resolveNames = useCallback(async (cfg: BookOrbitConfig) => {
+    if (!cfg.baseUrl || !cfg.apiKeyConfigured) return
+    try {
+      const list = await api.bookOrbitLibraries()
+      if (Array.isArray(list)) setKnownLibraries(list)
+    } catch {
+      // Falls back to "Library N".
+    }
+  }, [])
+
+  // Each action starts from a clean slate, so a result or error from an
+  // earlier one never sits beside the answer to a later one.
+  const clearFeedback = () => {
+    setSaveError(null)
+    setTestResult(null)
+    setTestError(null)
+    setLibrariesError(null)
+    setImportError(null)
+  }
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -79,6 +104,7 @@ export default function BookOrbitTab() {
       .then(cfg => {
         setConfig(cfg)
         setDraft({ baseUrl: cfg.baseUrl ?? '', apiKey: '', pathRemap: cfg.pathRemap ?? '', libraryIds: cfg.libraryIds ?? [] })
+        void resolveNames(cfg)
       })
       .catch(console.error)
       .finally(() => setLoading(false))
@@ -90,11 +116,11 @@ export default function BookOrbitTab() {
       .catch(() => {})
     void loadRuns(0)
     return stopPolling
-  }, [poll, loadRuns, stopPolling])
+  }, [poll, loadRuns, stopPolling, resolveNames])
 
   const save = async () => {
     setSaving(true)
-    setSaveError(null)
+    clearFeedback()
     try {
       const payload: { baseUrl: string; libraryIds: string[]; pathRemap: string; apiKey?: string } = {
         baseUrl: draft.baseUrl.trim(),
@@ -105,6 +131,7 @@ export default function BookOrbitTab() {
       const next = await api.bookOrbitSetConfig(payload)
       setConfig(next)
       setDraft({ baseUrl: next.baseUrl, apiKey: '', pathRemap: next.pathRemap, libraryIds: next.libraryIds })
+      void resolveNames(next)
     } catch (err) {
       setSaveError(errorText(err, t('settings.bookorbit.errors.save')))
     } finally {
@@ -119,8 +146,7 @@ export default function BookOrbitTab() {
 
   const test = async () => {
     setTesting(true)
-    setTestResult(null)
-    setTestError(null)
+    clearFeedback()
     try {
       setTestResult(await api.bookOrbitTest(probeBody()))
     } catch (err) {
@@ -131,9 +157,11 @@ export default function BookOrbitTab() {
   }
 
   const listLibraries = async () => {
-    setLibrariesError(null)
+    clearFeedback()
     try {
-      setLibraries(await api.bookOrbitLibraries(probeBody()))
+      const list = await api.bookOrbitLibraries(probeBody())
+      setLibraries(list)
+      setKnownLibraries(list)
     } catch (err) {
       setLibrariesError(errorText(err, t('settings.bookorbit.errors.libraries')))
     }
@@ -154,7 +182,7 @@ export default function BookOrbitTab() {
   const ready = Boolean(config?.baseUrl && config.apiKeyConfigured && (config.libraryIds ?? []).length > 0) && !unsaved
 
   const start = async (dryRun: boolean) => {
-    setImportError(null)
+    clearFeedback()
     try {
       setProgress(await api.bookOrbitImportStart({ dryRun }))
       poll()
@@ -168,8 +196,10 @@ export default function BookOrbitTab() {
   const running = Boolean(progress?.running)
   // Libraries to tick: the ones BookOrbit just listed, or, before a listing,
   // the saved selection by id so it stays visible and can be cleared.
-  const choices: BookOrbitLibrary[] = libraries ?? draft.libraryIds.map(id => ({ id, name: t('settings.bookorbit.libraries.unnamed', { id }), folders: [] }))
-  const libraryName = (id: string) => libraries?.find(lib => lib.id === id)?.name ?? t('settings.bookorbit.libraries.unnamed', { id })
+  const libraryName = (id: string) => (libraries ?? knownLibraries).find(lib => lib.id === id)?.name
+    ?? knownLibraries.find(lib => lib.id === id)?.name
+    ?? t('settings.bookorbit.libraries.unnamed', { id })
+  const choices: BookOrbitLibrary[] = libraries ?? draft.libraryIds.map(id => ({ id, name: libraryName(id), folders: [] }))
 
   return (
     <div className="space-y-6 max-w-2xl">

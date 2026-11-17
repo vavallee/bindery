@@ -3,10 +3,15 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/abs"
@@ -454,5 +459,42 @@ func TestBookOrbitImportStatus(t *testing.T) {
 	}
 	if progress.Running {
 		t.Error("idle importer reports running")
+	}
+}
+
+// A transport failure reaches the admin as a plain sentence naming only the
+// host they typed. The Go error, with its request URL and resolver address,
+// stays in the log.
+func TestBookOrbitTransportErrorsArePlain(t *testing.T) {
+	f := newBookOrbitFixture(t)
+	f.save(t)
+	reqURL := "http://192.168.1.20:3000/api/v1/auth/me?token=" + bookOrbitTestKey
+	wrap := func(err error) error { return &url.Error{Op: "Get", URL: reqURL, Err: err} }
+	for name, tc := range map[string]struct {
+		err  error
+		want string
+	}{
+		"dns":               {wrap(&net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", Name: "test-unreachable.invalid", Server: "10.43.0.10:53", IsNotFound: true}}), "Host not found"},
+		"refused":           {wrap(&net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}), "Connection refused"},
+		"deadline":          {wrap(context.DeadlineExceeded), "did not answer in time"},
+		"unknown authority": {wrap(x509.UnknownAuthorityError{}), "TLS problem"},
+		"hostname mismatch": {wrap(x509.HostnameError{Certificate: &x509.Certificate{}, Host: "10.9.9.9"}), "TLS problem"},
+		"non 2xx":           {&bookorbit.APIError{StatusCode: 500, Message: "boom at /srv/internal/path"}, "unexpected HTTP status (500)"},
+		"other":             {errors.New("something odd with " + bookOrbitTestKey), "Could not reach BookOrbit"},
+	} {
+		f.client.err = tc.err
+		for route, call := range map[string]func(http.ResponseWriter, *http.Request){"test": f.h.Test, "libraries": f.h.Libraries} {
+			rec := httptest.NewRecorder()
+			call(rec, httptest.NewRequest(http.MethodPost, "/api/v1/bookorbit/"+route, nil))
+			got := errorOf(t, rec)
+			if rec.Code != http.StatusBadGateway || !strings.Contains(got, tc.want) {
+				t.Errorf("%s/%s: %d %q, want %q", name, route, rec.Code, got, tc.want)
+			}
+			for _, bad := range []string{bookOrbitTestKey, "/api/v1", "Get \"", "10.43.0.10", "10.9.9.9", "dial", "/srv/internal", "token="} {
+				if strings.Contains(got, bad) {
+					t.Errorf("%s/%s: message %q leaks %q", name, route, got, bad)
+				}
+			}
+		}
 	}
 }

@@ -2,14 +2,19 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/vavallee/bindery/internal/abs"
 	"github.com/vavallee/bindery/internal/bookorbit"
@@ -323,12 +328,54 @@ func (h *BookOrbitHandler) writeProbeError(w http.ResponseWriter, logMsg, baseUR
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "BookOrbit has no API at this address. Check the base URL, and that the server is recent enough to support API keys."})
 	case errors.As(err, &apiErr):
 		slog.Warn(logMsg, "status", apiErr.StatusCode, "host", redactABSHost(baseURL), "code", apiErr.Code)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": apiErr.Error()})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": bookOrbitStatusMessage(apiErr.StatusCode)})
 	case errors.As(err, &shapeErr):
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": shapeErr.Error()})
 	default:
 		slog.Warn(logMsg, "host", redactABSHost(baseURL), "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": lanTimeoutHint(baseURL, err)})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": bookOrbitTransportMessage(baseURL, err)})
+	}
+}
+
+func bookOrbitStatusMessage(status int) string {
+	return "BookOrbit answered with an unexpected HTTP status (" + strconv.Itoa(status) + "). Check the server's own logs."
+}
+
+// bookOrbitTransportMessage turns a transport failure into a sentence an
+// admin can act on. It names only the host the admin typed, never the request
+// URL, a resolver address or anything the Go error carries. The full error
+// stays in the server log.
+func bookOrbitTransportMessage(baseURL string, err error) string {
+	host := ""
+	if u, perr := url.Parse(baseURL); perr == nil {
+		host = u.Host
+	}
+	if host == "" {
+		host = "the configured address"
+	}
+	var dnsErr *net.DNSError
+	var unknownAuth x509.UnknownAuthorityError
+	var certInvalid x509.CertificateInvalidError
+	var hostnameErr x509.HostnameError
+	var verifyErr *tls.CertificateVerificationError
+	var recordErr tls.RecordHeaderError
+	switch {
+	case errors.As(err, &dnsErr):
+		return "Host not found: " + host + " does not resolve. Check the base URL."
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "Connection refused by " + host + ". Check that BookOrbit is running and that the port is right."
+	case isTimeoutErr(err):
+		msg := host + " did not answer in time."
+		if u, perr := url.Parse(baseURL); perr == nil && looksLANHost(u.Hostname()) {
+			msg += " The host looks LAN local. If Bindery runs behind a VPN container, allow your LAN in its firewall settings."
+		}
+		return msg
+	case errors.As(err, &unknownAuth), errors.As(err, &certInvalid), errors.As(err, &hostnameErr), errors.As(err, &verifyErr):
+		return "TLS problem with " + host + ": its certificate is not trusted or does not match the address. Use a certificate Bindery trusts, or plain http on a trusted network."
+	case errors.As(err, &recordErr):
+		return "TLS problem with " + host + ": it did not answer as an https server. Check the scheme in the base URL."
+	default:
+		return "Could not reach BookOrbit at " + host + ". Check the base URL and the server's logs."
 	}
 }
 

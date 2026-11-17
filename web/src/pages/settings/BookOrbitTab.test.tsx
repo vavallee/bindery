@@ -172,4 +172,43 @@ describe('BookOrbitTab', () => {
     expect((screen.getByRole('button', { name: 'Older' }) as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: 'Newer' }) as HTMLButtonElement).disabled).toBe(false)
   })
+
+  it('shows library names after a reload without pressing Load libraries', async () => {
+    mocked.bookOrbitConfig.mockResolvedValue({ ...saved, libraryIds: ['1'] })
+    mocked.bookOrbitLibraries.mockResolvedValue([{ id: '1', name: 'Books', folders: ['/books'] }])
+    mocked.bookOrbitImportRuns.mockResolvedValue([run(7, { libraryId: '1' })])
+    render(<BookOrbitTab />)
+    expect(await screen.findByLabelText(/Books/)).toBeTruthy()
+    expect(await screen.findByText(/Import · Books/)).toBeTruthy()
+    expect(screen.queryByText(/Library 1/)).toBeNull()
+  })
+
+  it('falls back to Library N when BookOrbit cannot be reached, and says nothing about it', async () => {
+    mocked.bookOrbitConfig.mockResolvedValue({ ...saved, libraryIds: ['1'] })
+    mocked.bookOrbitLibraries.mockRejectedValue(new Error('BookOrbit rejected the API key'))
+    mocked.bookOrbitImportRuns.mockResolvedValue([run(7, { libraryId: '1' })])
+    render(<BookOrbitTab />)
+    expect(await screen.findByText(/Import · Library 1/)).toBeTruthy()
+    expect(screen.getByLabelText(/Library 1/)).toBeTruthy()
+    expect(screen.queryByText(/rejected the API key/)).toBeNull()
+  })
+
+  it('clears an earlier error when another action runs', async () => {
+    mocked.bookOrbitLibraries
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('BookOrbit rejected the API key. It may be revoked.'))
+    mocked.bookOrbitTest.mockResolvedValue({ message: 'connected', username: 'reader', authenticationMethod: 'api_key', libraryCount: 2 })
+    render(<BookOrbitTab />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Load libraries' }))
+    expect(await screen.findByText(/rejected the API key/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+    expect(await screen.findByText('Connected as reader. The key can see 2 libraries.')).toBeTruthy()
+    expect(screen.queryByText(/rejected the API key/)).toBeNull()
+
+    mocked.bookOrbitLibraries.mockRejectedValueOnce(new Error('Host not found'))
+    fireEvent.click(screen.getByRole('button', { name: 'Load libraries' }))
+    expect(await screen.findByText('Host not found')).toBeTruthy()
+    expect(screen.queryByText(/Connected as reader/)).toBeNull()
+  })
 })
