@@ -313,3 +313,74 @@ func TestManualImportScan_AutoCopyStillHidesCopiedSource(t *testing.T) {
 		t.Errorf("copied source = %+v, want AlreadyImported and not HandedOff", it)
 	}
 }
+
+// TestHandedOffIndex_FolderUnitNeedsEveryFileCovered: a folder unit whose own
+// path was not recorded counts as handed off only when every importable file
+// below it was, as directoryMatchesTracked does for book_files.
+func TestHandedOffIndex_FolderUnitNeedsEveryFileCovered(t *testing.T) {
+	root := resolvedTempDir(t)
+	folder := filepath.Join(root, "Audio")
+	one := filepath.Join(folder, "01.mp3")
+	two := filepath.Join(folder, "CD2", "02.mp3")
+	writeTestFile(t, one)
+	writeTestFile(t, two)
+	writeTestFile(t, filepath.Join(folder, "cover.jpg"))
+
+	partial := &handedOffIndex{paths: map[string]struct{}{one: {}}}
+	if partial.coversUnit(folder, true) {
+		t.Error("folder with a track that was never handed off counted as handed off")
+	}
+	full := &handedOffIndex{paths: map[string]struct{}{one: {}, filepath.Join(folder, "CD2"): {}}}
+	if !full.coversUnit(folder, true) {
+		t.Error("folder whose every track was handed off should count as handed off")
+	}
+	if full.coversUnit(filepath.Join(root, "Other"), true) {
+		t.Error("a folder with nothing recorded below it counted as handed off")
+	}
+	if full.coversUnit(filepath.Join(root, "loose.epub"), false) {
+		t.Error("an unrelated file counted as handed off")
+	}
+	var empty *handedOffIndex
+	if empty.covers(one) {
+		t.Error("a nil index covered a path")
+	}
+}
+
+// TestHandedOffSources_IgnoresBroadAndRelativePaths: a recorded path that is a
+// library root or a download folder would hide everything below it, and a
+// relative one cannot be anchored, so neither enters the index.
+func TestHandedOffSources_IgnoresBroadAndRelativePaths(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+	downloads := db.NewDownloadRepo(database)
+	root := resolvedTempDir(t)
+	intake := filepath.Join(root, "downloads")
+	book := filepath.Join(intake, "Book", "book.epub")
+
+	for i, p := range []string{root, intake, "relative/book.epub", book, ""} {
+		dl := &models.Download{GUID: "handoff-" + string(rune('a'+i)), Title: "t", Status: models.StateImportExternal}
+		if err := downloads.Create(ctx, dl); err != nil {
+			t.Fatal(err)
+		}
+		if err := downloads.SetImportPath(ctx, dl.ID, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, nil).
+		WithRoots(NewLibraryRoots(nil, root)).WithExcludedDirs(intake)
+
+	idx, err := h.handedOffSources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.paths) != 1 {
+		t.Fatalf("index = %v, want only %q", idx.paths, book)
+	}
+	if !idx.covers(book) || idx.covers(filepath.Join(intake, "Other", "other.epub")) {
+		t.Errorf("index %v covers the wrong paths", idx.paths)
+	}
+}
