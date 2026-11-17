@@ -568,6 +568,11 @@ var settingDescriptors = []SettingDescriptor{
 		Description: "Path rewrites applied to BookOrbit file paths, in from:to[,from:to] form.",
 		State:       SettingStateActive,
 	},
+	{
+		Key: SettingBookOrbitPublicURL, Type: SettingTypeString, Default: "",
+		Description: "Address a browser uses to reach BookOrbit, for the Open in BookOrbit link on the book page. Empty means the base URL. Only http and https are accepted.",
+		State:       SettingStateActive,
+	},
 
 	// Hardcover.
 	{

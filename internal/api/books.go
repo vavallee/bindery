@@ -16,6 +16,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
+	"github.com/vavallee/bindery/internal/bookorbit"
 	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
@@ -52,11 +53,23 @@ type BookHandler struct {
 
 	// runs gives the search a status flip starts a pollable run (#3133).
 	runs *searchruns.Store
+
+	// bookOrbitProvenance remembers which BookOrbit book each imported book
+	// came from. Optional.
+	bookOrbitProvenance *db.ABSProvenanceRepo
 }
 
 // WithSearchRuns attaches the store behind GET /search/runs/{id}. Optional.
 func (h *BookHandler) WithSearchRuns(runs *searchruns.Store) *BookHandler {
 	h.runs = runs
+	return h
+}
+
+// WithBookOrbitLinks wires in the import provenance so the book detail can
+// carry an "Open in BookOrbit" link (#1927). Optional: without it no link is
+// ever produced.
+func (h *BookHandler) WithBookOrbitLinks(provenance *db.ABSProvenanceRepo) *BookHandler {
+	h.bookOrbitProvenance = provenance
 	return h
 }
 
@@ -449,6 +462,49 @@ func (h *BookHandler) prepareBookDetail(ctx context.Context, book *models.Book) 
 	h.attachBookIdentifiers(ctx, book)
 	h.attachImportInFlight(ctx, book)
 	h.attachRecording(ctx, book)
+	h.attachBookOrbitLink(ctx, book)
+}
+
+// attachBookOrbitLink sets the book's BookOrbit address for an admin. The
+// BookOrbit settings are admin only, so everyone else gets nothing, and the
+// response never carries the server URL or the API key, only the finished
+// link. The id comes from the import's provenance row, which is written only
+// by a real run that matched or created the book. When a rebuilt BookOrbit
+// linked the book again under a new id, the most recent link wins.
+func (h *BookHandler) attachBookOrbitLink(ctx context.Context, book *models.Book) {
+	book.BookOrbitURL = ""
+	if h.bookOrbitProvenance == nil || h.settings == nil || book.ID == 0 {
+		return
+	}
+	if auth.UserRoleFromContext(ctx) != "admin" {
+		return
+	}
+	links, err := h.bookOrbitProvenance.ListByLocal(ctx, bookorbit.ProvenanceBookEntity, book.ID)
+	if err != nil {
+		slog.Debug("book get: bookorbit link lookup failed", "book_id", book.ID, "error", err)
+		return
+	}
+	var best *models.ABSProvenance
+	for idx := range links {
+		l := &links[idx]
+		if l.SourceID != bookorbit.SourceID {
+			continue
+		}
+		if best == nil || !l.UpdatedAt.Before(best.UpdatedAt) {
+			best = l
+		}
+	}
+	if best == nil {
+		return
+	}
+	get := func(key string) string {
+		s, _ := h.settings.Get(ctx, key)
+		if s == nil {
+			return ""
+		}
+		return strings.TrimSpace(s.Value)
+	}
+	book.BookOrbitURL = bookorbit.BookURL(get(SettingBookOrbitPublicURL), get(SettingBookOrbitBaseURL), best.ExternalID)
 }
 
 // attachRecording fills the book's narrator list and edition type for the

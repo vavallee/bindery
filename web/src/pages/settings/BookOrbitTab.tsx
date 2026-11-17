@@ -23,7 +23,7 @@ export default function BookOrbitTab() {
   const { t } = useTranslation()
   const fid = useId()
   const [config, setConfig] = useState<BookOrbitConfig | null>(null)
-  const [draft, setDraft] = useState({ baseUrl: '', apiKey: '', pathRemap: '', libraryIds: [] as string[] })
+  const [draft, setDraft] = useState({ baseUrl: '', publicUrl: '', apiKey: '', pathRemap: '', libraryIds: [] as string[] })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -108,7 +108,7 @@ export default function BookOrbitTab() {
     api.bookOrbitConfig()
       .then(cfg => {
         setConfig(cfg)
-        setDraft({ baseUrl: cfg.baseUrl ?? '', apiKey: '', pathRemap: cfg.pathRemap ?? '', libraryIds: cfg.libraryIds ?? [] })
+        setDraft({ baseUrl: cfg.baseUrl ?? '', publicUrl: cfg.publicUrl ?? '', apiKey: '', pathRemap: cfg.pathRemap ?? '', libraryIds: cfg.libraryIds ?? [] })
         void resolveNames(cfg)
       })
       .catch(console.error)
@@ -128,15 +128,16 @@ export default function BookOrbitTab() {
     clearFeedback()
     namesReq.current++
     try {
-      const payload: { baseUrl: string; libraryIds: string[]; pathRemap: string; apiKey?: string } = {
+      const payload: { baseUrl: string; publicUrl: string; libraryIds: string[]; pathRemap: string; apiKey?: string } = {
         baseUrl: draft.baseUrl.trim(),
+        publicUrl: draft.publicUrl.trim(),
         libraryIds: draft.libraryIds,
         pathRemap: draft.pathRemap.trim(),
       }
       if (draft.apiKey.trim()) payload.apiKey = draft.apiKey.trim()
       const next = await api.bookOrbitSetConfig(payload)
       setConfig(next)
-      setDraft({ baseUrl: next.baseUrl, apiKey: '', pathRemap: next.pathRemap, libraryIds: next.libraryIds })
+      setDraft({ baseUrl: next.baseUrl, publicUrl: next.publicUrl ?? '', apiKey: '', pathRemap: next.pathRemap, libraryIds: next.libraryIds })
       void resolveNames(next)
     } catch (err) {
       setSaveError(errorText(err, t('settings.bookorbit.errors.save')))
@@ -184,6 +185,7 @@ export default function BookOrbitTab() {
   const unsaved = !config
     || config.baseUrl !== draft.baseUrl.trim()
     || config.pathRemap !== draft.pathRemap.trim()
+    || (config.publicUrl ?? '') !== draft.publicUrl.trim()
     || draft.apiKey.trim() !== ''
     || !sameIds(config.libraryIds ?? [], draft.libraryIds)
   const ready = Boolean(config?.baseUrl && config.apiKeyConfigured && (config.libraryIds ?? []).length > 0) && !unsaved
@@ -228,6 +230,19 @@ export default function BookOrbitTab() {
             placeholder="http://bookorbit:3000"
             className={inputCls}
           />
+        </div>
+        <div>
+          <label htmlFor={`${fid}-public`} className="block text-xs font-medium mb-1">{t('settings.bookorbit.fields.publicUrl')}</label>
+          <input id={`${fid}-public`}
+            {...urlInputAttrs}
+            type="text"
+            value={draft.publicUrl}
+            onChange={e => setDraft(prev => ({ ...prev, publicUrl: e.target.value }))}
+            placeholder="https://books.example.com"
+            aria-describedby={`${fid}-public-hint`}
+            className={inputCls}
+          />
+          <p id={`${fid}-public-hint`} className="mt-1 text-[11px] text-fg-muted">{t('settings.bookorbit.fields.publicUrlHint')}</p>
         </div>
         <div>
           <label htmlFor={`${fid}-key`} className="block text-xs font-medium mb-1">

@@ -23,6 +23,10 @@ const (
 	SourceID = "bookorbit"
 	Label    = "BookOrbit"
 
+	// ProvenanceBookEntity is the entity type the import engine records a
+	// book's link under. The link's external id is the BookOrbit book id.
+	ProvenanceBookEntity = "book"
+
 	// libraryIDPrefix is put in front of a BookOrbit library id wherever the
 	// shared import engine sees it. BookOrbit numbers its libraries from 1,
 	// and the engine builds placeholder ids from the library id alone, so a

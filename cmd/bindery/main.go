@@ -711,6 +711,7 @@ func main() {
 		WithEditionHydration(editionRepo).
 		WithRoots(libraryRoots).
 		WithCoverStore(coverStore).
+		WithBookOrbitLinks(absProvenanceRepo).
 		WithLifetimeCtx(appCtx)
 	// Interactive search records what it returns here, and a grab from a
 	// non-admin account is held to it: it can grab a search result, not make

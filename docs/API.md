@@ -396,7 +396,7 @@ GET    /api/v1/book?language=ita                  filter by language, any spelli
 GET    /api/v1/book/languages                     the languages of the books the caller can see, most common first: [{code, count}], with an empty `code` for books with no language (including `und`, `mis` and `zxx`; `mul` is listed as itself). Excluded books are not counted; under tenancy a non-admin counts their own and unowned books, like the list
 POST   /api/v1/book/bulk                          bulk monitor / status flip / exclude / unexclude (`"expectNoFiles": true` skips books that have files on `exclude`)
 GET    /api/v1/library/export?limit=&cursor=      paged read only export for companion tools: books with files, editions and series memberships (see Library export)
-GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library)
+GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library; `bookOrbitUrl`, a link to the book in BookOrbit, only for an admin and only for a book a BookOrbit import matched or created, see BookOrbit below)
 PUT    /api/v1/book/{id}                          update monitor / status / metadata; when the write starts a search, the book in the response carries `searchRunId` (see search runs)
 DELETE /api/v1/book/{id}                          remove from library
 DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk (`?format=ebook|audiobook` scopes to one format; `?path=…` deregisters one tracked path WITHOUT deleting anything on disk)
@@ -1829,14 +1829,20 @@ is admin only. Bindery only ever reads from BookOrbit. See
 [BookOrbit-Import.md](BookOrbit-Import.md).
 
 ```
-GET    /api/v1/bookorbit/config            saved connection: {baseUrl, libraryIds[], pathRemap, apiKeyConfigured}. The API key is never returned
-PUT    /api/v1/bookorbit/config            save it: {"baseUrl":"http://bookorbit:3000","apiKey":"bok_...","libraryIds":["2"],"pathRemap":"/books:/media/books"}. Omit apiKey or send it empty to keep the saved key. 400 for a bad URL, a refused address, a bad library id or a bad remap
+GET    /api/v1/bookorbit/config            saved connection: {baseUrl, publicUrl, libraryIds[], pathRemap, apiKeyConfigured}. The API key is never returned
+PUT    /api/v1/bookorbit/config            save it: {"baseUrl":"http://bookorbit:3000","apiKey":"bok_...","libraryIds":["2"],"pathRemap":"/books:/media/books","publicUrl":"https://books.example.com"}. Omit apiKey or send it empty to keep the saved key. publicUrl is the address a browser uses for the Open in BookOrbit link (setting `bookorbit.public_url`): omit it to keep it, send an empty string to clear it and fall back to baseUrl. 400 for a bad URL, a publicUrl that is not http or https, a refused address, a bad library id or a bad remap
 POST   /api/v1/bookorbit/test              call BookOrbit with the saved URL: {message, username, authenticationMethod, libraryCount}. Optional {"apiKey":"bok_..."} tries a key before saving it. 400 when no URL or key is available, 502 with a reason when BookOrbit refuses or cannot be reached
 POST   /api/v1/bookorbit/libraries         libraries the key can see: [{id, name, folders[]}]. Same body and errors as /test
 POST   /api/v1/bookorbit/import            start a run: {"dryRun":true,"libraryIds":["2"]}. A dry run unless dryRun is exactly false. libraryIds is optional and must be a subset of the saved libraries (400 otherwise). 202 with the progress object, 409 while this or an Audiobookshelf import is running
 GET    /api/v1/bookorbit/import/status     progress of the current or last run: {running, dryRun, processed, message, error, stats, results[]}, the same shape as /abs/import/status
 GET    /api/v1/bookorbit/import/runs       recorded BookOrbit runs, newest first: ?limit (default 10, max 200) and ?offset. One row per library
 ```
+
+`GET /api/v1/book/{id}` carries `bookOrbitUrl` for an admin when the book came
+from a BookOrbit import: `<bookorbit.public_url or bookorbit.base_url>/book/<BookOrbit id>`.
+It is absent for everyone else, for a book with no stored BookOrbit id, and when
+the saved address is not http or https. The server URL and the API key are never
+part of a book response.
 
 The test and library routes always call the saved base URL. A URL in the
 request body is ignored, so the routes cannot be pointed at an address that
