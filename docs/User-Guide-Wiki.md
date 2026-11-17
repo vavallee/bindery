@@ -48,6 +48,10 @@ an arbitrary release is unreliable. The escape hatches:
   at a folder of files you already have and matches them to books; files already
   tracked in the library are skipped by default, and toggling **Show already
   imported** surfaces them again, e.g. to spot a corrupted file or relink one.
+  In External import mode a file whose download is still handed off to your
+  import tool is skipped the same way, and listed as already handed off when
+  the toggle is on, so a rescan cannot drop it twice. It is offered again once
+  the drop fails or is blocked, or its Queue row is removed.
   The folder browser starts at your root folders, the download directories and
   any **import source folders** an admin lists under Settings, General, Import
   (`import.source_folders`, one absolute path per line). A source folder is a

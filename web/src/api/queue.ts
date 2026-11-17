@@ -46,6 +46,11 @@ export interface ScanItem {
   // this format). Normally such units are excluded; includeImported surfaces
   // them instead, labelled (#2480).
   alreadyImported: boolean
+  // handedOff is true when a download already handed this source to the
+  // external import tool and is still waiting on it. It comes with
+  // alreadyImported, so the unit is hidden and unticked the same way, and only
+  // changes the label.
+  handedOff?: boolean
 }
 
 export interface FolderScanResponse {
