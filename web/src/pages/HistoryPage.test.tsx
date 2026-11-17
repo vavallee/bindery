@@ -31,6 +31,9 @@ vi.mock('react-i18next', () => ({
         'history.events.grabbed': 'Grabbed',
         'history.events.downloadFailed': 'Download Failed',
         'history.events.importFailed': 'Import Failed',
+        'history.events.downloadFolderImported': 'Folder Imported',
+        'history.events.downloadHeld': 'Held for pair',
+        'history.heldDetail': 'Finished downloading. Waiting for the other format before dropping it.',
         'history.title': 'History',
         'history.contentCheckEbook': 'The file looks like another book',
         'history.contentCheckEbookUncertain': 'The file may be another book, but Bindery cannot tell it from another edition',
@@ -120,6 +123,41 @@ beforeEach(() => {
 })
 
 describe('HistoryPage', () => {
+  it('labels a pair-gating hold as held, not as a folder import', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [
+        makeHistory({
+          id: 1,
+          eventType: 'downloadFolderImported',
+          sourceTitle: 'Held Book',
+          data: JSON.stringify({ mode: 'drop-hold', status: 'importHeld', format: 'ebook', path: '/downloads/Held Book' }),
+        }),
+        makeHistory({
+          id: 2,
+          eventType: 'downloadFolderImported',
+          sourceTitle: 'Dropped Book',
+          data: JSON.stringify({ mode: 'drop', path: '/library/Dropped Book' }),
+        }),
+      ],
+      total: 2,
+      limit: 100,
+      offset: 0,
+    })
+    renderHistoryPage()
+    await findDesktopTable()
+
+    const held = rowFor('Held Book')
+    expect(within(held).getByText('Held for pair')).toBeTruthy()
+    expect(within(held).queryByText('Folder Imported')).toBeNull()
+    expect(within(held).getByText(/Waiting for the other format/)).toBeTruthy()
+    expect(within(held).queryByText('/downloads/Held Book')).toBeNull()
+
+    const dropped = rowFor('Dropped Book')
+    expect(within(dropped).getByText('Folder Imported')).toBeTruthy()
+    expect(within(dropped).queryByText('Held for pair')).toBeNull()
+    expect(within(dropped).getByText('/library/Dropped Book')).toBeTruthy()
+  })
+
   it('renders history rows with parsed details, media type, and size', async () => {
     vi.mocked(api.listHistory).mockResolvedValue({
       items: [

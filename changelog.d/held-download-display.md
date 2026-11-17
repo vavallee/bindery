@@ -1,0 +1,2 @@
+### Fixed
+- **Held downloads no longer look handed off or have a fake ETA.** When a book is wanted as both formats and the first one finishes early, History now labels that row "Held for pair" with a short note, instead of "Folder Imported" with the download path. The Queue also stops showing "2400h 00m remaining" on a completed torrent that is waiting; qBittorrent sends a 100 day placeholder there, and finished downloads now show no time left at all.
