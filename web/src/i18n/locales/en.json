@@ -3448,6 +3448,10 @@
   },
   "renameFiles": {
     "externalWarning": "Import mode is External, so another tool owns this layout. Renaming here can fight that tool.",
+    "externalWarningFor": "Import mode is External for {{formats}}, so another tool owns this layout. Renaming here can fight that tool.",
+    "formatEbook": "ebook files",
+    "formatAudiobook": "audiobook files",
+    "formatsJoin": "{{first}} and {{second}}",
     "externalConfirm": "I understand, rename these files anyway",
     "status": {
       "move": "Will move",

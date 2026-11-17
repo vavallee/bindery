@@ -189,7 +189,7 @@ The lab saw the older behaviour on 1.51.1: a wrong book was dropped under the wa
 
 ### Reorganize
 
-Since #3947, Reorganize shows a warning in External mode and the Rename button stays off until you tick a confirmation. Without the confirmation the apply route answers 409 and moves nothing. Do not confirm it for a BookOrbit library. On 1.51.1 the Reorganize preview offered to move all eight BookOrbit filed books to Bindery's own names. Library scans and metadata refreshes changed nothing on disk.
+Since #3947, Reorganize shows a warning in External mode that names the affected formats (ebook files, audiobook files, or both, as set by Import Mode and the audiobook import mode), and the Rename button stays off until you tick a confirmation. Without the confirmation the apply route answers 409 and moves nothing. Do not confirm it for a BookOrbit library. On 1.51.1 the Reorganize preview offered to move all eight BookOrbit filed books to Bindery's own names. Library scans and metadata refreshes changed nothing on disk.
 
 ### Known limits
 

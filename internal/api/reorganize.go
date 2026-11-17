@@ -132,9 +132,14 @@ func (h *ReorganizeHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := newReorganizeResponse(moves)
+	// Only rows that would move count: those are the fileIds the dialog
+	// submits to Apply, so a format whose files are all already in place, or
+	// missing, or blocked by a collision, is not one Reorganize would touch.
 	var present []string
 	for _, m := range moves {
-		present = append(present, m.Format)
+		if m.Status == importer.ReorgStatusMove {
+			present = append(present, m.Format)
+		}
 	}
 	if ext := intersectFormats(h.scanner.ExternalImportFormats(ctx), present); len(ext) > 0 {
 		resp.ExternalMode = true
