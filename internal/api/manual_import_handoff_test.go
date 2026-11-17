@@ -22,6 +22,7 @@ import (
 // From a folder.
 type handoffFixture struct {
 	h         *ManualImportHandler
+	scanner   *importer.Scanner
 	downloads *db.DownloadRepo
 	settings  *db.SettingsRepo
 	book      *models.Book
@@ -80,7 +81,7 @@ func newHandoffFixture(t *testing.T, mode string) *handoffFixture {
 	scanner := importer.NewScanner(downloads, db.NewDownloadClientRepo(database), books, authors, db.NewHistoryRepo(database), library, "", "", "", "")
 	scanner.WithSettings(settings)
 	h := NewManualImportHandler(scanner, downloads, books).WithRoots(NewLibraryRoots(nil, base))
-	return &handoffFixture{h: h, downloads: downloads, settings: settings, book: book, intake: intake, dock: dock}
+	return &handoffFixture{h: h, scanner: scanner, downloads: downloads, settings: settings, book: book, intake: intake, dock: dock}
 }
 
 func (f *handoffFixture) write(t *testing.T, rel, content string) string {
@@ -330,7 +331,12 @@ func TestHandedOffIndex_FolderUnitNeedsEveryFileCovered(t *testing.T) {
 	if partial.coversUnit(folder, true) {
 		t.Error("folder with a track that was never handed off counted as handed off")
 	}
-	full := &handedOffIndex{paths: map[string]struct{}{one: {}, filepath.Join(folder, "CD2"): {}}}
+	// A recorded folder does not cover what is inside it.
+	viaFolder := &handedOffIndex{paths: map[string]struct{}{one: {}, filepath.Join(folder, "CD2"): {}}}
+	if viaFolder.coversUnit(folder, true) {
+		t.Error("a recorded subfolder covered the track inside it")
+	}
+	full := &handedOffIndex{paths: map[string]struct{}{one: {}, two: {}}}
 	if !full.coversUnit(folder, true) {
 		t.Error("folder whose every track was handed off should count as handed off")
 	}
@@ -361,7 +367,7 @@ func TestHandedOffSources_IgnoresBroadAndRelativePaths(t *testing.T) {
 	intake := filepath.Join(root, "downloads")
 	book := filepath.Join(intake, "Book", "book.epub")
 
-	for i, p := range []string{root, intake, "relative/book.epub", book, ""} {
+	for i, p := range []string{root, intake, filepath.Dir(root), "relative/book.epub", book, ""} {
 		dl := &models.Download{GUID: "handoff-" + string(rune('a'+i)), Title: "t", Status: models.StateImportExternal}
 		if err := downloads.Create(ctx, dl); err != nil {
 			t.Fatal(err)
@@ -382,5 +388,105 @@ func TestHandedOffSources_IgnoresBroadAndRelativePaths(t *testing.T) {
 	}
 	if !idx.covers(book) || idx.covers(filepath.Join(intake, "Other", "other.epub")) {
 		t.Errorf("index %v covers the wrong paths", idx.paths)
+	}
+}
+
+// manualDownload creates the row a manual import runs under.
+func (f *handoffFixture) manualDownload(t *testing.T) *models.Download {
+	t.Helper()
+	bookID := f.book.ID
+	dl := &models.Download{GUID: importer.ManualDownloadGUIDPrefix + t.Name(), BookID: &bookID, Title: f.book.Title, Status: models.StateCompleted}
+	if err := f.downloads.Create(context.Background(), dl); err != nil {
+		t.Fatal(err)
+	}
+	return dl
+}
+
+// TestManualImportScan_TransmissionHandOffHidesOnlyItsOwnFile: Transmission
+// reports a torrent's path as the shared category folder and passes the
+// torrent's own files separately. Recording the folder hid every unrelated
+// book in it. Only the handed off file may be hidden.
+func TestManualImportScan_TransmissionHandOffHidesOnlyItsOwnFile(t *testing.T) {
+	f := newHandoffFixture(t, "external")
+	shared := filepath.Join(f.intake, "complete", "books")
+	mine := f.write(t, "complete/books/Moby Dick - Herman Melville.epub", "moby bytes")
+	sibling := f.write(t, "complete/books/Unrelated Novel - Someone Else.epub", "other bytes")
+	f.write(t, "complete/books/Unrelated Audio/01.mp3", "track one")
+	f.write(t, "complete/books/Unrelated Audio/02.mp3", "track two")
+	siblingAudio := filepath.Join(shared, "Unrelated Audio")
+
+	dl := f.manualDownload(t)
+	f.scanner.ImportFilesFromPath(context.Background(), dl, shared, []string{mine}, models.MediaTypeEbook)
+	got, err := f.downloads.GetByID(context.Background(), dl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.StateImportExternal {
+		t.Fatalf("status = %q (%s), want %q", got.Status, got.ErrorMessage, models.StateImportExternal)
+	}
+	if srcs := got.HandedOffSources(); len(srcs) != 1 || srcs[0] != mine {
+		t.Errorf("recorded sources = %v, want only %q", srcs, mine)
+	}
+
+	items := f.scan(t, false)
+	if _, ok := items[mine]; ok {
+		t.Error("the handed off file was offered again")
+	}
+	if _, ok := items[sibling]; !ok {
+		t.Errorf("an unrelated epub beside it was hidden: %+v", items)
+	}
+	if _, ok := items[siblingAudio]; !ok {
+		t.Errorf("an unrelated audiobook folder beside it was hidden: %+v", items)
+	}
+}
+
+// TestManualImportScan_LooseTracksHideOnlyThoseTracks: tracks submitted as
+// separate rows import as one audiobook from their deepest common folder.
+// That folder must not hide anything else inside it.
+func TestManualImportScan_LooseTracksHideOnlyThoseTracks(t *testing.T) {
+	f := newHandoffFixture(t, "external")
+	one := f.write(t, "Pile/Moby CD1/01.mp3", "track one")
+	two := f.write(t, "Pile/Moby CD2/02.mp3", "track two")
+	other := f.write(t, "Pile/Unrelated Novel - Someone Else.epub", "other bytes")
+
+	dl := f.manualDownload(t)
+	f.scanner.ImportFilesFromPath(context.Background(), dl, filepath.Join(f.intake, "Pile"), []string{one, two}, models.MediaTypeAudiobook)
+	got, err := f.downloads.GetByID(context.Background(), dl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.StateImportExternal {
+		t.Fatalf("status = %q (%s), want %q", got.Status, got.ErrorMessage, models.StateImportExternal)
+	}
+	if srcs := got.HandedOffSources(); len(srcs) != 2 {
+		t.Errorf("recorded sources = %v, want the two tracks", srcs)
+	}
+
+	items := f.scan(t, false)
+	if _, ok := items[other]; !ok {
+		t.Errorf("an unrelated epub in the tracks' common folder was hidden: %+v", items)
+	}
+	for p := range items {
+		if p == one || p == two || p == filepath.Dir(one) || p == filepath.Dir(two) {
+			t.Errorf("handed off track unit %q offered again", p)
+		}
+	}
+}
+
+// TestManualImportScan_DedicatedFolderHandOffStillHidden: a qBittorrent or
+// SABnzbd download has a folder of its own, and the book inside it stays
+// hidden after the hand-off.
+func TestManualImportScan_DedicatedFolderHandOffStillHidden(t *testing.T) {
+	f := newHandoffFixture(t, "external")
+	book := f.write(t, mobyRel, "moby bytes")
+	folder := filepath.Dir(book)
+
+	f.importAndWait(t, folder, models.MediaTypeEbook, models.StateImportExternal)
+
+	if it, ok := f.scan(t, false)[book]; ok {
+		t.Fatalf("book in a handed off download folder offered again: %+v", it)
+	}
+	if it := f.scan(t, true)[book]; !it.HandedOff {
+		t.Errorf("book = %+v, want labelled handed off", it)
 	}
 }

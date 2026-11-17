@@ -513,12 +513,12 @@ func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloa
 		return s.dropPairGated(ctx, dl, book, author, downloadPath, bookFiles, explicitFiles, detectedFormat, folder, layout, linkMode, contentCheck)
 	}
 
-	dest, blocked, err := s.placeDroppedFormat(ctx, book, author, downloadPath, bookFiles, explicitFiles, detectedFormat, folder, layout, linkMode)
+	dest, sources, blocked, err := s.placeDroppedFormat(ctx, book, author, downloadPath, bookFiles, explicitFiles, detectedFormat, folder, layout, linkMode)
 	if err != nil {
 		s.failDrop(ctx, dl, blocked, err)
 		return true
 	}
-	s.finishDrop(ctx, dl, layout, linkMode, detectedFormat, downloadPath, dest, contentCheck)
+	s.finishDrop(ctx, dl, layout, linkMode, detectedFormat, sources, dest, contentCheck)
 	return true
 }
 
@@ -527,12 +527,14 @@ func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloa
 // moving the source (the download keeps seeding). It returns the destination
 // path recorded in history (the folder it made for an audiobook, the file it
 // placed for an ebook, the first one when a release holds several files of
-// the format), a "blocked" flag distinguishing an invalid
+// the format), the source files it handed off (exactly those, never their
+// folder, which for a Transmission download is the shared category folder), a
+// "blocked" flag distinguishing an invalid
 // destination (a template/config error — StateImportBlocked, retryable by the
 // user after fixing settings) from a placement failure (StateImportFailed), and
 // the error. Shared by the immediate drop, the paired release, and the timeout
 // escape hatch so all three place files identically.
-func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, author *models.Author, downloadPath string, bookFiles, explicitFiles []string, format, folder, layout, linkMode string) (dest string, blocked bool, err error) {
+func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, author *models.Author, downloadPath string, bookFiles, explicitFiles []string, format, folder, layout, linkMode string) (dest string, sources []string, blocked bool, err error) {
 	importCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
@@ -541,7 +543,7 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 		if layout == "templated" {
 			d, derr := s.destRenamer(ctx).AudiobookDestDir(folder, author, book, seriesTitle, seriesNum)
 			if derr != nil {
-				return "", true, derr
+				return "", nil, true, derr
 			}
 			dest = d
 		} else {
@@ -549,12 +551,12 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 		}
 		dest = UniqueDir(dest)
 		if perr := s.dropPlaceAudiobook(importCtx, downloadPath, bookFiles, explicitFiles, dest, linkMode); perr != nil {
-			return "", false, perr
+			return "", nil, false, perr
 		}
-		return dest, false, nil
+		return dest, bookFiles, false, nil
 	}
 
-	var placed []string
+	var placed, placedSrcs []string
 	var lastErr error
 	// Files of one format share a destination, and dropPlaceFile replaces what
 	// is there, so the last of them used to win. The file closest to the book
@@ -590,6 +592,7 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 		}
 		placedDests[fileDest] = struct{}{}
 		placed = append(placed, finalDest)
+		placedSrcs = append(placedSrcs, srcFile)
 	}
 	if len(placed) == 0 {
 		if lastErr == nil {
@@ -597,12 +600,12 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 		}
 		// A template that cannot name an ebook with an extension is the
 		// operator's to fix, so it blocks rather than spending retries.
-		return "", errors.Is(lastErr, ErrEbookNoExtension), lastErr
+		return "", nil, errors.Is(lastErr, ErrEbookNoExtension), lastErr
 	}
 	// The placed file, not the drop folder, so History says what was dropped
 	// and where to find it. The folder alone told the user nothing once
 	// another drop sat beside it.
-	return placed[0], false, nil
+	return placed[0], placedSrcs, false, nil
 }
 
 // failDrop marks a drop-path import as failed, distinguishing an invalid
@@ -644,12 +647,12 @@ func (s *Scanner) resolveBookAuthor(ctx context.Context, bookID *int64) (*models
 // hand-off is outstanding, and ScanLibrary reconciles the managed copy once the
 // external tool produces it under the library dir.
 //
-// src is where the dropped files came from. Copy and hardlink placement keep
-// it, so it is recorded on the download (import_path) for the manual import
-// folder scan, which would otherwise offer the same source again as a fresh
-// match and drop a second copy (see api.handedOffIndex).
-func (s *Scanner) finishDrop(ctx context.Context, dl *models.Download, layout, linkMode, format, src, dest string, contentCheck map[string]any) {
-	s.recordHandedOffSource(ctx, dl, src)
+// sources are the files that were dropped. Copy and hardlink placement keep
+// them, so they are recorded on the download (import_path) for the manual
+// import folder scan, which would otherwise offer them again as a fresh match
+// and drop a second copy (see api.handedOffIndex).
+func (s *Scanner) finishDrop(ctx context.Context, dl *models.Download, layout, linkMode, format string, sources []string, dest string, contentCheck map[string]any) {
+	s.recordHandedOffSource(ctx, dl, sources)
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImportExternal)
 	slog.Info("drop: handoff complete, awaiting library scan",
 		"title", dl.Title, "dst", dest, "format", format, "layout", layout, "mode", linkMode)
@@ -662,18 +665,23 @@ func (s *Scanner) finishDrop(ctx context.Context, dl *models.Download, layout, l
 	}, contentCheck))
 }
 
-// recordHandedOffSource records on dl where the files it handed off to the
-// external tool came from, before it is parked as handed off. The manual
-// import folder scan reads it to recognise a source that was already handed
-// off. A held download released later already holds the same path, so the
-// write is skipped. Best effort: a failure only means the scan may offer the
-// source again.
-func (s *Scanner) recordHandedOffSource(ctx context.Context, dl *models.Download, src string) {
-	if src == "" || src == dl.ImportPath {
+// recordHandedOffSource records on dl the source files it handed off to the
+// external tool, before it is parked as handed off. The manual import folder
+// scan reads them to recognise sources that were already handed off. Only the
+// files themselves are recorded, never the folder they sit in: a Transmission
+// download's path is the client's shared category folder, with the torrent's
+// own files passed separately, so recording the path would hide every other
+// book in that folder. A held download that is released replaces its held
+// path with the files here, which is safe because nothing reads a held path
+// once the download has left StateImportHeld. Best effort: a failure only
+// means the scan may offer the sources again.
+func (s *Scanner) recordHandedOffSource(ctx context.Context, dl *models.Download, sources []string) {
+	encoded := models.EncodeHandedOffSources(sources)
+	if encoded == "" || encoded == dl.ImportPath {
 		return
 	}
-	if err := s.downloads.SetImportPath(ctx, dl.ID, src); err != nil {
-		slog.Warn("external import: could not record the handed off source", "title", dl.Title, "path", src, "error", err)
+	if err := s.downloads.SetImportPath(ctx, dl.ID, encoded); err != nil {
+		slog.Warn("external import: could not record the handed off sources", "title", dl.Title, "files", len(sources), "error", err)
 	}
 }
 

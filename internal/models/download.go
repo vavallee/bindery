@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 type DownloadClient struct {
 	ID       int64  `json:"id"`
@@ -104,10 +108,11 @@ type Download struct {
 	// ImportPath is the on-disk location of the completed download's files,
 	// recorded when an import fails because no catalogue book matched (#1589).
 	// The queue "Match to book" action imports from here directly. A download
-	// held by pair gating (StateImportHeld) or handed off to an external tool
-	// (StateImportExternal) records its source here too, which is how the
-	// manual import folder scan recognises a source it already handed off.
-	// Empty when no path was recorded (never completed, or imported normally).
+	// held by pair gating (StateImportHeld) records its download path here.
+	// A download handed off to an external tool (StateImportExternal) records
+	// the exact source files it handed off, which is how the manual import
+	// folder scan recognises them; see EncodeHandedOffSources. Empty when no
+	// path was recorded (never completed, or imported normally).
 	ImportPath string `json:"-"`
 	// MediaType is the format slot this grab was made for, MediaTypeEbook or
 	// MediaTypeAudiobook, stamped when the grab is created (#1964). The import
@@ -115,6 +120,50 @@ type Download struct {
 	// the column, a manual import, or a grab whose format was never known;
 	// callers treat empty as "unknown" and fall back to deriving it.
 	MediaType string `json:"-"`
+}
+
+// EncodeHandedOffSources is the ImportPath value for an external hand-off of
+// paths: one path stored as itself, several as a JSON array. The column holds
+// one string and no migration is needed for it, and a hand-off can cover many
+// files: a torrent's own files inside a shared category folder (Transmission
+// reports the folder, the files come separately), or loose audiobook tracks.
+// Recording their folder instead would cover every unrelated file beside them.
+// An absolute path never starts with "[", so the two forms cannot be confused.
+func EncodeHandedOffSources(paths []string) string {
+	kept := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p = strings.TrimSpace(p); p != "" {
+			kept = append(kept, p)
+		}
+	}
+	switch len(kept) {
+	case 0:
+		return ""
+	case 1:
+		return kept[0]
+	}
+	raw, err := json.Marshal(kept)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// HandedOffSources decodes ImportPath as EncodeHandedOffSources wrote it. A
+// plain path, which is what every other writer stores, comes back as itself.
+func (d *Download) HandedOffSources() []string {
+	v := strings.TrimSpace(d.ImportPath)
+	if v == "" {
+		return nil
+	}
+	if strings.HasPrefix(v, "[") {
+		var paths []string
+		if err := json.Unmarshal([]byte(v), &paths); err != nil {
+			return nil
+		}
+		return paths
+	}
+	return []string{v}
 }
 
 // IsOrphanedImport reports whether d finished importing into a book that has

@@ -21,6 +21,15 @@ import (
 // imported" filters can see the source, and a rescan listed it under Matched,
 // ticked, one click away from dropping a second copy.
 //
+// Matching is exact. A hand-off records the files it handed off
+// (models.EncodeHandedOffSources), and only a unit that is one of them, or a
+// folder unit whose every importable file is one of them, counts as handed
+// off. A recorded folder never covers what is inside it: a Transmission
+// download's path is the client's shared category folder, so treating it as
+// covering its contents hid every unrelated book in that folder until each
+// handed off row was removed. A held download records its download path, so
+// it hides a unit only when that unit is the same path.
+//
 // The rule is the download's state. A source is handed off while a download
 // that recorded it (import_path) is in StateImportExternal or StateImportHeld:
 // the hand-off is outstanding, or the file is held for its pair and will be
@@ -39,9 +48,10 @@ type handedOffIndex struct {
 }
 
 // handedOffSources builds the index from the downloads currently handed off.
-// A recorded path that is a configured library root or a download folder is
-// left out: it would cover everything below it, and no single hand-off owns a
-// whole intake folder.
+// A recorded path that is, or contains, a configured library root, an import
+// source folder or a download folder is left out: no single hand-off owns a
+// whole intake folder, and a held row can carry one (pair gating records the
+// download path, which for Transmission is the shared category folder).
 func (h *ManualImportHandler) handedOffSources(ctx context.Context) (*handedOffIndex, error) {
 	rows, err := h.downloads.ListByStatuses(ctx, models.StateImportExternal, models.StateImportHeld)
 	if err != nil {
@@ -51,45 +61,47 @@ func (h *ManualImportHandler) handedOffSources(ctx context.Context) (*handedOffI
 	if len(rows) == 0 {
 		return idx, nil
 	}
-	broad := make(map[string]struct{})
-	for _, p := range append(h.roots.Configured(ctx), h.excluded...) {
-		broad[filepath.Clean(p)] = struct{}{}
-	}
+	broad := append(h.roots.Configured(ctx), h.excluded...)
 	dirs := newDirResolver()
-	for _, d := range rows {
-		p := strings.TrimSpace(d.ImportPath)
-		if p == "" || !filepath.IsAbs(p) {
-			continue
-		}
-		cleaned := filepath.Clean(p)
-		// Scan walks the symlink resolved folder, and the importer records the
-		// path it was handed, so both forms are indexed (as in trackedFileIndex).
-		for _, form := range []string{cleaned, dirs.resolvePath(cleaned)} {
-			if _, skip := broad[form]; skip || form == string(filepath.Separator) {
+	for i := range rows {
+		for _, p := range rows[i].HandedOffSources() {
+			p = strings.TrimSpace(p)
+			if p == "" || !filepath.IsAbs(p) {
 				continue
 			}
-			idx.paths[form] = struct{}{}
+			cleaned := filepath.Clean(p)
+			// Scan walks the symlink resolved folder, and the importer records
+			// the path it was handed, so both forms are indexed (as in
+			// trackedFileIndex).
+			for _, form := range []string{cleaned, dirs.resolvePath(cleaned)} {
+				if containsAny(form, broad) {
+					continue
+				}
+				idx.paths[form] = struct{}{}
+			}
 		}
 	}
 	return idx, nil
 }
 
-// covers reports whether p is a recorded source or lies inside one: a grabbed
-// download's recorded path is its folder, and the scan lists the files in it.
+// containsAny reports whether dir is one of paths or an ancestor of one.
+func containsAny(dir string, paths []string) bool {
+	for _, p := range paths {
+		rel, err := filepath.Rel(dir, filepath.Clean(p))
+		if err == nil && (rel == "." || filepath.IsLocal(rel)) {
+			return true
+		}
+	}
+	return false
+}
+
+// covers reports whether p is exactly a recorded source.
 func (x *handedOffIndex) covers(p string) bool {
 	if x == nil || len(x.paths) == 0 {
 		return false
 	}
-	for q := filepath.Clean(p); ; {
-		if _, ok := x.paths[q]; ok {
-			return true
-		}
-		parent := filepath.Dir(q)
-		if parent == q {
-			return false
-		}
-		q = parent
-	}
+	_, ok := x.paths[filepath.Clean(p)]
+	return ok
 }
 
 // coversUnit reports whether a scan unit was handed off. A folder unit (an
