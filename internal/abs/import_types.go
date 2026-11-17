@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -136,6 +137,14 @@ type ImportStats struct {
 	dryRunSeriesExternalIDs map[string]struct{}
 	dryRunSeriesTitles      map[string]struct{}
 	dryRunSeriesMemberships map[string]struct{}
+	dryRunBooks             map[string][]*plannedBook
+	// dryRunBookOrigin maps an item that a dry run linked to a planned book
+	// to the item that planned it, so both count as one book's membership.
+	dryRunBookOrigin map[string]string
+	// dryRunAuthorMatcher holds the authors a dry run would create, under
+	// synthetic ids, so a later spelling of one is matched the way the real
+	// run's matcher matches the row the first spelling created.
+	dryRunAuthorMatcher *authorMatcher
 }
 
 type ImportSourceSnapshot struct {
@@ -285,6 +294,111 @@ func (s *ImportStats) dryRunAuthorAlreadyPlanned(name string) bool {
 	}
 	s.dryRunAuthors[key] = struct{}{}
 	return false
+}
+
+// plannedBook is a book a dry run would have created, kept so a later item of
+// the same run can match it as it would match the stored row in a real run.
+type plannedBook struct {
+	book *models.Book
+	// itemID is the item that planned the book.
+	itemID string
+	// seriesTitle and seriesSequence are the book's primary series, which the
+	// real run reads back from the database to tell volumes apart.
+	seriesTitle    string
+	seriesSequence string
+}
+
+// dryRunAuthorKey names an author for the planned books. A real author is its
+// id; one the dry run would create has none yet, so its name stands in.
+func dryRunAuthorKey(author *models.Author) string {
+	if author.ID != 0 {
+		return "id:" + strconv.FormatInt(author.ID, 10)
+	}
+	return "new:" + normalizeAuthorName(author.Name)
+}
+
+func (s *ImportStats) dryRunBooksFor(author *models.Author) []*plannedBook {
+	if s == nil || author == nil {
+		return nil
+	}
+	return s.dryRunBooks[dryRunAuthorKey(author)]
+}
+
+func (s *ImportStats) rememberDryRunBook(author *models.Author, book *models.Book, itemID string, series []NormalizedSeries) {
+	if s == nil || author == nil || book == nil {
+		return
+	}
+	planned := &plannedBook{book: book, itemID: strings.TrimSpace(itemID)}
+	if len(series) > 0 {
+		planned.seriesTitle = series[0].Name
+		planned.seriesSequence = series[0].Sequence
+	}
+	if s.dryRunBooks == nil {
+		s.dryRunBooks = make(map[string][]*plannedBook)
+	}
+	key := dryRunAuthorKey(author)
+	s.dryRunBooks[key] = append(s.dryRunBooks[key], planned)
+}
+
+// linkDryRunItemToPlannedBook records that itemID matched the planned book
+// whose foreign id is foreignID.
+func (s *ImportStats) linkDryRunItemToPlannedBook(author *models.Author, foreignID, itemID string) {
+	if s == nil {
+		return
+	}
+	for _, planned := range s.dryRunBooksFor(author) {
+		if planned.book.ForeignID != foreignID || planned.itemID == "" {
+			continue
+		}
+		if s.dryRunBookOrigin == nil {
+			s.dryRunBookOrigin = make(map[string]string)
+		}
+		s.dryRunBookOrigin[strings.TrimSpace(itemID)] = planned.itemID
+		return
+	}
+}
+
+// membershipItemID is the item id a series membership of a book with no id
+// yet is counted under: the planning item when this one joined a planned book.
+func (s *ImportStats) membershipItemID(bookID int64, itemID string) string {
+	if s == nil || bookID != 0 {
+		return itemID
+	}
+	if origin, ok := s.dryRunBookOrigin[strings.TrimSpace(itemID)]; ok {
+		return origin
+	}
+	return itemID
+}
+
+// matchDryRunAuthor runs the author matcher over the authors this dry run
+// would create. A match comes back with no id, as a planned author has none.
+func (s *ImportStats) matchDryRunAuthor(ctx context.Context, name string) (*models.Author, string, bool, error) {
+	if s == nil || s.dryRunAuthorMatcher == nil {
+		return nil, "", false, nil
+	}
+	author, matchedBy, ambiguous, err := s.dryRunAuthorMatcher.findAuthorByName(ctx, name)
+	if err != nil || author == nil {
+		return nil, matchedBy, ambiguous, err
+	}
+	author.ID = 0
+	return author, matchedBy, false, nil
+}
+
+// rememberDryRunAuthor adds an author the dry run would create to its
+// matcher, under a synthetic negative id the database never sees.
+func (s *ImportStats) rememberDryRunAuthor(author *models.Author) {
+	if s == nil || author == nil {
+		return
+	}
+	if s.dryRunAuthorMatcher == nil {
+		s.dryRunAuthorMatcher = &authorMatcher{
+			byID:        make(map[int64]*models.Author),
+			aliasLoaded: make(map[authorAliasKey]struct{}),
+		}
+	}
+	planned := *author
+	planned.ID = -int64(len(s.dryRunAuthorMatcher.all) + 1)
+	s.dryRunAuthorMatcher.addAuthor(&planned)
 }
 
 func (s ImportStats) String() string {

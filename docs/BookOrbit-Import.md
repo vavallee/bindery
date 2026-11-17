@@ -76,7 +76,7 @@ An Audiobookshelf import and a BookOrbit import cannot run at the same time. The
 |---|---|
 | Books listed by BookOrbit | Books read from the selected libraries |
 | Books created | New Bindery books |
-| Books matched | Books linked to a Bindery book that already existed |
+| Books matched | Books linked to a Bindery book that already existed, or to one an earlier book of the same run created. BookOrbit lists a title that comes as an EPUB and as an M4B as two books, and Bindery files them as one book with both formats, so the second counts as matched. A preview counts it the same way. |
 | Books already imported | Books an earlier run brought in, refreshed |
 | Authors created, Series created | New Bindery authors and series |
 | Files registered | Ebook and audiobook files (or audiobook folders) recorded as owned. In a preview this is the number that would be. |
@@ -138,6 +138,7 @@ Other failures are reported the same way, before any write: a rejected or expire
 | Test connection says the key was rejected | The key was revoked, has expired, or its owner lost the Create API keys permission |
 | A library is missing from the list | The key is limited to other libraries |
 | "another library import is running" | An Audiobookshelf or BookOrbit import is in progress |
+| A book's result says "not linked to a metadata provider" | Several works by that author on the metadata provider share the book's title, so Bindery picked none rather than guess. The book imported with BookOrbit's details and its files are registered. A book or author that already has a provider link never shows this |
 | The address is refused when saving | Bindery blocks cloud metadata and link local addresses. LAN and loopback addresses are allowed. |
 
 ## For contributors
