@@ -140,10 +140,11 @@
     "scan": "Scan folder",
     "scanning": "Scanning…",
     "empty": "No book files or folders found here.",
-    "emptyHidesImported": "Nothing new to import here. Files already in your library are hidden; tick Show already imported to list them.",
+    "emptyHidesImported": "Nothing new to import here. Files already in your library or already handed off to your import tool are hidden; tick Show already imported to list them.",
     "truncated": "Showing the first 1000 units; narrow the folder to see the rest.",
     "showImported": "Show already imported",
     "alreadyImported": "already imported",
+    "handedOff": "already handed off to your import tool",
     "selectAll": "Select all matched",
     "importSelected": "Import {{count}} selected",
     "group": {

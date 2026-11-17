@@ -87,7 +87,7 @@ func (s *Scanner) dropPairGated(ctx context.Context, dl *models.Download, book *
 	}
 
 	// Sibling is present: drop this format now.
-	dest, blocked, err := s.placeDroppedFormat(ctx, book, author, downloadPath, bookFiles, explicitFiles, format, folder, layout, linkMode)
+	dest, sources, blocked, err := s.placeDroppedFormat(ctx, book, author, downloadPath, bookFiles, explicitFiles, format, folder, layout, linkMode)
 	if err != nil {
 		s.failDrop(ctx, dl, blocked, err)
 		return true
@@ -104,7 +104,7 @@ func (s *Scanner) dropPairGated(ctx context.Context, dl *models.Download, book *
 		s.releaseHeldSibling(ctx, heldSibling, book, author, siblingFormat, siblingFolder, layout, linkMode)
 	}
 
-	s.finishDrop(ctx, dl, layout, linkMode, format, dest, contentCheck)
+	s.finishDrop(ctx, dl, layout, linkMode, format, sources, dest, contentCheck)
 	return true
 }
 
@@ -200,14 +200,14 @@ func (s *Scanner) releaseHeldSibling(ctx context.Context, held *models.Download,
 	if !ok {
 		return
 	}
-	dest, blocked, err := s.placeDroppedFormat(ctx, book, author, held.ImportPath, files, nil, format, folder, layout, linkMode)
+	dest, sources, blocked, err := s.placeDroppedFormat(ctx, book, author, held.ImportPath, files, nil, format, folder, layout, linkMode)
 	if err != nil {
 		s.failDrop(ctx, held, blocked, err)
 		return
 	}
 	slog.Info("drop: pair gating — releasing held format now that its sibling arrived",
 		"title", held.Title, "format", format, "dst", dest)
-	s.finishDrop(ctx, held, layout, linkMode, format, dest, contentCheck)
+	s.finishDrop(ctx, held, layout, linkMode, format, sources, dest, contentCheck)
 }
 
 // sweepHeldPairGating is the escape hatch (#942): it drops any held format whose
@@ -269,12 +269,12 @@ func (s *Scanner) sweepHeldPairGating(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		dest, blocked, err := s.placeDroppedFormat(ctx, book, author, h.ImportPath, files, nil, format, folder, layout, linkMode)
+		dest, sources, blocked, err := s.placeDroppedFormat(ctx, book, author, h.ImportPath, files, nil, format, folder, layout, linkMode)
 		if err != nil {
 			s.failDrop(ctx, h, blocked, err)
 			continue
 		}
-		s.finishDrop(ctx, h, layout, linkMode, format, dest, contentCheck)
+		s.finishDrop(ctx, h, layout, linkMode, format, sources, dest, contentCheck)
 	}
 }
 

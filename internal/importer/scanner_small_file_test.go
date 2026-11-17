@@ -125,7 +125,7 @@ func TestDropFlatLayoutKeepsTheMatchingBook(t *testing.T) {
 	book := &models.Book{Title: "Origin"}
 	author := &models.Author{Name: "Author A"}
 
-	_, _, err := s.placeDroppedFormat(t.Context(), book, author, downloadPath, discoverBookFiles(t.Context(), downloadPath, nil), nil, models.MediaTypeEbook, folder, "flat", "copy")
+	_, _, _, err := s.placeDroppedFormat(t.Context(), book, author, downloadPath, discoverBookFiles(t.Context(), downloadPath, nil), nil, models.MediaTypeEbook, folder, "flat", "copy")
 	if err != nil {
 		t.Fatal(err)
 	}
