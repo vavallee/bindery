@@ -103,8 +103,11 @@ type Download struct {
 	ImportRetryCount int        `json:"importRetryCount"`
 	// ImportPath is the on-disk location of the completed download's files,
 	// recorded when an import fails because no catalogue book matched (#1589).
-	// The queue "Match to book" action imports from here directly. Empty when
-	// no path was recorded (never completed, or matched successfully).
+	// The queue "Match to book" action imports from here directly. A download
+	// held by pair gating (StateImportHeld) or handed off to an external tool
+	// (StateImportExternal) records its source here too, which is how the
+	// manual import folder scan recognises a source it already handed off.
+	// Empty when no path was recorded (never completed, or imported normally).
 	ImportPath string `json:"-"`
 	// MediaType is the format slot this grab was made for, MediaTypeEbook or
 	// MediaTypeAudiobook, stamped when the grab is created (#1964). The import

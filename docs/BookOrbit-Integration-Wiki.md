@@ -72,7 +72,7 @@ The lab for this recipe ran on Bindery 1.51.1, before the External mode changes 
 ### How it works
 
 1. Bindery grabs a release and the download client finishes it.
-2. Bindery copies or hardlinks the book into the drop folder under a clean name. The download is never moved, so a torrent would keep seeding. The download shows as handed off and the book stays Wanted.
+2. Bindery copies or hardlinks the book into the drop folder under a clean name. The download is never moved, so a torrent would keep seeding. The download shows as handed off and the book stays Wanted. The History row (Folder Imported) names what was dropped: the file for an ebook, the folder for an audiobook.
 3. BookOrbit's Book Dock sees the file, looks the book up and, if it is confident enough, moves it into its library under its own naming. In the lab this took about 17 to 18 seconds, with no rescan and no restart.
 4. Bindery's next library scan finds the file and the book becomes Imported. The scan runs every 6 hours by default (`library.scan_interval`, 15 minutes at the lowest, applied on restart) or on demand from Settings, General tab, Library, **Scan Library**.
 
@@ -172,6 +172,10 @@ BookOrbit scores how well a dropped file matches its metadata lookup, and the la
 Do not raise the threshold above 85. A matching drop scored 85 in the lab, so a higher setting would leave those files waiting in the dock too.
 
 A parked book is silent on the Bindery side: the book stays Wanted, the download stays handed off and Bindery does not grab it again. When a book you expected has not shown up, look at the Book Dock in BookOrbit and finalize it there. Bindery picks it up on the next scan.
+
+### Importing from a folder
+
+**Import, From a folder** works in this mode too: the file you pick is dropped into the dock like a finished download, and the original stays where it was. A rescan of that folder does not offer it again while its download is handed off, so one click cannot drop a second copy. Tick **Show already imported** to see it, labelled as already handed off to your import tool and left unticked. It is offered again once the hand off ends: the drop failed or was blocked, or you removed the row from the Queue. Once BookOrbit has filed the book and a library scan has found it, the source counts as already imported, as it does in Auto mode.
 
 ### Checks before the drop
 

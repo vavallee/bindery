@@ -663,7 +663,9 @@ func (r *DownloadRepo) SetBookID(ctx context.Context, id, bookID int64) error {
 // SetImportPath records the on-disk location of a completed download's files so
 // a later manual "Match to book" (#1589) can import them directly. Called when
 // an import fails only because no catalogue book matched — the files are valid
-// and present, they just have nowhere to go yet.
+// and present, they just have nowhere to go yet. Pair gating records a held
+// download's files here, and an external hand-off records the source it
+// handed off, so the manual import folder scan does not offer it again.
 func (r *DownloadRepo) SetImportPath(ctx context.Context, id int64, path string) error {
 	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET import_path=? WHERE id=?", path, id)
 	return err

@@ -322,6 +322,25 @@ describe('FolderImportView', () => {
     await waitFor(() => expect(screen.getByText('manualImport.alreadyImported')).toBeInTheDocument())
   })
 
+  it('labels a source already handed off to the external tool and leaves it unticked', async () => {
+    await scan()
+    mockScan.mockClear()
+    mockScan.mockResolvedValue({
+      truncated: false,
+      items: [{
+        path: '/dl/Moby Dick.epub', name: 'Moby Dick.epub', match: 'confident',
+        parsedTitle: 'Moby Dick', parsedAuthor: 'Herman Melville', detectedFormat: 'ebook',
+        book: { id: 44, title: 'Moby Dick' } as never, alreadyImported: true, handedOff: true,
+      }],
+    })
+    fireEvent.click(screen.getByLabelText('manualImport.showImported'))
+
+    await waitFor(() => expect(screen.getByText('manualImport.handedOff')).toBeInTheDocument())
+    expect(screen.queryByText('manualImport.alreadyImported')).not.toBeInTheDocument()
+    const rowCheckbox = screen.getByLabelText('manualImport.selectUnit name=Moby Dick.epub') as HTMLInputElement
+    expect(rowCheckbox.checked).toBe(false)
+  })
+
   it('shows the truncation banner even when filtering leaves no items (#2480)', async () => {
     mockScan.mockResolvedValue({ truncated: true, items: [] })
     render(<FolderImportView />)
