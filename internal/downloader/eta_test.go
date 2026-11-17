@@ -26,10 +26,10 @@ func TestEtaToTimeLeft(t *testing.T) {
 }
 
 func TestLiveTimeLeft_CompleteHasNone(t *testing.T) {
-	if got := liveTimeLeft(3600, 0); got != "" {
+	if got := liveTimeLeft(3600, true); got != "" {
 		t.Errorf("complete download got %q, want empty", got)
 	}
-	if got := liveTimeLeft(3600, 100); got != "1h 00m" {
+	if got := liveTimeLeft(3600, false); got != "1h 00m" {
 		t.Errorf("incomplete download got %q, want 1h 00m", got)
 	}
 }

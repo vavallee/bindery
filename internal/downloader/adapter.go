@@ -657,7 +657,7 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 			}
 			live := LiveStatus{
 				Percentage: fmt.Sprintf("%.1f", t.PercentDone*100),
-				TimeLeft:   liveTimeLeft(t.ETA, t.LeftUntilDone),
+				TimeLeft:   liveTimeLeft(t.ETA, t.PercentDone >= 1),
 				Speed:      bytesPerSecondToString(t.DownloadRate),
 				Size:       t.TotalSize,
 				SizeLeft:   t.LeftUntilDone,
@@ -685,7 +685,7 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 		for h, t := range torrents {
 			out[h] = LiveStatus{
 				Percentage: fmt.Sprintf("%.1f", t.Progress),
-				TimeLeft:   liveTimeLeft(t.ETA, maxInt64(t.TotalSize-t.TotalDone, 0)),
+				TimeLeft:   liveTimeLeft(t.ETA, t.Progress >= 100),
 				Speed:      bytesPerSecondToString(t.DownloadRate),
 				Size:       t.TotalSize,
 				SizeLeft:   maxInt64(t.TotalSize-t.TotalDone, 0),
@@ -728,7 +728,7 @@ func getTorrentLiveStatuses(ctx context.Context, client *models.DownloadClient) 
 		for _, t := range torrents {
 			out[strings.ToLower(t.Hash)] = LiveStatus{
 				Percentage: fmt.Sprintf("%.1f", t.Progress*100),
-				TimeLeft:   liveTimeLeft(int64(t.ETA), t.AmountLeft),
+				TimeLeft:   liveTimeLeft(int64(t.ETA), t.Progress >= 1),
 				Speed:      bytesPerSecondToString(t.DLSpeed),
 				Size:       t.Size,
 				SizeLeft:   t.AmountLeft,
@@ -774,10 +774,10 @@ func maxInt64(a, b int64) int64 {
 // torrents. Anything at or above it is not a real estimate.
 const etaInfinity = 8640000
 
-// liveTimeLeft is etaToTimeLeft for a download whose remaining bytes are known:
-// a download with nothing left has no time left, whatever the client's ETA says.
-func liveTimeLeft(etaSeconds, leftBytes int64) string {
-	if leftBytes <= 0 {
+// liveTimeLeft is etaToTimeLeft for a download that may already be complete:
+// a finished download has no time left, whatever the client's ETA says.
+func liveTimeLeft(etaSeconds int64, complete bool) string {
+	if complete {
 		return ""
 	}
 	return etaToTimeLeft(etaSeconds)
