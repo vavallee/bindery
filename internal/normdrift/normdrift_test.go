@@ -382,6 +382,12 @@ func TestNonLatinScriptsKeepDistinctKeys(t *testing.T) {
 		{"三体", "黑暗森林", "死神永生"},
 		{"刘慈欣", "村上春樹", "遠藤周作"},
 		{"Преступление", "Наказание", "Идиот"},
+		// Kana that differ only by a voicing mark (dakuten, handakuten).
+		// The mark changes the letter, so these are different words; a fold
+		// that strips every combining mark keys them the same (#2452).
+		{"がっこう", "かっこう"},
+		{"ヴィクトル", "ウィクトル"},
+		{"パン", "バン", "ハン"},
 	}
 	for _, fold := range stringFolds {
 		for _, group := range groups {
