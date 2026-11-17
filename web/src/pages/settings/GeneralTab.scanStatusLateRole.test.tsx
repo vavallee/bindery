@@ -78,6 +78,7 @@ describe('GeneralTab scan status when the role resolves late (#2361)', () => {
 
     expect(await screen.findByText('settings.general.lastScan')).toBeInTheDocument()
     expect(api.libraryScanStatus).toHaveBeenCalledTimes(1)
+    expect(api.getStorage).toHaveBeenCalledTimes(1)
     expect(screen.getByText('7')).toBeInTheDocument()
 
     // A later rerender with the role unchanged must not fetch again.
@@ -92,9 +93,11 @@ describe('GeneralTab scan status when the role resolves late (#2361)', () => {
     authState.loading = false
     authState.isAdmin = false
     rerender(<GeneralTab />)
-    await waitFor(() => expect(api.getStorage).toHaveBeenCalled())
+    await waitFor(() => expect(api.authConfig).toHaveBeenCalled())
+    await new Promise(r => setTimeout(r, 20))
 
     expect(api.libraryScanStatus).not.toHaveBeenCalled()
+    expect(api.getStorage).not.toHaveBeenCalled()
     expect(screen.queryByText('settings.general.lastScan')).toBeNull()
   })
 })
