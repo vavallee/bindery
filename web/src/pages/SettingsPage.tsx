@@ -170,11 +170,16 @@ export default function SettingsPage() {
   const [clients, setClients] = useState<DownloadClient[]>([])
   const [prowlarrInstances, setProwlarrInstances] = useState<ProwlarrInstance[]>([])
 
+  // All three lists are admin only on the server and only the admin tabs
+  // read them, so a non admin never asks: each ask was a 403 logged to the
+  // console. Keyed on isAdmin so an admin whose auth status resolves after
+  // mount still loads them.
   useEffect(() => {
+    if (!isAdmin) return
     api.listIndexers().then(setIndexers).catch(console.error)
     api.listDownloadClients().then(setClients).catch(console.error)
     api.listProwlarr().then(r => setProwlarrInstances(r ?? [])).catch(console.error)
-  }, [])
+  }, [isAdmin])
 
   useEffect(() => {
     document.title = `${t('nav.settings', 'Settings')} · Bindery`
@@ -318,8 +323,13 @@ export default function SettingsPage() {
     setPendingHeading(pick.heading ?? null)
   }, [setTab, navigate, location.pathname, searchParams])
 
+  // A non admin on an admin tab link renders General straight away instead of
+  // mounting the admin tab for the one render before the redirect below lands,
+  // which would start that tab's admin only fetches.
+  const shownTab: Tab = !isAdmin && ADMIN_TABS.includes(tab) ? 'general' : tab
+
   const renderTab = () => {
-    switch (tab) {
+    switch (shownTab) {
       case 'general': return <GeneralTab onNavigate={navigateToTab} />
       case 'indexers': return (
         <>
