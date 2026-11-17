@@ -713,17 +713,22 @@ func requestSentence(forOther bool, self, other string) string {
 // leaves the request pending, so a provider hiccup cannot lose what the
 // requester asked for; the admin queue still sees it.
 //
-// Only a brand new book auto approves. A request for a book the library
-// already holds stays pending whatever the account's setting (#3898):
-// approving it rewrites an existing row, and can turn a book an admin skipped
-// or unmonitored back into a wanted one, which is a human's call. resolvedID
-// is the provider's canonical id for the item, when it differs from the one
-// asked for.
+// A request for a book the library already holds auto approves too (#3954),
+// because the account's admin trusted it to bring books in and "in the
+// catalogue" does not mean "in the library with a file": the same approval an
+// admin would run adds the missing format, or searches for a monitored one,
+// and a format already on disk never reaches here (the create answers that it
+// is in the library). The one exception is a book an admin skipped. Skipped is
+// the only state the product records as a person's decision not to get a book
+// (an unmonitored book carries no such marker, since a default of "monitor
+// nothing" and an admin's unmonitor leave the same row), so that request waits
+// for a human and the row is left untouched. resolvedID is the provider's
+// canonical id for the item, when it differs from the one asked for.
 //
 // requestCreated is sent only when the request stays pending, so an admin is
 // not pinged for an item that was added without them (#2718).
 func (h *RequestHandler) writeCreated(ctx context.Context, w http.ResponseWriter, req models.LibraryRequest, owner int64, resolvedID string) {
-	if h.autoApproveRequests(ctx, owner) && !h.targetsExistingBook(ctx, req.Kind, req.ForeignID, resolvedID) {
+	if h.autoApproveRequests(ctx, owner) && !h.targetsSkippedBook(ctx, req.Kind, req.ForeignID, resolvedID) {
 		switch done, status, msg, err := h.autoApprove(ctx, req, owner); {
 		case err != nil:
 			slog.Error("requests: auto approval failed, leaving the request pending", "id", req.ID, "error", err)
@@ -738,11 +743,10 @@ func (h *RequestHandler) writeCreated(ctx context.Context, w http.ResponseWriter
 	writeJSON(w, http.StatusCreated, toRequestResponse(req, false))
 }
 
-// targetsExistingBook reports whether a book request names a book the library
-// already has a row for, under any of the given provider ids. A lookup error
-// answers true: an auto approval that cannot be shown to be a new add is not
-// run.
-func (h *RequestHandler) targetsExistingBook(ctx context.Context, kind string, foreignIDs ...string) bool {
+// targetsSkippedBook reports whether a book request names a book an admin
+// skipped, under any of the given provider ids. A lookup error answers true: an
+// auto approval that cannot be shown to leave a skipped book alone is not run.
+func (h *RequestHandler) targetsSkippedBook(ctx context.Context, kind string, foreignIDs ...string) bool {
 	if kind != models.RequestKindBook {
 		return false
 	}
@@ -750,7 +754,8 @@ func (h *RequestHandler) targetsExistingBook(ctx context.Context, kind string, f
 		if id == "" {
 			continue
 		}
-		if b, err := h.books.GetByForeignID(ctx, id); err != nil || b != nil {
+		b, err := h.books.GetByForeignID(ctx, id)
+		if err != nil || (b != nil && b.Status == models.BookStatusSkipped) {
 			return true
 		}
 	}
