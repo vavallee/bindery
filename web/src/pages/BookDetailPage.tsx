@@ -19,7 +19,7 @@ import RenameFilesModal from '../components/RenameFilesModal'
 import ConfirmDialog from '../components/ConfirmDialog'
 import RejectImportDialog from '../components/RejectImportDialog'
 import { useConfirmDialog } from '../components/useConfirmDialog'
-import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
+import { confirmPackGrab, grabErrorText, grabWithForceConfirm } from '../util/forceGrab'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
 import ReleaseSwarm from '../components/ReleaseSwarm'
@@ -27,6 +27,7 @@ import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { formatCalendarDate } from '../util/calendarDate'
 import { useClipboardCopy } from '../components/useClipboardCopy'
 import { isAutoGrabRefusal } from '../util/autoGrabRefusal'
+import { FAILURE_EVENT_TYPES, humanizeEventType, isHeldEvent, parseEventData } from '../util/historyEvents'
 import { safeHref } from '../util/safeHref'
 import { metadataRetrievedDate, metadataSourceLink, providerDisplayName, providerFromBookForeignId } from '../util/metadataSource'
 import FixMatchModal from '../components/FixMatchModal'
@@ -449,6 +450,9 @@ function BookDetailPageInner() {
   const [hasIndexers, setHasIndexers] = useState<boolean | null>(null)
   const [grabbing, setGrabbing] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // A failed grab is said next to the results it came from, not in the page
+  // banner above the fold.
+  const [grabError, setGrabError] = useState<string | null>(null)
   const [asinDraft, setAsinDraft] = useState('')
   const [enriching, setEnriching] = useState(false)
   const [deletingFile, setDeletingFile] = useState(false)
@@ -794,7 +798,7 @@ function BookDetailPageInner() {
     if (!book) return
     if (r.pack && !await confirmPackGrab(r, forceConfirm, t)) return
     setGrabbing(r.guid)
-    setError(null)
+    setGrabError(null)
     try {
       const dl = await grabWithForceConfirm({
         guid: r.guid,
@@ -824,7 +828,7 @@ function BookDetailPageInner() {
       setFiltered([])
       setFilteredTotal(undefined)
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('bookDetail.grabFailed'))
+      setGrabError(grabErrorText(e, t))
     } finally {
       setGrabbing(null)
     }
@@ -1833,6 +1837,12 @@ function BookDetailPageInner() {
           </div>
         )}
 
+        {grabError && (
+          <div role="alert" className="mt-6 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+            {grabError}
+          </div>
+        )}
+
         {results !== null && results.length > 0 && (
           <div className="mt-6">
             <SearchResultsSection
@@ -1861,7 +1871,10 @@ function BookDetailPageInner() {
       {events.length > 0 && (
         <Section title={t('bookDetail.historyHeading')} cardClassName="divide-y divide-slate-200 dark:divide-zinc-800">
           <>
-            {events.map(ev => (
+            {events.map(ev => {
+              const parsed = parseEventData(ev.data)
+              const failure = FAILURE_EVENT_TYPES.has(ev.eventType) && typeof parsed.message === 'string' ? parsed.message.trim() : ''
+              return (
               <div key={ev.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
                 <span
                   aria-hidden
@@ -1872,8 +1885,17 @@ function BookDetailPageInner() {
                     at the same weight. */}
                 <span className="flex flex-col min-w-0">
                   <span className="font-medium text-slate-700 dark:text-zinc-300">
-                    {t(`bookDetail.event.${ev.eventType}`, ev.eventType)}
+                    {isHeldEvent(ev.eventType, parsed)
+                      ? t('history.events.downloadHeld', { defaultValue: 'Held for pair' })
+                      : t(`bookDetail.event.${ev.eventType}`, {
+                          defaultValue: t(`history.events.${ev.eventType}`, { defaultValue: humanizeEventType(ev.eventType) }),
+                        })}
                   </span>
+                  {failure && (
+                    <span className="text-[11px] text-red-700 dark:text-red-300 truncate" title={failure}>
+                      {failure.length > 200 ? `${failure.slice(0, 200)}…` : failure}
+                    </span>
+                  )}
                   {ev.sourceTitle && (
                     <span className="font-mono text-[11px] text-fg-muted truncate" title={decodeEntities(ev.sourceTitle)}>
                       {decodeEntities(ev.sourceTitle)}
@@ -1894,7 +1916,8 @@ function BookDetailPageInner() {
                   </button>
                 )}
               </div>
-            ))}
+              )
+            })}
           </>
         </Section>
       )}

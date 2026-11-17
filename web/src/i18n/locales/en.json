@@ -412,6 +412,8 @@
     "pageTitle": "Search",
     "searchFailed": "Search failed",
     "grabFailed": "Grab failed",
+    "grabFailedStatus": "The server could not start that download ({{status}}). Try again.",
+    "grabFailedNetwork": "Could not reach the server to start that download. Check your connection and try again.",
     "indexerLink": "indexer",
     "grabs": "{{n}} grabs",
     "seeders_one": "{{count}} seeder",
@@ -3059,8 +3061,8 @@
       "authorProgress": "{{imported}} of {{total}} books here"
     },
     "confirm": {
-      "bookHint": "An admin will look at your request and add the book if they agree. You can follow it under My requests.",
-      "authorHint": "An admin will look at your request and add this author's books if they agree. You can follow it under My requests.",
+      "bookHint": "An admin approves your request, or your account approves it on its own if auto approve is on. You can follow it under My requests.",
+      "authorHint": "An admin approves your request, or your account approves it on its own if auto approve is on. You can follow it under My requests.",
       "format": "Format",
       "formatLabel": "Format to request",
       "anyFormat": "Any format",
@@ -3327,7 +3329,15 @@
       "renamed": "File renamed",
       "bookFileRenamed": "File renamed",
       "ignored": "Release ignored",
-      "importRejected": "Import rejected"
+      "importRejected": "Import rejected",
+      "bookRenamed": "File renamed",
+      "downloadFolderImported": "Folder imported",
+      "bookFileDeleted": "File deleted",
+      "downloadStalled": "Download stalled",
+      "downloadRequeued": "Download requeued",
+      "bookRebound": "Rebound",
+      "bookFileMoved": "File moved",
+      "bookLanguageCorrected": "Language corrected"
     },
     "seriesPosition": "{{series}} #{{position}}",
     "description": {
