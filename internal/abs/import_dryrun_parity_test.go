@@ -101,3 +101,48 @@ func TestDryRunKeepsSameTitleSeriesVolumesApart(t *testing.T) {
 			preview.BooksCreated, preview.BooksLinked, real.BooksCreated, real.BooksLinked)
 	}
 }
+
+func assertPreviewMatchesReal(t *testing.T, items []NormalizedLibraryItem) (*ImportStats, *ImportStats) {
+	t.Helper()
+	importer, _, _, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	importer.WithEnumerator(itemsEnumerator(items...))
+	preview, err := importer.Run(context.Background(), otherSourceConfig(true))
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	real, err := importer.Run(context.Background(), otherSourceConfig(false))
+	if err != nil {
+		t.Fatalf("real run: %v", err)
+	}
+	type counts struct{ authorsCreated, authorsLinked, booksCreated, booksLinked, seriesCreated, seriesLinked, editions int }
+	got := counts{preview.AuthorsCreated, preview.AuthorsLinked, preview.BooksCreated, preview.BooksLinked, preview.SeriesCreated, preview.SeriesLinked, preview.EditionsAdded}
+	want := counts{real.AuthorsCreated, real.AuthorsLinked, real.BooksCreated, real.BooksLinked, real.SeriesCreated, real.SeriesLinked, real.EditionsAdded}
+	if got != want {
+		t.Errorf("preview %+v, real %+v", got, want)
+	}
+	return preview, real
+}
+
+// Both formats of one title in one series: the second item joins the book the
+// first made, so the series gains one member, not two.
+func TestDryRunCountsSeriesMembershipOfSharedBookOnce(t *testing.T) {
+	items := sameTitleTwoFormats()
+	for idx := range items {
+		items[idx].Series = []NormalizedSeries{{ID: "s-pp", Name: "Bennet Family", Sequence: "1"}}
+	}
+	_, real := assertPreviewMatchesReal(t, items)
+	if real.BooksCreated != 1 || real.SeriesCreated != 1 || real.SeriesLinked != 0 {
+		t.Fatalf("real run = %+v, want one book in one new series", real)
+	}
+}
+
+// The author spelled two ways: the real run's matcher folds the second
+// spelling onto the author the first created, and the preview has to as well.
+func TestDryRunFoldsAuthorSpellingVariant(t *testing.T) {
+	items := sameTitleTwoFormats()
+	items[1].Authors = []NormalizedAuthor{{ID: "a-2", Name: "Austen, Jane"}}
+	_, real := assertPreviewMatchesReal(t, items)
+	if real.AuthorsCreated != 1 || real.BooksCreated != 1 || real.BooksLinked != 1 {
+		t.Fatalf("real run = %+v, want one author and one book", real)
+	}
+}

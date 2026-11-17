@@ -36,7 +36,7 @@ type seriesUpsertResult struct {
 	MatchedBy            string
 }
 
-func (i *Importer) resolveAuthor(ctx context.Context, cfg ImportConfig, runID int64, item NormalizedLibraryItem, allowCreate bool, matcher *authorMatcher) (*models.Author, bool, string, metadataMergeResult, error) {
+func (i *Importer) resolveAuthor(ctx context.Context, cfg ImportConfig, runID int64, item NormalizedLibraryItem, allowCreate bool, matcher *authorMatcher, stats *ImportStats) (*models.Author, bool, string, metadataMergeResult, error) {
 	if len(item.Authors) == 0 {
 		return nil, false, "", metadataMergeResult{}, errors.New("item has no authors")
 	}
@@ -184,14 +184,28 @@ func (i *Importer) resolveAuthor(ctx context.Context, cfg ImportConfig, runID in
 	// author (handled above) still requires human review.
 
 	if cfg.DryRun {
+		// The real run adds each author it creates to the matcher, so a later
+		// spelling of the name ("Austen, Jane" after "Jane Austen") links to
+		// it. A dry run creates nothing, so it asks the same matcher logic
+		// over the authors it would have created.
+		if planned, matchedBy, plannedAmbiguous, err := stats.matchDryRunAuthor(ctx, name); err != nil {
+			return nil, false, "", metadataMergeResult{}, err
+		} else if planned != nil {
+			_ = i.recordRunEntity(ctx, runID, cfg, item.LibraryID, item.ItemID, entityTypeAuthor, externalID, 0, itemOutcomeLinked, nil)
+			return planned, false, matchedBy, metadataMergeResult{}, nil
+		} else if plannedAmbiguous && !allowCreate {
+			return nil, false, "", metadataMergeResult{}, reviewRequiredError{Reason: reviewReasonAmbiguousAuthor}
+		}
 		_ = i.recordRunEntity(ctx, runID, cfg, item.LibraryID, item.ItemID, entityTypeAuthor, externalID, 0, itemOutcomeCreated, nil)
-		return &models.Author{
+		planned := &models.Author{
 			ForeignID:        absForeignID("author", item.LibraryID, externalID),
 			Name:             name,
 			SortName:         sortNameFromFull(name),
 			Monitored:        true,
 			MetadataProvider: providerAudiobookshelf,
-		}, true, "created", metadataMergeResult{}, nil
+		}
+		stats.rememberDryRunAuthor(planned)
+		return planned, true, "created", metadataMergeResult{}, nil
 	}
 
 	author := &models.Author{
@@ -609,7 +623,7 @@ func (i *Importer) reloadAuthor(ctx context.Context, author *models.Author) erro
 // for something that has no provider identity yet. Nothing failed: the item
 // imported and was left with the details the source gave it.
 const (
-	authorAmbiguousMessage = "author not linked to a metadata provider: several providers' authors match this name equally well, so none was picked"
+	authorAmbiguousMessage = "author not linked to a metadata provider: several authors match this name equally well, so none was picked"
 	bookAmbiguousMessage   = "book not linked to a metadata provider: several works by this author share its title, so none was picked"
 )
 
@@ -1039,6 +1053,9 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 		}
 		_ = i.recordRunEntity(ctx, runID, cfg, item.LibraryID, item.ItemID, entityTypeBook, externalID, match.ID, itemOutcomeLinked, nil)
 		if cfg.DryRun {
+			if match.ID == 0 {
+				stats.linkDryRunItemToPlannedBook(author, match.ForeignID, item.ItemID)
+			}
 			return &bookUpsertResult{row: match, matchedBy: "author+normalized_title"}, false, true, metadataMergeResult{}, nil
 		}
 		metaResult, err := i.enrichBook(ctx, cfg, item, author, match)
@@ -1070,7 +1087,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 			ASIN:             isbnutil.NormalizeASIN(item.ASIN),
 			MetadataProvider: providerAudiobookshelf,
 		}
-		stats.rememberDryRunBook(author, plannedBook, item.Series)
+		stats.rememberDryRunBook(author, plannedBook, item.ItemID, item.Series)
 		return &bookUpsertResult{row: plannedBook, matchedBy: "created"}, true, false, metadataMergeResult{}, nil
 	}
 
@@ -1467,7 +1484,7 @@ func (i *Importer) upsertSeries(ctx context.Context, cfg ImportConfig, runID, bo
 	created := false
 	if existing == nil {
 		if cfg.DryRun && stats != nil && stats.dryRunSeriesAlreadyPlanned(externalID, title) {
-			countKey := seriesMembershipCountKey(0, title, externalID, bookID, itemID)
+			countKey := seriesMembershipCountKey(0, title, externalID, bookID, stats.membershipItemID(bookID, itemID))
 			membershipCreated := !stats.dryRunSeriesMembershipAlreadyPlanned(countKey)
 			membershipExternalID := seriesMembershipExternalID(externalID, bookID, itemID)
 			if membershipCreated {
@@ -1504,7 +1521,7 @@ func (i *Importer) upsertSeries(ctx context.Context, cfg ImportConfig, runID, bo
 	if cfg.DryRun && created {
 		localID = 0
 	}
-	countKey := seriesMembershipCountKey(localID, title, externalID, bookID, itemID)
+	countKey := seriesMembershipCountKey(localID, title, externalID, bookID, stats.membershipItemID(bookID, itemID))
 	membershipExternalID := seriesMembershipExternalID(externalID, bookID, itemID)
 	metadata := map[string]any{
 		"bookId":   bookID,

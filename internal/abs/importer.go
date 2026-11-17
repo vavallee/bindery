@@ -741,7 +741,7 @@ func (i *Importer) importOne(ctx context.Context, cfg ImportConfig, runID int64,
 		Title:   item.Title,
 		Outcome: itemOutcomeUpdated,
 	}
-	author, authorCreated, authorMatchedBy, authorMeta, err := i.resolveAuthor(ctx, cfg, runID, item, allowCreate, matcher)
+	author, authorCreated, authorMatchedBy, authorMeta, err := i.resolveAuthor(ctx, cfg, runID, item, allowCreate, matcher, stats)
 	if err != nil {
 		var reviewErr reviewRequiredError
 		if errors.As(err, &reviewErr) {
