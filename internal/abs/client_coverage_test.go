@@ -65,14 +65,6 @@ func TestNormalizeBaseURL_Cases(t *testing.T) {
 	}
 }
 
-func TestIsAllDigits(t *testing.T) {
-	for in, want := range map[string]bool{"": false, "123": true, "12a": false, "-1": false} {
-		if got := isAllDigits(in); got != want {
-			t.Errorf("isAllDigits(%q) = %v, want %v", in, got, want)
-		}
-	}
-}
-
 func TestValidateBaseURLSecure(t *testing.T) {
 	for _, in := range []string{"http://127.0.0.1:13378", "http://192.168.1.10:13378/", "https://10.0.0.5"} {
 		if _, err := ValidateBaseURLSecure(in); err != nil {

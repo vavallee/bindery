@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/jobs"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -95,7 +96,7 @@ func (c ImportConfig) Validate() error {
 	if c.APIKey == "" {
 		return errors.New("abs api_key is empty")
 	}
-	if _, err := NormalizeAPIKey(c.APIKey); err != nil {
+	if _, err := httpsec.NormalizeAPIKey(c.APIKey); err != nil {
 		return err
 	}
 	if len(c.LibraryIDs) == 0 {
