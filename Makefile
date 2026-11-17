@@ -1,4 +1,4 @@
-.PHONY: build dev test test-race lint clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog licenses licenses-check go-version-check screenshots
+.PHONY: build dev test test-race test-web lint lint-go lint-web docker-push clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog licenses licenses-check go-version-check screenshots
 
 # Pinned so local regeneration and the CI drift check classify licenses
 # identically — a classifier bump would otherwise look like dependency drift.
@@ -41,19 +41,19 @@ web-build: ## Build frontend for embedding
 # any per-package limit and dies in a goroutine dump instead of a test failure
 # (#2293). Every CI job runs on ubuntu-latest, so this was only ever hit locally.
 test: ## Run unit tests, mirroring the CI gate (no -race; see `make test-race`)
-	go test -timeout=15m -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
+	go test -timeout=15m -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/... ./tools/... ./tests/integration/... ./tests/security/...
 
-# The same six shards, patterns and 15m budget as the `validate` and `race` CI
+# The same six shards, patterns and 25m budget as the `validate` and `race` CI
 # matrices in .github/workflows/ci.yml. Keep them in step: a shard pattern that
 # drifts here silently stops covering some tests in one place or the other.
 test-race: ## Run the race detector in CI's six shards (internal/api overruns a single budget)
-	go test -race -timeout=15m -run '^Test[A-B]' ./internal/api
-	go test -race -timeout=15m -run '^Test[C-K]' ./internal/api
-	go test -race -timeout=15m -run '^Test[L-Q]' ./internal/api
-	go test -race -timeout=15m -run '^(Test([^A-Q]|$$)|Fuzz|Example)' ./internal/api
-	go test -race -timeout=15m ./internal/db
-	pkgs=$$(go list ./cmd/... ./internal/... | grep -v -e '/internal/api$$' -e '/internal/db$$') && \
-		test -n "$$pkgs" && go test -race -timeout=15m $$pkgs
+	go test -race -timeout=25m -run '^Test[A-B]' ./internal/api
+	go test -race -timeout=25m -run '^Test[C-K]' ./internal/api
+	go test -race -timeout=25m -run '^Test[L-Q]' ./internal/api
+	go test -race -timeout=25m -run '^(Test([^A-Q]|$$)|Fuzz|Example)' ./internal/api
+	go test -race -timeout=25m ./internal/db
+	pkgs=$$(go list ./cmd/... ./internal/... ./tests/integration/... ./tests/security/... | grep -v -e '/internal/api$$' -e '/internal/db$$') && \
+		test -n "$$pkgs" && go test -race -timeout=25m $$pkgs
 
 test-web: ## Run frontend tests
 	cd web && npm test -- --coverage
