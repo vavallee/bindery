@@ -63,9 +63,10 @@ describe('GeneralTab scan status by role (#2361)', () => {
     render(<GeneralTab />)
     await waitFor(() => expect(api.listSettings).toHaveBeenCalled())
     // Let the other mount effects settle before asserting the absence.
-    await waitFor(() => expect(api.getStorage).toHaveBeenCalled())
+    await waitFor(() => expect(api.authConfig).toHaveBeenCalled())
 
     expect(api.libraryScanStatus).not.toHaveBeenCalled()
+    expect(api.getStorage).not.toHaveBeenCalled()
     expect(screen.queryByText('settings.general.lastScan')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByText(/admin role required/i)).toBeNull()
