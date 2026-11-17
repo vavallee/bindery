@@ -1,0 +1,2 @@
+### Fixed
+- **Pair gating no longer drops unrelated files from a shared download folder.** When a book wanted in both formats was held until its sibling arrived, a Transmission download was remembered by the shared category folder instead of its own files, so releasing it could hand off every other book sitting in that folder. A hold now remembers only what the download owns, and a hold made before this update still releases as it did.
