@@ -25,6 +25,7 @@ type handoffFixture struct {
 	scanner   *importer.Scanner
 	downloads *db.DownloadRepo
 	settings  *db.SettingsRepo
+	books     *db.BookRepo
 	book      *models.Book
 	intake    string
 	dock      string
@@ -81,7 +82,7 @@ func newHandoffFixture(t *testing.T, mode string) *handoffFixture {
 	scanner := importer.NewScanner(downloads, db.NewDownloadClientRepo(database), books, authors, db.NewHistoryRepo(database), library, "", "", "", "")
 	scanner.WithSettings(settings)
 	h := NewManualImportHandler(scanner, downloads, books).WithRoots(NewLibraryRoots(nil, base))
-	return &handoffFixture{h: h, scanner: scanner, downloads: downloads, settings: settings, book: book, intake: intake, dock: dock}
+	return &handoffFixture{h: h, scanner: scanner, downloads: downloads, settings: settings, books: books, book: book, intake: intake, dock: dock}
 }
 
 func (f *handoffFixture) write(t *testing.T, rel, content string) string {
@@ -488,5 +489,51 @@ func TestManualImportScan_DedicatedFolderHandOffStillHidden(t *testing.T) {
 	}
 	if it := f.scan(t, true)[book]; !it.HandedOff {
 		t.Errorf("book = %+v, want labelled handed off", it)
+	}
+}
+
+// TestManualImportScan_HeldDownloadHidesOnlyItsOwnFile: pair gating holds a
+// Transmission download under the shared category folder. While it waits, the
+// scan hides the torrent's own file and nothing else in that folder.
+func TestManualImportScan_HeldDownloadHidesOnlyItsOwnFile(t *testing.T) {
+	f := newHandoffFixture(t, "external")
+	ctx := context.Background()
+	f.book.MediaType = models.MediaTypeBoth
+	if err := f.books.Update(ctx, f.book); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range map[string]string{"import.drop_pair_gating": "true"} {
+		if err := f.settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shared := filepath.Join(f.intake, "complete", "books")
+	mine := f.write(t, "complete/books/Moby Dick - Herman Melville.epub", "moby bytes")
+	sibling := f.write(t, "complete/books/Unrelated Novel - Someone Else.epub", "other bytes")
+	f.write(t, "complete/books/Unrelated Audio/01.mp3", "track one")
+	siblingAudio := filepath.Join(shared, "Unrelated Audio")
+
+	dl := f.manualDownload(t)
+	f.scanner.ImportFilesFromPath(ctx, dl, shared, []string{mine}, models.MediaTypeEbook)
+	got, err := f.downloads.GetByID(ctx, dl.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.StateImportHeld {
+		t.Fatalf("status = %q (%s), want %q", got.Status, got.ErrorMessage, models.StateImportHeld)
+	}
+	if srcs := got.HandedOffSources(); len(srcs) != 1 || srcs[0] != mine {
+		t.Errorf("held sources = %v, want only %q", srcs, mine)
+	}
+
+	items := f.scan(t, false)
+	if _, ok := items[mine]; ok {
+		t.Error("the held file was offered")
+	}
+	if _, ok := items[sibling]; !ok {
+		t.Errorf("an unrelated epub beside it was hidden: %+v", items)
+	}
+	if _, ok := items[siblingAudio]; !ok {
+		t.Errorf("an unrelated audiobook folder beside it was hidden: %+v", items)
 	}
 }

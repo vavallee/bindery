@@ -50,8 +50,9 @@ type handedOffIndex struct {
 // handedOffSources builds the index from the downloads currently handed off.
 // A recorded path that is, or contains, a configured library root, an import
 // source folder or a download folder is left out: no single hand-off owns a
-// whole intake folder, and a held row can carry one (pair gating records the
-// download path, which for Transmission is the shared category folder).
+// whole intake folder, and a row held before pair gating recorded only its own
+// files can carry one (it recorded the download path, which for Transmission
+// is the shared category folder).
 func (h *ManualImportHandler) handedOffSources(ctx context.Context) (*handedOffIndex, error) {
 	rows, err := h.downloads.ListByStatuses(ctx, models.StateImportExternal, models.StateImportHeld)
 	if err != nil {
