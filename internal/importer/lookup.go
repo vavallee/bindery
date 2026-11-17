@@ -182,7 +182,7 @@ const lookupBatchConcurrency = 8
 func lookupUnit(root, path string, books []models.Book, authorNames map[int64]string) LookupResult {
 	parsed := ParseFilename(path)
 	layoutAuthor, layoutTitle, _ := authorTitleFromLayout(path, root)
-	layoutAuthor, layoutTitle = releaseFolderLayout(layoutAuthor, layoutTitle)
+	layoutAuthor, layoutTitle = releaseFolderLayout(layoutAuthor, layoutTitle, isDirPath(path))
 	var embedded EpubMetadata
 	if ep := firstEpubIn(path); ep != "" {
 		if meta, err := ReadEbookMetadata(ep); err == nil {
@@ -229,20 +229,30 @@ var tagGroupRe = regexp.MustCompile(`[\[\(\{]([^\]\)\}]*)[\]\)\}]`)
 // again when its name is a release's rather than an author's. A manual import
 // scan is often pointed at a download or import source folder, where the first
 // folder down is a release ("TEST-bare [epub]", "The War of the Worlds - H. G.
-// Wells [m4b]") and taking it whole made the author "TEST-bare [epub]". A
-// folder carrying a format tag is read like a release name instead: its author
-// side, or none, is the author, and its title side stands in for a missing
-// book folder title. Every other folder, a plain author folder included, is
-// left as it was.
-func releaseFolderLayout(author, title string) (string, string) {
+// Wells [m4b]") and taking it whole made the author "TEST-bare [epub]".
+//
+// Only a folder that carries a format tag AND holds the unit directly as a
+// file is read like a release name: its author side, or none, is the author,
+// and its title side stands in for the missing book folder title. When a book
+// folder sits below it (a title from the layout, or a unit that is itself a
+// folder, as in "Brandon Sanderson [M4B]/Mistborn/"), it is an author folder
+// that happens to carry a tag, so it stays the author with the tag stripped.
+// Every other folder is left as it was.
+func releaseFolderLayout(author, title string, unitIsDir bool) (string, string) {
 	if !isReleaseFolderName(author) {
 		return author, title
 	}
-	rel := ParseFilename(author)
-	if title == "" {
-		title = rel.Title
+	if title != "" || unitIsDir {
+		return strings.TrimSpace(multiSp.ReplaceAllString(cleanRe.ReplaceAllString(author, ""), " ")), title
 	}
-	return rel.Author, title
+	rel := ParseFilename(author)
+	return rel.Author, rel.Title
+}
+
+// isDirPath reports whether path is a directory.
+func isDirPath(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // isReleaseFolderName reports whether a folder name carries a bracketed format

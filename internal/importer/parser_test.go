@@ -287,7 +287,13 @@ func TestParseFilenameReleaseFolderNames(t *testing.T) {
 		path, wantTitle, wantAuthor string
 	}{
 		{"/in/The War of the Worlds - H. G. Wells [m4b]", "The War of the Worlds", "H. G. Wells"},
+		// The parser already read this one right on main; the reported
+		// author came from the bulk scan's layout reading, which
+		// TestLookupBatchLayout_ReleaseFolders covers. Kept here so the
+		// parser side stays pinned.
 		{"/in/TEST-bare [epub]", "TEST-bare", ""},
+		// An all caps word after a dot is not an extension either.
+		{"/in/Title - H.G.WELLS", "Title", "H.G.WELLS"},
 		{"/in/Title - J.R.R. Tolkien [epub]", "Title", "J.R.R. Tolkien"},
 		{"/in/Title - J. R. R. Tolkien", "Title", "J. R. R. Tolkien"},
 		{"/in/Title - JRR Tolkien", "Title", "JRR Tolkien"},

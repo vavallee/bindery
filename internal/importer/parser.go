@@ -45,11 +45,6 @@ var (
 	dashCollapseRe = regexp.MustCompile(`(?:\s+[-–]\s+){2,}`)
 	// Dot/underscore word-separator pattern (common in release filenames)
 	dotSepRe = regexp.MustCompile(`[._]+`)
-	// fileExtRe is the shape of a real file extension: a short run of letters
-	// and digits in one case (".epub", ".M4B", ".nfo"). What filepath.Ext finds
-	// in a folder name like "Title - H. G. Wells [m4b]" is ". Wells [m4b]",
-	// which is part of the name, not an extension.
-	fileExtRe = regexp.MustCompile(`^\.(?:[a-z0-9]{1,5}|[A-Z0-9]{1,5})$`)
 	// Clean up patterns
 	cleanRe = regexp.MustCompile(`[\[\(\{].*?[\]\)\}]`) // remove [brackets], (parens) and {braces}
 	multiSp = regexp.MustCompile(`\s{2,}`)
@@ -262,17 +257,15 @@ func ParseFilename(path string) ParsedFile {
 	return p
 }
 
-// trimFileExt drops name's file extension, if it has one. A manual import
-// scan hands ParseFilename folders as well as files, and a folder has no
-// extension: filepath.Ext only finds the last dot, so "The War of the Worlds -
-// H. G. Wells [m4b]" lost ". Wells [m4b]" and parsed as the author "H G".
+// trimFileExt drops name's file extension when it is a book or audio one. A
+// manual import scan hands ParseFilename folders as well as files, and a
+// folder has no extension: filepath.Ext only finds the last dot, so "The War
+// of the Worlds - H. G. Wells [m4b]" lost ". Wells [m4b]" and parsed as the
+// author "H G". Every file the importer parses is a book or audio file, so the
+// known list is the whole test; a shape match let ".WELLS" pass as one.
 func trimFileExt(path, name string) string {
-	ext := filepath.Ext(name)
-	if ext == "" {
-		return name
-	}
-	if models.IsBookFilePath(path) || IsAudioFile(path) || fileExtRe.MatchString(ext) {
-		return strings.TrimSuffix(name, ext)
+	if models.IsBookFilePath(path) || IsAudioFile(path) {
+		return strings.TrimSuffix(name, filepath.Ext(name))
 	}
 	return name
 }

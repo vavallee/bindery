@@ -555,8 +555,17 @@ func TestLookupBatchLayout_ReleaseFolders(t *testing.T) {
 	// A plain author folder still feeds the author, as it always has.
 	plain := filepath.Join(root, "Andy Weir", "Project Hail Mary.epub")
 	writeFileAt(t, plain)
+	// An author folder carrying a format tag, with a book folder below it,
+	// is still the author, tag stripped: the audiobook unit is the book
+	// folder, and the ebook sits one folder further down.
+	mistborn := seedLayoutBook(t, books, authors, ctx, "Brandon Sanderson", "Mistborn")
+	sandersonDir := filepath.Join(root, "Brandon Sanderson [M4B]", "Mistborn")
+	writeFileAt(t, filepath.Join(sandersonDir, "01.mp3"))
+	guards := seedLayoutBook(t, books, authors, ctx, "Terry Pratchett", "Guards! Guards!")
+	pratchett := filepath.Join(root, "Terry Pratchett (pdf)", "Guards! Guards!", "Guards! Guards!.pdf")
+	writeFileAt(t, pratchett)
 
-	res, err := s.LookupBatchLayout(ctx, root, []string{audioDir, bare, tagged, plain})
+	res, err := s.LookupBatchLayout(ctx, root, []string{audioDir, bare, tagged, plain, sandersonDir, pratchett})
 	if err != nil {
 		t.Fatalf("LookupBatchLayout: %v", err)
 	}
@@ -568,6 +577,8 @@ func TestLookupBatchLayout_ReleaseFolders(t *testing.T) {
 		{"TEST-bare", "", "none", nil},
 		{"Project Hail Mary", "Andy Weir", "confident", weir},
 		{"Project Hail Mary", "Andy Weir", "confident", weir},
+		{"Mistborn", "Brandon Sanderson", "confident", mistborn},
+		{"Guards! Guards!", "Terry Pratchett", "confident", guards},
 	} {
 		got := res[i]
 		if got.ParsedTitle != want.title || got.ParsedAuthor != want.author {
