@@ -916,6 +916,7 @@
     "contentCheckAudiobookEntry": "{{title}} ({{count}})",
     "contentCheckRetitled": "Every file is titled \"{{title}}\" ({{count}} files), so it was imported as a retitled edition",
     "contentCheckTruncated": "The content check was cut short and skipped",
+    "heldDetail": "Finished downloading. Waiting for the other format before dropping it.",
     "allEventTypes": "All event types",
     "events": {
       "grabbed": "Grabbed",
@@ -923,6 +924,7 @@
       "downloadStalled": "Download Stalled",
       "downloadRequeued": "Download Requeued",
       "downloadFolderImported": "Folder Imported",
+      "downloadHeld": "Held for pair",
       "importFailed": "Import Failed",
       "bookImported": "Book Imported",
       "bookFileDeleted": "File Deleted",
