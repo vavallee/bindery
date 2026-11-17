@@ -52,7 +52,16 @@ function parseEventData(data: string): { message?: string; path?: string; size?:
 // anything shown together.
 type Translate = (key: string, opts?: Record<string, unknown>) => string
 
+// Pair gating parks the first format to finish and records it as a
+// downloadFolderImported event with mode "drop-hold" (status importHeld).
+// Nothing has been dropped at that point, so the row must not read as an
+// import. The event type stays the same for the filter.
+function isHeldEvent(type: string, parsed: ReturnType<typeof parseEventData>): boolean {
+  return type === 'downloadFolderImported' && (parsed.mode === 'drop-hold' || parsed.status === 'importHeld')
+}
+
 function eventDetail(type: string, parsed: ReturnType<typeof parseEventData>, t: Translate): string {
+  if (isHeldEvent(type, parsed)) return t('history.heldDetail')
   const usual = baseEventDetail(type, parsed)
   const check = type === 'bookImported' ? contentCheckDetail(parsed.contentCheck, t) : ''
   return check && usual ? `${check} \u00b7 ${usual}` : check || usual
@@ -177,6 +186,9 @@ export default function HistoryPage() {
     (type: string) => t(`history.events.${type}`, { defaultValue: humanizeEventType(type) }),
     [t],
   )
+  // Label for one row: a held download reads "Held for pair", not "Folder Imported".
+  const rowLabel = (type: string, parsed: ReturnType<typeof parseEventData>) =>
+    isHeldEvent(type, parsed) ? t('history.events.downloadHeld', { defaultValue: 'Held for pair' }) : eventLabel(type)
 
   // Server-side list (#1467): page, page size, and event-type filter are all
   // applied by the API and `total` drives the pager, so history older than the
@@ -322,7 +334,7 @@ export default function HistoryPage() {
                       <tr key={event.id} className="bg-slate-100/50 dark:bg-zinc-900/50 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition-colors">
                         <td className="px-4 py-3 align-top">
                           <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${EVENT_TYPE_COLORS[event.eventType] ?? 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300'}`}>
-                            {eventLabel(event.eventType)}
+                            {rowLabel(event.eventType, parsed)}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-800 dark:text-zinc-200 max-w-md">
@@ -398,7 +410,7 @@ export default function HistoryPage() {
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 ${EVENT_TYPE_COLORS[event.eventType] ?? 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300'}`}>
-                        {eventLabel(event.eventType)}
+                        {rowLabel(event.eventType, parsed)}
                       </span>
                       {mt === 'audiobook' && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 text-[10px] font-medium">🎧</span>
