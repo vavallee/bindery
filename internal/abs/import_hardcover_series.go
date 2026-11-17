@@ -394,7 +394,7 @@ func (i *Importer) upsertHardcoverSeries(ctx context.Context, cfg ImportConfig, 
 	created := false
 	if existing == nil {
 		if cfg.DryRun && stats != nil && stats.dryRunSeriesAlreadyPlanned(catalog.ForeignID, catalog.Title) {
-			countKey := seriesMembershipCountKey(0, catalog.Title, catalog.ForeignID, bookID, itemID)
+			countKey := seriesMembershipCountKey(0, catalog.Title, catalog.ForeignID, bookID, stats.membershipItemID(bookID, itemID))
 			membershipCreated := !stats.dryRunSeriesMembershipAlreadyPlanned(countKey)
 			membershipExternalID := seriesMembershipExternalID(catalog.ForeignID, bookID, itemID)
 			if membershipCreated {
@@ -432,7 +432,7 @@ func (i *Importer) upsertHardcoverSeries(ctx context.Context, cfg ImportConfig, 
 	if cfg.DryRun && created {
 		localID = 0
 	}
-	countKey := seriesMembershipCountKey(localID, catalog.Title, catalog.ForeignID, bookID, itemID)
+	countKey := seriesMembershipCountKey(localID, catalog.Title, catalog.ForeignID, bookID, stats.membershipItemID(bookID, itemID))
 	membershipExternalID := seriesMembershipExternalID(catalog.ForeignID, bookID, itemID)
 	if !cfg.DryRun {
 		if err := i.ensureHardcoverSeriesLink(ctx, existing.ID, catalog); err != nil {
