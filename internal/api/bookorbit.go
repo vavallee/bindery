@@ -2,14 +2,19 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/vavallee/bindery/internal/abs"
 	"github.com/vavallee/bindery/internal/bookorbit"
@@ -322,14 +327,79 @@ func (h *BookOrbitHandler) writeProbeError(w http.ResponseWriter, logMsg, baseUR
 	case errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound:
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "BookOrbit has no API at this address. Check the base URL, and that the server is recent enough to support API keys."})
 	case errors.As(err, &apiErr):
-		slog.Warn(logMsg, "status", apiErr.StatusCode, "host", redactABSHost(baseURL), "code", apiErr.Code)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": apiErr.Error()})
+		// BookOrbit's own message goes to the log only. It is upstream text
+		// and never carries our key, but the browser gets a plain sentence.
+		slog.Warn(logMsg, "status", apiErr.StatusCode, "host", redactABSHost(baseURL), "code", apiErr.Code, "message", apiErr.Message)
+		if apiErr.PlainHTTPToHTTPS {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "The server at this address speaks https, but the base URL starts with http://. Try https:// instead."})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": bookOrbitStatusMessage(apiErr.StatusCode)})
 	case errors.As(err, &shapeErr):
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": shapeErr.Error()})
 	default:
 		slog.Warn(logMsg, "host", redactABSHost(baseURL), "error", err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": lanTimeoutHint(baseURL, err)})
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": bookOrbitTransportMessage(baseURL, err)})
 	}
+}
+
+func bookOrbitStatusMessage(status int) string {
+	return "BookOrbit answered with an unexpected HTTP status (" + strconv.Itoa(status) + "). Check the server's own logs."
+}
+
+// bookOrbitTransportMessage turns a transport failure into a sentence an
+// admin can act on. It names only the host the admin typed, never the request
+// URL, a resolver address or anything the Go error carries. The full error
+// stays in the server log.
+func bookOrbitTransportMessage(baseURL string, err error) string {
+	host := ""
+	if u, perr := url.Parse(baseURL); perr == nil {
+		host = u.Host
+	}
+	if host == "" {
+		host = "the configured address"
+	}
+	var dnsErr *net.DNSError
+	var unknownAuth x509.UnknownAuthorityError
+	var certInvalid x509.CertificateInvalidError
+	var hostnameErr x509.HostnameError
+	var verifyErr *tls.CertificateVerificationError
+	var recordErr tls.RecordHeaderError
+	switch {
+	case errors.As(err, &dnsErr) && dnsErr.IsNotFound:
+		return "Host not found: " + host + " does not resolve. Check the base URL."
+	case errors.Is(err, http.ErrSchemeMismatch):
+		return host + " speaks plain http, but the base URL starts with https://. Use an http:// URL instead."
+	case isConnRefused(err):
+		return "Connection refused by " + host + ". Check that BookOrbit is running and that the port is right."
+	case isTimeoutErr(err):
+		msg := host + " did not answer in time."
+		if u, perr := url.Parse(baseURL); perr == nil && looksLANHost(u.Hostname()) {
+			msg += " The host looks LAN local. If Bindery runs behind a VPN container, allow your LAN in its firewall settings."
+		}
+		return msg
+	case errors.As(err, &unknownAuth), errors.As(err, &certInvalid), errors.As(err, &hostnameErr), errors.As(err, &verifyErr):
+		return "TLS problem with " + host + ": its certificate is not trusted or does not match the address. Use a certificate Bindery trusts, or plain http on a trusted network."
+	case errors.As(err, &dnsErr):
+		return "Could not look up " + host + ". Check the base URL and Bindery's DNS settings."
+	case errors.As(err, &recordErr):
+		return "TLS problem with " + host + ": it did not answer as an https server. Check the scheme in the base URL."
+	default:
+		return "Could not reach BookOrbit at " + host + ". Check the base URL and the server's logs."
+	}
+}
+
+// wsaeconnrefused is Windows' WSAECONNREFUSED. syscall.ECONNREFUSED on
+// Windows is a Go invented value that the socket layer never returns, so the
+// errno is compared by number. No other platform uses 10061.
+const wsaeconnrefused = 10061
+
+func isConnRefused(err error) bool {
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && uintptr(errno) == wsaeconnrefused
 }
 
 func (h *BookOrbitHandler) StartImport(w http.ResponseWriter, r *http.Request) {

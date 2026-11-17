@@ -139,9 +139,16 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       clearTimeout(timer)
       setLoading(false)
     })
-    api.getStorage().then(setStorage).catch(console.error)
     return () => clearTimeout(timer)
   }, [])
+
+  // GET /system/storage is admin only, and both places that read it (the
+  // hardlink warning and the Storage section) sit inside the isAdmin block
+  // below, so a non admin never asks. Keyed on isAdmin like the scan status.
+  useEffect(() => {
+    if (!isAdmin) return
+    api.getStorage().then(setStorage).catch(console.error)
+  }, [isAdmin])
 
   // The last scan summary names the library roots and the absolute path of
   // every unmatched file, so the endpoint is admin only (#2361) and the panel

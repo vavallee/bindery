@@ -6,11 +6,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -180,6 +182,7 @@ const lookupBatchConcurrency = 8
 func lookupUnit(root, path string, books []models.Book, authorNames map[int64]string) LookupResult {
 	parsed := ParseFilename(path)
 	layoutAuthor, layoutTitle, _ := authorTitleFromLayout(path, root)
+	layoutAuthor, layoutTitle = releaseFolderLayout(layoutAuthor, layoutTitle, isFolderUnit(path))
 	var embedded EpubMetadata
 	if ep := firstEpubIn(path); ep != "" {
 		if meta, err := ReadEbookMetadata(ep); err == nil {
@@ -217,6 +220,52 @@ func lookupUnit(root, path string, books []models.Book, authorNames map[int64]st
 	}
 	result.DetectedFormat = detectUnitFormat(path)
 	return result
+}
+
+// tagGroupRe finds the bracketed, parenthesised and braced groups in a name.
+var tagGroupRe = regexp.MustCompile(`[\[\(\{]([^\]\)\}]*)[\]\)\}]`)
+
+// releaseFolderLayout reads the folder lookupUnit took for the author folder
+// again when its name is a release's rather than an author's. A manual import
+// scan is often pointed at a download or import source folder, where the first
+// folder down is a release ("TEST-bare [epub]", "The War of the Worlds - H. G.
+// Wells [m4b]") and taking it whole made the author "TEST-bare [epub]".
+//
+// Only a folder that carries a format tag AND holds the unit directly as a
+// file is read like a release name: its author side, or none, is the author,
+// and its title side stands in for the missing book folder title. When a book
+// folder sits below it (a title from the layout, or a unit that is itself a
+// folder, as in "Brandon Sanderson [M4B]/Mistborn/"), it is an author folder
+// that happens to carry a tag, so it stays the author with the tag stripped.
+// Every other folder is left as it was.
+func releaseFolderLayout(author, title string, unitIsDir bool) (string, string) {
+	if !isReleaseFolderName(author) {
+		return author, title
+	}
+	if title != "" || unitIsDir {
+		return strings.TrimSpace(multiSp.ReplaceAllString(cleanRe.ReplaceAllString(author, ""), " ")), title
+	}
+	rel := ParseFilename(author)
+	return rel.Author, rel.Title
+}
+
+// isFolderUnit reports whether a bulk import unit is a folder. The walk only
+// ever hands over book and audio files as file units, so anything else is a
+// folder, and this needs no filesystem call.
+func isFolderUnit(path string) bool {
+	return !IsBookFile(path) && !IsAudioFile(path)
+}
+
+// isReleaseFolderName reports whether a folder name carries a bracketed format
+// tag ("[epub]", "(m4b)", "{mp3}"), which no author folder does. The format
+// words are the indexer's (indexer.ReleaseFormats), so the two cannot drift.
+func isReleaseFolderName(name string) bool {
+	for _, m := range tagGroupRe.FindAllStringSubmatch(name, -1) {
+		if len(indexer.ReleaseFormats(m[1])) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // matchUnit is lookupUnit's catalogue match for one reading of the filename.

@@ -2696,7 +2696,7 @@
         "serverUrl": "Server URL",
         "apiKey": "API key",
         "configured": "(configured, leave blank to keep)",
-        "apiKeyHint": "Create a key in BookOrbit under Settings, You, API keys. Keep its access at <b>Read</b>, give it no permissions, and limit it to the libraries you import. Bindery stores it and never shows it again.",
+        "apiKeyHint": "Create a key in BookOrbit under Settings, You, API keys. Keep its access at <b>Read only</b>, give it no permissions, and limit it to the libraries you import. Bindery stores it and never shows it again.",
         "pathRemap": "BookOrbit path remap",
         "pathRemapHelp": "BookOrbit reports paths as its own container sees them. Rewrite them to where Bindery sees the same files, under one of its library or root folders."
       },
