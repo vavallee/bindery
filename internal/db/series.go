@@ -33,8 +33,7 @@ func (r *SeriesRepo) WithTx(tx *sql.Tx) *SeriesRepo {
 }
 
 func (r *SeriesRepo) List(ctx context.Context) ([]models.Series, error) {
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, foreign_id, title, description, monitored, genre_override, created_at FROM series ORDER BY title")
+	rows, err := r.db.QueryContext(ctx, "SELECT "+seriesColumns+" FROM series ORDER BY title")
 	if err != nil {
 		return nil, fmt.Errorf("list series: %w", err)
 	}
@@ -42,14 +41,8 @@ func (r *SeriesRepo) List(ctx context.Context) ([]models.Series, error) {
 
 	var series []models.Series
 	for rows.Next() {
-		var s models.Series
-		var monitored int
-		var genreOverride sql.NullString
-		if err := rows.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &genreOverride, &s.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan series: %w", err)
-		}
-		s.Monitored = monitored == 1
-		if err := applyGenreOverride(&s, genreOverride); err != nil {
+		s, err := scanSeries(rows)
+		if err != nil {
 			return nil, err
 		}
 		series = append(series, s)
@@ -292,6 +285,27 @@ func (r *SeriesRepo) SetMonitored(ctx context.Context, id int64, monitored bool)
 	return err
 }
 
+// seriesColumns is the series row every single-table getter selects, in the
+// order scanSeries reads it. Keep the two together: a getter with its own
+// column list is how GetByForeignID came to drop genre_override.
+const seriesColumns = "id, foreign_id, title, description, monitored, genre_override, created_at"
+
+// scanSeries reads one seriesColumns row. The error wraps sql.ErrNoRows
+// unchanged, so single-row callers can still test for it with errors.Is.
+func scanSeries(row rowScanner) (models.Series, error) {
+	var s models.Series
+	var monitored int
+	var genreOverride sql.NullString
+	if err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &genreOverride, &s.CreatedAt); err != nil {
+		return models.Series{}, fmt.Errorf("scan series: %w", err)
+	}
+	s.Monitored = monitored == 1
+	if err := applyGenreOverride(&s, genreOverride); err != nil {
+		return models.Series{}, err
+	}
+	return s, nil
+}
+
 // applyGenreOverride decodes the nullable genre_override column onto s. A NULL
 // column means no override; a non-NULL empty array deliberately means "keep
 // genres empty and locked", which is why GenreOverrideSet is tracked
@@ -419,22 +433,12 @@ func (r *SeriesRepo) GetByID(ctx context.Context, id int64) (*models.Series, err
 // GetByIDForUser is GetByID with per-user book scoping (#1457) — see
 // ListWithBooksForUser for the semantics.
 func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*models.Series, error) {
-	row := r.db.QueryRowContext(ctx,
-		"SELECT id, foreign_id, title, description, monitored, genre_override, created_at FROM series WHERE id=?", id)
-
-	var s models.Series
-	var monitored int
-	var genreOverride sql.NullString
-	err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &genreOverride, &s.CreatedAt)
-	s.Monitored = monitored == 1
+	s, err := scanSeries(r.db.QueryRowContext(ctx, "SELECT "+seriesColumns+" FROM series WHERE id=?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get series %d: %w", id, err)
-	}
-	if err := applyGenreOverride(&s, genreOverride); err != nil {
-		return nil, err
 	}
 
 	// Fetch series books with minimal book data, scoped to the caller's
@@ -452,7 +456,7 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 		ORDER BY sb.position_in_series`
 	bookRows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return &s, nil
+		return nil, fmt.Errorf("get series %d books: %w", id, err)
 	}
 	defer bookRows.Close()
 
@@ -811,12 +815,8 @@ func (r *SeriesRepo) DeleteHardcoverLink(ctx context.Context, seriesID int64) er
 // with that id, or the series it was merged into (#2554). It resolves through
 // seriesByForeignIDSQL, the one place a provider id is looked up.
 func (r *SeriesRepo) GetByForeignID(ctx context.Context, foreignID string) (*models.Series, error) {
-	row := r.exec.QueryRowContext(ctx,
-		"SELECT id, foreign_id, title, description, monitored, created_at FROM series WHERE id = ("+seriesByForeignIDSQL+")", foreignID, foreignID)
-	var s models.Series
-	var monitored int
-	err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &s.CreatedAt)
-	s.Monitored = monitored == 1
+	s, err := scanSeries(r.exec.QueryRowContext(ctx,
+		"SELECT "+seriesColumns+" FROM series WHERE id = ("+seriesByForeignIDSQL+")", foreignID, foreignID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
