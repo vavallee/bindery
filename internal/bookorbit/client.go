@@ -56,6 +56,10 @@ type APIError struct {
 	// body carried one.
 	Code    string
 	Message string
+	// PlainHTTPToHTTPS is set when the body is a web server's complaint
+	// that a plain http request reached its https port, so the base URL
+	// should start with https://.
+	PlainHTTPToHTTPS bool
 }
 
 func (e *APIError) Error() string {
@@ -467,6 +471,7 @@ func decodeAPIError(resp *http.Response) *APIError {
 		Message   json.RawMessage `json:"message"`
 	}
 	if json.Unmarshal(body, &payload) != nil {
+		out.PlainHTTPToHTTPS = resp.StatusCode == http.StatusBadRequest && looksLikePlainHTTPToHTTPS(body)
 		return out
 	}
 	out.Code = payload.ErrorCode
@@ -484,6 +489,14 @@ func decodeAPIError(resp *http.Response) *APIError {
 		out.Message = out.Message[:300]
 	}
 	return out
+}
+
+// looksLikePlainHTTPToHTTPS spots the 400 page Go ("Client sent an HTTP
+// request to an HTTPS server") and nginx ("The plain HTTP request was sent to
+// HTTPS port") send when a plain http request reaches a TLS listener.
+func looksLikePlainHTTPToHTTPS(body []byte) bool {
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "http request") && strings.Contains(lower, "https")
 }
 
 func isTimeout(err error) bool {

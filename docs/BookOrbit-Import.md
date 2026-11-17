@@ -16,7 +16,7 @@ BookOrbit has static API keys from the version that added **Settings > You > API
 
 Create a key with:
 
-- **Access: Read.** The import only reads.
+- **Access: Read only.** The import only reads.
 - **No extra permissions.**
 - **Libraries: only the ones you want imported.** A key limited to those libraries cannot see the rest, whatever Bindery is told.
 
