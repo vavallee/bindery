@@ -397,7 +397,16 @@ func (i *Importer) enrichAuthor(ctx context.Context, cfg ImportConfig, item Norm
 		return metadataMergeResult{}, nil
 	}
 	if ambiguous {
-		return metadataMergeResult{Messages: []string{"author relink skipped: upstream author match was ambiguous"}}, nil
+		// Ambiguity only matters to an author that was waiting for a provider
+		// identity. One that already has its own is not asking to be relinked,
+		// so saying the match was unclear would only read as a fault, on every
+		// book it has.
+		if !models.CanReplaceAuthorIdentity(author) {
+			slog.Debug("abs import: author lookup ambiguous, author already has a provider identity",
+				"author", item.Authors[0].Name, "foreignId", author.ForeignID)
+			return metadataMergeResult{}, nil
+		}
+		return metadataMergeResult{Messages: []string{authorAmbiguousMessage}}, nil
 	}
 	if full == nil {
 		return metadataMergeResult{}, nil
@@ -596,6 +605,30 @@ func (i *Importer) reloadAuthor(ctx context.Context, author *models.Author) erro
 	return nil
 }
 
+// What a user reads when a lookup found several equally good upstream records
+// for something that has no provider identity yet. Nothing failed: the item
+// imported and was left with the details the source gave it.
+const (
+	authorAmbiguousMessage = "author not linked to a metadata provider: several providers' authors match this name equally well, so none was picked"
+	bookAmbiguousMessage   = "book not linked to a metadata provider: several works by this author share its title, so none was picked"
+)
+
+// bookWantsProviderIdentity reports whether book still carries the placeholder
+// identity an import gives it, as opposed to one a metadata provider (or the
+// user) set.
+func bookWantsProviderIdentity(book *models.Book) bool {
+	if book == nil {
+		return false
+	}
+	foreignID := strings.ToLower(strings.TrimSpace(book.ForeignID))
+	provider := strings.ToLower(strings.TrimSpace(book.MetadataProvider))
+	return foreignID == "" ||
+		strings.HasPrefix(foreignID, "abs:") ||
+		strings.HasPrefix(foreignID, "calibre:") ||
+		provider == providerAudiobookshelf ||
+		provider == "calibre"
+}
+
 func (i *Importer) enrichBook(ctx context.Context, cfg ImportConfig, item NormalizedLibraryItem, author *models.Author, book *models.Book) (metadataMergeResult, error) {
 	if i.meta == nil || book == nil {
 		return metadataMergeResult{}, nil
@@ -619,7 +652,15 @@ func (i *Importer) enrichBook(ctx context.Context, cfg ImportConfig, item Normal
 		return metadataMergeResult{}, nil
 	}
 	if ambiguous {
-		return metadataMergeResult{Messages: []string{"book relink skipped: upstream book match was ambiguous"}}, nil
+		// As for authors: only a book still wearing the importer's placeholder
+		// id is waiting for a provider identity, so only it has anything to
+		// report. A book that already has one is left alone without a word.
+		if !bookWantsProviderIdentity(book) {
+			slog.Debug("abs import: book lookup ambiguous, book already has a provider identity",
+				"title", item.Title, "foreignId", book.ForeignID)
+			return metadataMergeResult{}, nil
+		}
+		return metadataMergeResult{Messages: []string{bookAmbiguousMessage}}, nil
 	}
 	if full == nil {
 		return metadataMergeResult{}, nil
@@ -869,7 +910,7 @@ func (i *Importer) lookupUpstreamBook(ctx context.Context, author *models.Author
 	return match, "title", false, nil
 }
 
-func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64, author *models.Author, item NormalizedLibraryItem, allowCreate bool) (*bookUpsertResult, bool, bool, metadataMergeResult, error) {
+func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64, author *models.Author, item NormalizedLibraryItem, allowCreate bool, stats *ImportStats) (*bookUpsertResult, bool, bool, metadataMergeResult, error) {
 	title := strings.TrimSpace(item.Title)
 	if title == "" {
 		return nil, false, false, metadataMergeResult{}, errors.New("item title is empty")
@@ -972,7 +1013,11 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 		return &bookUpsertResult{row: existing, matchedBy: "file_path"}, false, true, metaResult, err
 	}
 
-	match, ambiguous, err := i.findBookByNormalizedTitle(ctx, author.ID, item.Title, item.Series)
+	var planned []*plannedBook
+	if cfg.DryRun {
+		planned = stats.dryRunBooksFor(author)
+	}
+	match, ambiguous, err := i.findBookByNormalizedTitle(ctx, author.ID, item.Title, item.Series, planned...)
 	if err != nil {
 		return nil, false, false, metadataMergeResult{}, err
 	}
@@ -1007,7 +1052,7 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 
 	if cfg.DryRun {
 		_ = i.recordRunEntity(ctx, runID, cfg, item.LibraryID, item.ItemID, entityTypeBook, externalID, 0, itemOutcomeCreated, nil)
-		return &bookUpsertResult{row: &models.Book{
+		plannedBook := &models.Book{
 			ForeignID:        fid,
 			AuthorID:         author.ID,
 			Title:            title,
@@ -1024,7 +1069,9 @@ func (i *Importer) upsertBook(ctx context.Context, cfg ImportConfig, runID int64
 			DurationSeconds:  int(math.Round(item.DurationSeconds)),
 			ASIN:             isbnutil.NormalizeASIN(item.ASIN),
 			MetadataProvider: providerAudiobookshelf,
-		}, matchedBy: "created"}, true, false, metadataMergeResult{}, nil
+		}
+		stats.rememberDryRunBook(author, plannedBook, item.Series)
+		return &bookUpsertResult{row: plannedBook, matchedBy: "created"}, true, false, metadataMergeResult{}, nil
 	}
 
 	book := &models.Book{
@@ -1210,7 +1257,7 @@ func (i *Importer) applyLinkedBookFields(ctx context.Context, book *models.Book,
 // volume of one of the incoming series* (same series title, both sequence
 // numbers present and unequal) is a distinct work and is dropped before the
 // match/ambiguous decision, so the create path runs for it.
-func (i *Importer) findBookByNormalizedTitle(ctx context.Context, authorID int64, title string, incomingSeries []NormalizedSeries) (*models.Book, bool, error) {
+func (i *Importer) findBookByNormalizedTitle(ctx context.Context, authorID int64, title string, incomingSeries []NormalizedSeries, planned ...*plannedBook) (*models.Book, bool, error) {
 	books, err := i.books.FindAllByAuthorAndDedupKey(ctx, authorID, title)
 	if err != nil {
 		return nil, false, err
@@ -1228,6 +1275,13 @@ func (i *Importer) findBookByNormalizedTitle(ctx context.Context, authorID int64
 		}
 		books = filtered
 	}
+	// A dry run writes nothing, so the books an earlier item of the same run
+	// would have created are not in the database. They join the candidates
+	// here, tiered and filtered as stored rows are, so the preview matches
+	// the way the real run will.
+	if len(planned) > 0 {
+		books = mergePlannedCandidates(books, planned, title, incomingSeries)
+	}
 	switch len(books) {
 	case 0:
 		return nil, false, nil
@@ -1237,6 +1291,36 @@ func (i *Importer) findBookByNormalizedTitle(ctx context.Context, authorID int64
 	default:
 		return nil, true, nil
 	}
+}
+
+// mergePlannedCandidates adds the planned (dry run only) books that describe
+// the same work as title to the stored candidates, keeping the stored lookup's
+// rule that an exact title match shadows a subtitle-divergent one.
+func mergePlannedCandidates(stored []models.Book, planned []*plannedBook, title string, incomingSeries []NormalizedSeries) []models.Book {
+	var exact, near []models.Book
+	for _, b := range stored {
+		switch indexer.CompareTitles(title, b.Title) {
+		case indexer.TitlesSame:
+			exact = append(exact, b)
+		case indexer.TitlesNeedCorroboration:
+			near = append(near, b)
+		}
+	}
+	for _, p := range planned {
+		if len(incomingSeries) > 0 && seriesConflictWith(p.seriesTitle, p.seriesSequence, incomingSeries) {
+			continue
+		}
+		switch indexer.CompareTitles(title, p.book.Title) {
+		case indexer.TitlesSame:
+			exact = append(exact, *p.book)
+		case indexer.TitlesNeedCorroboration:
+			near = append(near, *p.book)
+		}
+	}
+	if len(exact) > 0 {
+		return exact
+	}
+	return near
 }
 
 // candidateSeriesConflicts reports whether an existing local book is a different
@@ -1254,10 +1338,17 @@ func (i *Importer) candidateSeriesConflicts(ctx context.Context, bookID int64, i
 	if err != nil {
 		return false, err
 	}
+	return seriesConflictWith(candTitle, candPos, incoming), nil
+}
+
+// seriesConflictWith is the pure half of candidateSeriesConflicts: a candidate
+// whose primary series is candTitle at candPos conflicts with an incoming
+// series of the same name at a different, non-blank sequence.
+func seriesConflictWith(candTitle, candPos string, incoming []NormalizedSeries) bool {
 	candTitle = strings.TrimSpace(candTitle)
 	candPos = strings.TrimSpace(candPos)
 	if candTitle == "" || candPos == "" {
-		return false, nil
+		return false
 	}
 	for _, s := range incoming {
 		name := strings.TrimSpace(s.Name)
@@ -1266,10 +1357,10 @@ func (i *Importer) candidateSeriesConflicts(ctx context.Context, bookID int64, i
 			continue
 		}
 		if strings.EqualFold(name, candTitle) && !sequencesEqual(seq, candPos) {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // sequencesEqual compares two series sequence strings. Numerically equal values

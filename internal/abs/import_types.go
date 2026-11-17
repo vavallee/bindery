@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -136,6 +137,7 @@ type ImportStats struct {
 	dryRunSeriesExternalIDs map[string]struct{}
 	dryRunSeriesTitles      map[string]struct{}
 	dryRunSeriesMemberships map[string]struct{}
+	dryRunBooks             map[string][]*plannedBook
 }
 
 type ImportSourceSnapshot struct {
@@ -285,6 +287,48 @@ func (s *ImportStats) dryRunAuthorAlreadyPlanned(name string) bool {
 	}
 	s.dryRunAuthors[key] = struct{}{}
 	return false
+}
+
+// plannedBook is a book a dry run would have created, kept so a later item of
+// the same run can match it as it would match the stored row in a real run.
+type plannedBook struct {
+	book *models.Book
+	// seriesTitle and seriesSequence are the book's primary series, which the
+	// real run reads back from the database to tell volumes apart.
+	seriesTitle    string
+	seriesSequence string
+}
+
+// dryRunAuthorKey names an author for the planned books. A real author is its
+// id; one the dry run would create has none yet, so its name stands in.
+func dryRunAuthorKey(author *models.Author) string {
+	if author.ID != 0 {
+		return "id:" + strconv.FormatInt(author.ID, 10)
+	}
+	return "new:" + normalizeAuthorName(author.Name)
+}
+
+func (s *ImportStats) dryRunBooksFor(author *models.Author) []*plannedBook {
+	if s == nil || author == nil {
+		return nil
+	}
+	return s.dryRunBooks[dryRunAuthorKey(author)]
+}
+
+func (s *ImportStats) rememberDryRunBook(author *models.Author, book *models.Book, series []NormalizedSeries) {
+	if s == nil || author == nil || book == nil {
+		return
+	}
+	planned := &plannedBook{book: book}
+	if len(series) > 0 {
+		planned.seriesTitle = series[0].Name
+		planned.seriesSequence = series[0].Sequence
+	}
+	if s.dryRunBooks == nil {
+		s.dryRunBooks = make(map[string][]*plannedBook)
+	}
+	key := dryRunAuthorKey(author)
+	s.dryRunBooks[key] = append(s.dryRunBooks[key], planned)
 }
 
 func (s ImportStats) String() string {

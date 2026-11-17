@@ -783,7 +783,7 @@ func (i *Importer) importOne(ctx context.Context, cfg ImportConfig, runID int64,
 		i.recordSecondaryAuthors(ctx, author.ID, item.Authors[1:], matcher)
 	}
 
-	bookResult, created, linked, bookMeta, err := i.upsertBook(ctx, cfg, runID, author, item, allowCreate)
+	bookResult, created, linked, bookMeta, err := i.upsertBook(ctx, cfg, runID, author, item, allowCreate, stats)
 	if err != nil {
 		var reviewErr reviewRequiredError
 		if errors.As(err, &reviewErr) {
