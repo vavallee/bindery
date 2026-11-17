@@ -55,3 +55,19 @@ export async function confirmPackGrab(
     confirmLabel: t('search.pack.confirm'),
   })
 }
+
+/**
+ * The sentence to show for a failed grab. Uses the server's own message when it
+ * sent one. A proxy answer (an empty 503, an HTML error page) has no message,
+ * and the status text of an HTTP/2 response is empty, so without this the error
+ * state was set to "" and nothing rendered. A network failure surfaces from
+ * fetch as a TypeError and gets its own plain sentence.
+ */
+export function grabErrorText(err: unknown, t: TFunction): string {
+  if (err instanceof ApiError) {
+    return err.message.trim() || t('search.grabFailedStatus', { status: err.status })
+  }
+  if (err instanceof TypeError) return t('search.grabFailedNetwork')
+  if (err instanceof Error && err.message.trim()) return err.message
+  return t('search.grabFailed', 'Grab failed')
+}

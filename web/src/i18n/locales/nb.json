@@ -2679,8 +2679,8 @@
       "authorProgress": "{{imported}} av {{total}} bøker er her"
     },
     "confirm": {
-      "bookHint": "En administrator ser på forespørselen din og legger til boken hvis den blir godkjent. Du kan følge med under Mine forespørsler.",
-      "authorHint": "En administrator ser på forespørselen din og legger til bøkene til denne forfatteren hvis den blir godkjent. Du kan følge med under Mine forespørsler.",
+      "bookHint": "En administrator godkjenner forespørselen din, eller kontoen din godkjenner den automatisk hvis automatisk godkjenning er på. Du kan følge med under Mine forespørsler.",
+      "authorHint": "En administrator godkjenner forespørselen din, eller kontoen din godkjenner den automatisk hvis automatisk godkjenning er på. Du kan følge med under Mine forespørsler.",
       "format": "Format",
       "formatLabel": "Format du vil be om",
       "anyFormat": "Valgfritt format",

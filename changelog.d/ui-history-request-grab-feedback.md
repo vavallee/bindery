@@ -1,0 +1,2 @@
+### Fixed
+- **Clearer History, request and grab messages.** The History section on a book page now names every event instead of showing a raw name like downloadFolderImported, marks a held drop as held, and shows the reason on failed imports and downloads. The request dialog hint no longer promises that an admin always decides, since an account with auto approve on adds the book on its own. A manual grab that fails now says so next to the results, with the server's message or the status code, instead of doing nothing.

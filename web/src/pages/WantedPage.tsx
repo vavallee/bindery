@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, Book, SearchResult } from '../api/client'
 import { useConfirmDialog } from '../components/useConfirmDialog'
-import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
+import { confirmPackGrab, grabErrorText, grabWithForceConfirm } from '../util/forceGrab'
 import { calendarYear, formatCalendarDate } from '../util/calendarDate'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
@@ -232,7 +232,7 @@ export default function WantedPage() {
         load()
       }, 1200)
     } catch (err: unknown) {
-      alert(errorText(err, t('wanted.grabFailed', 'Grab failed')))
+      alert(grabErrorText(err, t))
     } finally {
       setGrabbingGuid(null)
     }

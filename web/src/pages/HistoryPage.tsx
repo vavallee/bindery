@@ -10,6 +10,7 @@ import { SkeletonRows } from '../components/Skeleton'
 import EmptyState from '../components/EmptyState'
 import { decodeEntities } from '../util/decodeEntities'
 import RejectImportDialog from '../components/RejectImportDialog'
+import { humanizeEventType, isHeldEvent, parseEventData } from '../util/historyEvents'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
   grabbed: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
@@ -27,14 +28,6 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   importRejected: 'bg-red-500/20 text-red-800 dark:text-red-400',
 }
 
-// humanizeEventType turns a camelCase event enum into a Title Case fallback
-// ("downloadFailed" -> "Download Failed") for any type without a curated i18n
-// label, so a newly-added event type never renders as a raw identifier.
-function humanizeEventType(type: string): string {
-  const spaced = type.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
-}
-
 function formatDate(s: string) {
   return new Date(s).toLocaleString(undefined, {
     year: 'numeric', month: 'short', day: 'numeric',
@@ -42,23 +35,10 @@ function formatDate(s: string) {
   })
 }
 
-function parseEventData(data: string): { message?: string; path?: string; size?: number; [k: string]: unknown } {
-  if (!data) return {}
-  try { return JSON.parse(data) } catch { return {} }
-}
-
 // Detail line shown under the source title. Most events carry a `message` or a
 // `path`; a language correction carries `from`/`to` ISO codes, which only mean
 // anything shown together.
 type Translate = (key: string, opts?: Record<string, unknown>) => string
-
-// Pair gating parks the first format to finish and records it as a
-// downloadFolderImported event with mode "drop-hold" (status importHeld).
-// Nothing has been dropped at that point, so the row must not read as an
-// import. The event type stays the same for the filter.
-function isHeldEvent(type: string, parsed: ReturnType<typeof parseEventData>): boolean {
-  return type === 'downloadFolderImported' && (parsed.mode === 'drop-hold' || parsed.status === 'importHeld')
-}
 
 function eventDetail(type: string, parsed: ReturnType<typeof parseEventData>, t: Translate): string {
   if (isHeldEvent(type, parsed)) return t('history.heldDetail')

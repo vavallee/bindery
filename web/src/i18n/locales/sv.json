@@ -1841,8 +1841,8 @@
       "authorProgress": "{{imported}} av {{total}} böcker finns här"
     },
     "confirm": {
-      "bookHint": "En administratör går igenom din förfrågan och lägger till boken om den godkänns. Du kan följa den under Mina förfrågningar.",
-      "authorHint": "En administratör går igenom din förfrågan och lägger till författarens böcker om den godkänns. Du kan följa den under Mina förfrågningar.",
+      "bookHint": "En administratör godkänner din förfrågan, eller så godkänner ditt konto den automatiskt om automatiskt godkännande är på. Du kan följa den under Mina förfrågningar.",
+      "authorHint": "En administratör godkänner din förfrågan, eller så godkänner ditt konto den automatiskt om automatiskt godkännande är på. Du kan följa den under Mina förfrågningar.",
       "format": "Format",
       "formatLabel": "Format att begära",
       "anyFormat": "Valfritt format",
