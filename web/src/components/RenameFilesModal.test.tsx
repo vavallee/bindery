@@ -174,7 +174,7 @@ describe('RenameFilesModal', () => {
       ])('%j', async (formats, text) => {
         previewMock.mockResolvedValue(withFormats(formats))
         render(<RenameFilesModal scope="library" label="your library" onClose={() => {}} />)
-        expect(await screen.findByText(new RegExp(text.replace(/[.]/g, '\\.')))).toBeInTheDocument()
+        expect((await screen.findByRole('alert')).textContent).toContain(text)
       })
 
       it('does not name the audiobook rows when only ebooks are External', async () => {
