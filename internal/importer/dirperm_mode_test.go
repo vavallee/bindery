@@ -36,8 +36,8 @@ func TestPlacementHonorsDirMode(t *testing.T) {
 		authorDir := filepath.Join(base, "library", "Sarah J. Maas")
 		dst := filepath.Join(authorDir, "A Court of Thorns and Roses (2013)", "book.epub")
 
-		if err := MoveFile(src, dst); err != nil {
-			t.Fatalf("MoveFile: %v", err)
+		if err := MoveFileCtx(t.Context(), src, dst); err != nil {
+			t.Fatalf("MoveFileCtx: %v", err)
 		}
 
 		for _, dir := range []string{authorDir, filepath.Dir(dst)} {
@@ -86,9 +86,7 @@ func TestPlacementModesWithClearedUmask(t *testing.T) {
 		name string
 		fn   func(src, dst string) error
 	}{
-		{"MoveFile", func(src, dst string) error { return MoveFile(src, dst) }},
 		{"MoveFileCtx", func(src, dst string) error { return MoveFileCtx(context.Background(), src, dst) }},
-		{"CopyFile", func(src, dst string) error { return CopyFile(src, dst) }},
 		{"CopyFileCtx", func(src, dst string) error { return CopyFileCtx(context.Background(), src, dst) }},
 		{"HardlinkFile", func(src, dst string) error { return HardlinkFile(src, dst) }},
 		{"dropPlaceFile", func(src, dst string) error { return dropPlaceFile(context.Background(), src, dst, "copy") }},
@@ -116,7 +114,6 @@ func TestPlacementModesWithClearedUmask(t *testing.T) {
 		name string
 		fn   func(src, dst string) error
 	}{
-		{"MoveDir", func(src, dst string) error { return MoveDir(src, dst) }},
 		{"MoveDirCtx", func(src, dst string) error { return MoveDirCtx(context.Background(), src, dst) }},
 		{"CopyDirCtx", func(src, dst string) error { return CopyDirCtx(context.Background(), src, dst) }},
 		{"HardlinkDir", func(src, dst string) error { return HardlinkDir(src, dst) }},

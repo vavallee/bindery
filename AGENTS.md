@@ -10,6 +10,8 @@ A single-binary book download manager (Readarr replacement) — Go 1.26 backend 
 
 ```
 cmd/bindery/         entry point, healthcheck / migrate / reconcile-series subcommands
+cmd/telemetry-server/ anonymous install-count ping service (own Dockerfile)
+cmd/discord-stats/   one-shot CronJob that renames Discord stat channels
 internal/api/        chi HTTP handlers — one file per resource, *_test.go alongside
 internal/auth/       argon2id passwords, HMAC sessions, OIDC, proxy auth
 internal/db/         sqlite repository layer + migrations (use db.OpenMemory in tests)
@@ -19,8 +21,11 @@ internal/webui/      go:embed wrapper for web/dist
 web/                 React 19 + TS + Tailwind, Vite, vitest
 charts/bindery/      Helm chart (image tag auto-bumped by CI)
 docs/                deployment, ABS import, hardcover, calibre, roadmap
-tests/{smoke,predeploy,abscontract,security}/
-                     out-of-process suites
+tests/{smoke,predeploy,abscontract}/
+                     out-of-process suites, each run by its own make target
+tests/{integration,security}/
+                     in-process suites, part of `make test`
+tests/canary/        live-provider tests behind `//go:build canary`, nightly only
 ```
 
 ## Commands you will actually run
@@ -56,7 +61,7 @@ Before reporting work complete, run the relevant subset — see the **`testing`*
 
 **Frontend**
 
-- React 19 + TypeScript strict + Tailwind. ESLint 9 flat config in `web/eslint.config.js`.
+- React 19 + TypeScript strict + Tailwind. ESLint 10 flat config in `web/eslint.config.js`.
 - Pages live in `web/src/pages`, shared components in `web/src/components`, API client in `web/src/api`. i18n keys in `web/src/i18n` — every user-facing string flows through `useTranslation`.
 
 Test patterns (`db.OpenMemory`, `httptest`, `vitest` + `@testing-library/react`) and the rule that tests are required for new handlers / domain logic / components-with-logic are documented in the **`testing`** skill.
@@ -66,7 +71,7 @@ Test patterns (`db.OpenMemory`, `httptest`, `vitest` + `@testing-library/react`)
 - **Migrations** are forward-only. Add a new file in `internal/db/migrations/` — never edit a migration that has shipped.
 - **Schema drift in tests** — tests run real migrations against `db.OpenMemory`. If a migration fails, every test in the package fails; check there first.
 - **`internal/webui/dist/`** is generated; `make build` copies `web/dist/*` into it before `go build`. Don't commit changes to it; `web/` is the source of truth.
-- **CHANGELOG.md** is authored at release time only — see the **`tag-release`** skill. Don't add `[Unreleased]` entries during feature work; CI only validates that a `## [vX.Y.Z]` section exists at tag time.
+- **CHANGELOG.md** is assembled at release time only — see the **`tag-release`** skill. During feature work, add one fragment under `changelog.d/` per PR instead (format in [changelog.d/README.md](changelog.d/README.md)); don't edit `CHANGELOG.md` or add `[Unreleased]` entries. CI only validates that a `## [vX.Y.Z]` section exists at tag time.
 - **Helm `values.yaml`** image tag is set by CI at each `v*` release with `[skip ci]`. Don't hand-edit it.
 - **Secrets in source are blocked** by gitleaks + GitHub Push Protection. Use the SQLite-backed settings store (configured at runtime) for any credential — see `internal/auth` and `internal/config`.
 - **New dependencies need a licence check first.** Bindery is MIT and statically links everything, so a GPL/AGPL/SSPL/BUSL module makes the shipped binary undistributable under our own licence. Read the actual `LICENSE` in the module cache, not the ecosystem's reputation — both Go FuzzyWuzzy ports are GPL-3.0, and one shipped in MIT binaries for months (#1988). Don't copy dependency choices from the *arr projects; they are GPL-3.0 and the same choice is safe for them.
@@ -79,11 +84,12 @@ Test patterns (`db.OpenMemory`, `httptest`, `vitest` + `@testing-library/react`)
 3. **Implement** — keep diffs narrow. CONTRIBUTING.md §"Pull request flow" is explicit: this project prefers tightening the diff over surrounding cleanup.
 4. **Test** as you go. The **`testing`** skill covers patterns and the pre-PR matrix; **`smoke-testing`** covers when to escalate to out-of-process suites.
 5. **Update docs** as part of the *commit*: `docs/` and `README.md` are maintained at every commit (full matrix in the **`commits`** skill). `CHANGELOG.md` is release-time only — leave it alone (see **`tag-release`**).
-6. **Commit and open the PR** — see **`commits`** for the message format and branch naming, **`prs`** for the PR body skeleton, issue templates, and PR mechanics (draft → ready → squash-on-merge).
+6. **Add a changelog fragment** under `changelog.d/` for any user-visible change — one file per PR, format in [changelog.d/README.md](changelog.d/README.md), preview with `make changelog`.
+7. **Commit and open the PR** — see **`commits`** for the message format and branch naming, **`prs`** for the PR body skeleton, issue templates, and PR mechanics (draft → ready → squash-on-merge).
 
 ## Out of scope for agents
 
-- **Releases.** Do not push tags (`v*`) — that triggers GoReleaser + provenance signing. The maintainer cuts releases. The **`tag-release`** skill drafts release artifacts (CHANGELOG section, version bump) for the maintainer to review before they tag.
+- **Releases.** Do not push `v*` tags outside the **`tag-release`** skill, and run that only when the maintainer asks for a release. A `v*` tag deploys automatically: it triggers GoReleaser + provenance signing, a public GitHub Release and Discord post, and `deploy-prod`. There is no manual promotion step after the tag.
 - **`[skip ci]` commits.** Reserved for the deploy bot; human and agent commits must go through CI.
 - **Security advisories.** If you find a vulnerability, surface it to the user — do not file a public issue. The disclosure flow is in [SECURITY.md](SECURITY.md).
 - **Force-push, history rewrites, branch deletion** without explicit user instruction.
@@ -99,7 +105,11 @@ The repo's `.claude/skills/` directory holds task-triggered skills for Claude-fo
 | [`smoke-testing`](.claude/skills/smoke-testing/SKILL.md) | Deciding whether to run an out-of-process suite — picks between `make smoke`, `make abs-contract`, `make predeploy-smoke` |
 | [`commits`](.claude/skills/commits/SKILL.md) | Picking a branch name, staging, or writing a commit message — branches, Conventional Commits format, doc-update gate |
 | [`prs`](.claude/skills/prs/SKILL.md) | Opening / updating a PR, responding to review, filing an issue — PR body skeleton, PR mechanics, issue templates |
-| [`tag-release`](.claude/skills/tag-release/SKILL.md) | Cutting a release — composing the `## [vX.Y.Z]` CHANGELOG section and walking commits since the last tag (authoring only; maintainer pushes the tag) |
+| [`tag-release`](.claude/skills/tag-release/SKILL.md) | Cutting a release — composing the `## [vX.Y.Z]` CHANGELOG section, walking commits since the last tag, and pushing the tag (which deploys) |
+| [`fix-issue`](.claude/skills/fix-issue/SKILL.md) | Invoked by hand (`/fix-issue <n>`) — fix one GitHub issue end-to-end into a PR |
+| [`autofix`](.claude/skills/autofix/SKILL.md) | Invoked by hand — fix one confirmed bug headless and leave a branch plus `PR_BODY.md`; commit and push happen outside it |
+| [`triage`](.claude/skills/triage/SKILL.md) | Invoked by hand — sweep open issues and PRs and propose a work queue |
+| [`discord-reports`](.claude/skills/discord-reports/SKILL.md) | Invoked by hand — turn Discord bug reports into GitHub issues |
 
 Non-Claude agents that can't auto-load `SKILL.md` files should read the bodies under `.claude/skills/<name>/SKILL.md` directly when a trigger condition fires.
 

@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenamerDestPath(t *testing.T) {
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	releaseDate := time.Date(2016, 7, 26, 0, 0, 0, 0, time.UTC)
 
 	author := &models.Author{Name: "Test Author"}
@@ -30,7 +30,7 @@ func TestRenamerDestPath(t *testing.T) {
 }
 
 func TestRenamerNoYear(t *testing.T) {
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	author := &models.Author{Name: "Author"}
 	book := &models.Book{Title: "Book Title"}
 
@@ -45,7 +45,7 @@ func TestRenamerNoYear(t *testing.T) {
 }
 
 func TestRenamerSanitizesPath(t *testing.T) {
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	author := &models.Author{Name: "Author: Bad/Name"}
 	book := &models.Book{Title: "Title? With <Bad> Chars"}
 
@@ -76,7 +76,7 @@ func stringContains(s, sub string) bool {
 }
 
 func TestRenamerASINToken(t *testing.T) {
-	r := NewRenamer("{Author}/{ASIN} - {Title}.{ext}")
+	r := NewRenamerWithAudiobook("{Author}/{ASIN} - {Title}.{ext}", "")
 	releaseDate := time.Date(2016, 1, 1, 0, 0, 0, 0, time.UTC)
 	author := &models.Author{Name: "Mary Doria Russell"}
 	book := &models.Book{
@@ -97,7 +97,7 @@ func TestRenamerASINToken(t *testing.T) {
 
 func TestRenamerASINTokenEmpty(t *testing.T) {
 	// {ASIN} with no ASIN on the book should produce an empty segment
-	r := NewRenamer("{ASIN}/{Title}.{ext}")
+	r := NewRenamerWithAudiobook("{ASIN}/{Title}.{ext}", "")
 	author := &models.Author{Name: "Author"}
 	book := &models.Book{Title: "Some Book"}
 
@@ -112,7 +112,7 @@ func TestRenamerASINTokenEmpty(t *testing.T) {
 }
 
 func TestRenamerSeriesTokens(t *testing.T) {
-	r := NewRenamer("{Author}/{Series}/{SeriesNumber} - {Title}.{ext}")
+	r := NewRenamerWithAudiobook("{Author}/{Series}/{SeriesNumber} - {Title}.{ext}", "")
 	releaseDate := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	author := &models.Author{Name: "Frank Herbert"}
 	book := &models.Book{Title: "Dune", ReleaseDate: &releaseDate}
@@ -158,7 +158,7 @@ func TestRenamerSeriesTokensEmpty(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := NewRenamer(tc.template)
+			r := NewRenamerWithAudiobook(tc.template, "")
 			got, err := r.DestPath("/books", author, book, "", "", "book.epub")
 			if err != nil {
 				t.Fatalf("DestPath: %v", err)
@@ -207,7 +207,7 @@ func TestRenamerGenreToken(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := NewRenamer(tc.template)
+			r := NewRenamerWithAudiobook(tc.template, "")
 			book := &models.Book{Title: "Dune", Genres: tc.genres}
 			got, err := r.DestPath("/books", author, book, "", "", "book.epub")
 			if err != nil {
@@ -245,7 +245,7 @@ func TestMoveFile(t *testing.T) {
 
 	dstPath := filepath.Join(tmpDir, "dest", "subdir", "moved.epub")
 
-	err := MoveFile(srcPath, dstPath)
+	err := MoveFileCtx(t.Context(), srcPath, dstPath)
 	if err != nil {
 		t.Fatalf("move: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestUniqueDir(t *testing.T) {
 // trailed under the naive flip too, so most of the affected names are stable
 // and only the leading-particle ones change.
 func TestRenamerSortAuthorFolder(t *testing.T) {
-	r := NewRenamer("{SortAuthor}/{Title}.{ext}")
+	r := NewRenamerWithAudiobook("{SortAuthor}/{Title}.{ext}", "")
 
 	cases := []struct {
 		name string

@@ -87,7 +87,7 @@ func TestRenamer_WindowsTrailingDots(t *testing.T) {
 	author := &models.Author{Name: "Stephen King"}
 	tmpl := "{Author}/{Title}/{Author} - {Title}.{ext}"
 
-	win, err := NewRenamer(tmpl).WithWindowsNames(true).DestPath("/lib", author, book, "", "", "x.epub")
+	win, err := NewRenamerWithAudiobook(tmpl, "").WithWindowsNames(true).DestPath("/lib", author, book, "", "", "x.epub")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestRenamer_WindowsTrailingDots(t *testing.T) {
 		t.Errorf("windows dest = %q, want %q", win, want)
 	}
 
-	posix, err := NewRenamer(tmpl).WithWindowsNames(false).DestPath("/lib", author, book, "", "", "x.epub")
+	posix, err := NewRenamerWithAudiobook(tmpl, "").WithWindowsNames(false).DestPath("/lib", author, book, "", "", "x.epub")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestRenamer_WindowsTrailingDots(t *testing.T) {
 	}
 
 	jr := &models.Author{Name: "Martin Luther King Jr."}
-	got, _ := NewRenamer("{Author}/{Title}.{ext}").WithWindowsNames(true).DestPath("/lib", jr, &models.Book{Title: "T"}, "", "", "x.epub")
+	got, _ := NewRenamerWithAudiobook("{Author}/{Title}.{ext}", "").WithWindowsNames(true).DestPath("/lib", jr, &models.Book{Title: "T"}, "", "", "x.epub")
 	if want := filepath.Join("/lib", "Martin Luther King Jr", "T.epub"); got != want {
 		t.Errorf("author ending in a dot: %q, want %q", got, want)
 	}
@@ -137,14 +137,14 @@ func TestRenamer_WindowsDotOnlySegmentKeepsPlaceholder(t *testing.T) {
 	book := &models.Book{Title: "..."}
 	author := &models.Author{Name: "Jane Doe"}
 	tmpl := "{Author}/{Title}/{Author} - {Title}.{ext}"
-	got, err := NewRenamer(tmpl).WithWindowsNames(true).DestPath("/lib", author, book, "", "", "x.epub")
+	got, err := NewRenamerWithAudiobook(tmpl, "").WithWindowsNames(true).DestPath("/lib", author, book, "", "", "x.epub")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := filepath.Join("/lib", "Jane Doe", "_", "Jane Doe - ....epub"); got != want {
 		t.Errorf("dest = %q, want %q", got, want)
 	}
-	posix, _ := NewRenamer(tmpl).WithWindowsNames(false).DestPath("/lib", author, book, "", "", "x.epub")
+	posix, _ := NewRenamerWithAudiobook(tmpl, "").WithWindowsNames(false).DestPath("/lib", author, book, "", "", "x.epub")
 	if want := filepath.Join("/lib", "Jane Doe", "...", "Jane Doe - ....epub"); posix != want {
 		t.Errorf("posix dest = %q, want %q", posix, want)
 	}
