@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
+
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -71,10 +73,8 @@ func TestCheckCompletedPathVisibility_Qbittorrent(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/auth/login":
-					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/torrents/categories":
 					_, _ = w.Write([]byte(tc.categories))
 				case "/api/v2/app/defaultSavePath":
@@ -82,8 +82,7 @@ func TestCheckCompletedPathVisibility_Qbittorrent(t *testing.T) {
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer srv.Close()
+			})
 
 			host, port := serverHostPort(t, srv.URL)
 			client := &models.DownloadClient{
@@ -120,10 +119,8 @@ func TestCheckCompletedPathVisibility_Qbittorrent(t *testing.T) {
 func TestCheckCompletedPathVisibility_GlobalRemapFallback(t *testing.T) {
 	visible := t.TempDir()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/categories":
 			_, _ = w.Write([]byte(`{"books":{"name":"books","savePath":"/remote/downloads"}}`))
 		case "/api/v2/app/defaultSavePath":
@@ -131,8 +128,7 @@ func TestCheckCompletedPathVisibility_GlobalRemapFallback(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{
@@ -158,10 +154,8 @@ func TestCheckCompletedPathVisibility_GlobalRemapFallback(t *testing.T) {
 // default save path itself and warned.
 func TestCheckCompletedPathVisibility_QbittorrentEmptyCategoryPath(t *testing.T) {
 	mounted := t.TempDir()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/categories":
 			_, _ = w.Write([]byte(`{"books":{"name":"books","savePath":""}}`))
 		case "/api/v2/app/defaultSavePath":
@@ -169,8 +163,7 @@ func TestCheckCompletedPathVisibility_QbittorrentEmptyCategoryPath(t *testing.T)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{
 		Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p",

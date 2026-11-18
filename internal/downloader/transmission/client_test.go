@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/downloader/rttest"
 )
 
 // newJSONDecoder is a wrapper so tests don't import encoding/json
@@ -596,11 +598,6 @@ func TestDoRequest_RejectsRedirectToDifferentTarget(t *testing.T) {
 	}
 }
 
-// roundTripFunc is a test helper that implements http.RoundTripper via a function.
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 // netTimeoutErr is a minimal net.Error that signals a timeout.
 type netTimeoutErr struct{}
 
@@ -627,7 +624,7 @@ func newTransportClient(transport http.RoundTripper) *Client {
 // network hint.
 func TestTest_DNSNotFound(t *testing.T) {
 	dnsErr := &net.DNSError{Name: "transmission-container", IsNotFound: true}
-	c := newTransportClient(roundTripFunc(func(*http.Request) (*http.Response, error) {
+	c := newTransportClient(rttest.Func(func(*http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("dial: %w", dnsErr)
 	}))
 
@@ -643,7 +640,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 
 // TestTest_ConnectionRefused verifies that ECONNREFUSED appends the port hint.
 func TestTest_ConnectionRefused(t *testing.T) {
-	c := newTransportClient(roundTripFunc(func(*http.Request) (*http.Response, error) {
+	c := newTransportClient(rttest.Func(func(*http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("dial tcp: %w", syscall.ECONNREFUSED)
 	}))
 
@@ -659,7 +656,7 @@ func TestTest_ConnectionRefused(t *testing.T) {
 
 // TestTest_Timeout verifies that a timeout error appends the firewall hint.
 func TestTest_Timeout(t *testing.T) {
-	c := newTransportClient(roundTripFunc(func(*http.Request) (*http.Response, error) {
+	c := newTransportClient(rttest.Func(func(*http.Request) (*http.Response, error) {
 		return nil, &netTimeoutErr{}
 	}))
 
