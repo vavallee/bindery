@@ -120,7 +120,12 @@ func (r *EditionRepo) Upsert(ctx context.Context, e *models.Edition) error {
 		monitored = 1
 	}
 
-	res, err := r.db.ExecContext(ctx, `
+	// RETURNING id names the row this statement inserted or updated. Reading
+	// LastInsertId instead is wrong on the update path: last_insert_rowid() is a
+	// per connection value a conflict update leaves alone, so it can hold the
+	// id of an unrelated earlier insert (#3978).
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO editions (foreign_id, book_id, title, isbn_13, isbn_10, asin,
 		                      publisher, publish_date, format, num_pages, language,
 		                      image_url, is_ebook, edition_info, monitored,
@@ -136,24 +141,16 @@ func (r *EditionRepo) Upsert(ctx context.Context, e *models.Edition) error {
 		    is_ebook    = excluded.is_ebook,
 		    image_url   = COALESCE(NULLIF(excluded.image_url, ''), editions.image_url),
 		    language    = excluded.language,
-		    updated_at  = excluded.updated_at`,
+		    updated_at  = excluded.updated_at
+		RETURNING id`,
 		e.ForeignID, e.BookID, e.Title, e.ISBN13, e.ISBN10, e.ASIN,
 		e.Publisher, timeArg(e.PublishDate), e.Format, e.NumPages, e.Language,
 		e.ImageURL, isEbook, e.EditionInfo, monitored, timeValueArg(now), timeValueArg(now),
-		encodeNarrators(e.Narrators), models.NormalizeEditionType(e.EditionType))
+		encodeNarrators(e.Narrators), models.NormalizeEditionType(e.EditionType)).Scan(&id)
 	if err != nil {
 		return fmt.Errorf("upsert edition %s: %w", e.ForeignID, err)
 	}
-	// ON CONFLICT UPDATE returns LastInsertId=0 on conflict; fetch the
-	// existing id explicitly in that case.
-	if id, _ := res.LastInsertId(); id > 0 {
-		e.ID = id
-	} else {
-		row := r.db.QueryRowContext(ctx, "SELECT id FROM editions WHERE foreign_id = ?", e.ForeignID)
-		if err := row.Scan(&e.ID); err != nil {
-			return fmt.Errorf("lookup upserted edition %s: %w", e.ForeignID, err)
-		}
-	}
+	e.ID = id
 	e.UpdatedAt = now
 	return nil
 }
