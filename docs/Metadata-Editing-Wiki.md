@@ -14,17 +14,23 @@ through the API, to change:
 | Description | |
 | Genres | Comma-separated; the first genre drives the `{Genre}` naming token |
 | Language | Language code, e.g. `en`, `it` — drives the `{Lang}` naming token |
-| Release date | `YYYY-MM-DD`, or clear it entirely |
+| Release date | `YYYY-MM-DD` (the API also takes the RFC 3339 timestamp it returns), or clear it entirely |
 | Series | The author's series, with a position; admin only. See [Fixing one book's series](Hardcover-Series-Wiki.md#fixing-one-books-series) |
-| Narrator | API only; not in the edit dialog |
-| Duration | API only (`durationSeconds`, whole seconds; `0` means not set and is ignored) |
+| Narrator | API only; not in the edit dialog; at most 1000 bytes |
+| Duration | API only (`durationSeconds`, whole seconds, at most 3600000 (1000 hours); `0` means not set and is ignored, so a duration cannot be cleared this way) |
 | ASIN | The ASIN box on the book page, or the API; normalized to upper case, ten letters or digits |
 
-Every field you edit is **locked**: the scheduled metadata refresh, the
-author-works sync, Audnex enrichment, Hardcover hydration and
-Audiobookshelf/Calibre re-imports keep your value instead of overwriting
-it. A lock also stops those paths *filling* the field when you cleared it
-on purpose. Locked fields show a 🔒 badge in the edit dialog for title, description,
+Every field you change is **locked**: the scheduled metadata refresh, the
+author-works sync, Audnex enrichment and Hardcover hydration keep your value
+instead of overwriting it. For narrator, duration and ASIN, Audiobookshelf
+re-imports and Hardcover list syncs keep it too. The Calibre import never
+writes those three fields, so there is nothing for it to keep. A lock also
+stops those paths *filling* the field when you cleared it on purpose, so
+clearing an ASIN blocks ASIN fills until you unlock it.
+
+Only a change locks. Sending a field with the value it already has (a
+client that reads a book and writes it back, or `{"asin": ""}` on a book
+with no ASIN) changes nothing and locks nothing. Locked fields show a 🔒 badge in the edit dialog for title, description,
 genres, language and release date; narrator, duration and ASIN are locked
 through the API and the ASIN box and are not shown there.
 
@@ -108,10 +114,13 @@ Both are idempotent; re-applying with a different list simply replaces it.
 ## API
 
 `PUT /api/v1/book/{id}` accepts `title`, `description`, `genres`,
-`language`, `releaseDate`, `narrator`, `durationSeconds` and `asin`; setting
-one applies the value and locks the field. Send `lockedFields` (an array of
-those names) to replace the lock set explicitly; an empty array unlocks
-everything. Bulk endpoints:
+`language`, `releaseDate`, `narrator`, `durationSeconds` and `asin`; a value
+that differs from the stored one is applied and locks the field, and an
+unchanged value is ignored, so the body of a GET can be sent straight back.
+Send `lockedFields` (an array of those names) to replace the lock set
+explicitly, which is also how to lock a field without changing it; an empty
+array unlocks everything. A narrator over 1000 bytes or a `durationSeconds`
+over 3600000 is a 400. Bulk endpoints:
 `PUT /api/v1/author/{id}/genres` and `PUT /api/v1/series/{id}/genres` with
 `{"genres": ["Fantasy"]}`. `DELETE /api/v1/series/{id}/genres` removes a series
 override.
