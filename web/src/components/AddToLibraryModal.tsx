@@ -358,7 +358,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
                   aria-pressed={filter === value}
                   onClick={() => setFilter(value)}
                   className={`touch-target px-3 py-1 rounded-full text-xs font-medium border ${filter === value
-                    ? 'bg-emerald-600 border-emerald-600 text-white'
+                    ? 'bg-emerald-700 border-emerald-700 text-white'
                     : 'border-slate-300 dark:border-zinc-700 text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60'}`}
                 >
                   {label}{count !== null && ` (${count})`}

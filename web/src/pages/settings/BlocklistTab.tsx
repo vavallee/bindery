@@ -100,7 +100,7 @@ export default function BlocklistTab() {
             <button
               onClick={handleBulkDelete}
               disabled={deleting}
-              className="px-3 py-1.5 bg-red-600 hover:bg-red-500 rounded text-xs font-medium transition-colors disabled:opacity-50"
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-medium transition-colors disabled:opacity-50"
             >
               {deleting ? t('blocklist.deleting') : t('blocklist.deleteSelected', { count: selected.size })}
             </button>
