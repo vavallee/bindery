@@ -15,7 +15,7 @@ func TestMoveDir(t *testing.T) {
 	mustWrite(t, filepath.Join(src, "nested", "cover.jpg"), "cover")
 
 	dst := filepath.Join(t.TempDir(), "Author", "Title (2020)")
-	if err := MoveDir(src, dst); err != nil {
+	if err := MoveDirCtx(t.Context(), src, dst); err != nil {
 		t.Fatal(err)
 	}
 
@@ -34,7 +34,7 @@ func TestMoveDirRefusesExistingDst(t *testing.T) {
 	src := t.TempDir()
 	mustWrite(t, filepath.Join(src, "x.m4b"), "x")
 	dst := t.TempDir() // already exists
-	if err := MoveDir(src, dst); err == nil {
+	if err := MoveDirCtx(t.Context(), src, dst); err == nil {
 		t.Error("expected error when dst already exists")
 	}
 }
@@ -50,11 +50,11 @@ func TestMoveDirRefusesDstInsideSrc(t *testing.T) {
 	mustWrite(t, filepath.Join(src, "part1.mp3"), "part1")
 	dst := filepath.Join(src, "My Book (2020)")
 
-	if err := MoveDir(src, dst); !errors.Is(err, ErrDestInsideSource) {
-		t.Errorf("MoveDir err = %v, want ErrDestInsideSource", err)
+	if err := MoveDirCtx(t.Context(), src, dst); !errors.Is(err, ErrDestInsideSource) {
+		t.Errorf("MoveDirCtx err = %v, want ErrDestInsideSource", err)
 	}
-	if err := CopyDir(src, dst); !errors.Is(err, ErrDestInsideSource) {
-		t.Errorf("CopyDir err = %v, want ErrDestInsideSource", err)
+	if err := CopyDirCtx(t.Context(), src, dst); !errors.Is(err, ErrDestInsideSource) {
+		t.Errorf("CopyDirCtx err = %v, want ErrDestInsideSource", err)
 	}
 	// Nothing copied, nothing created, source left exactly as it was.
 	if _, err := os.Stat(filepath.Join(src, "part1.mp3")); err != nil {

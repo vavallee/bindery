@@ -31,7 +31,7 @@ func atValueCap(unit string) string {
 // being fixed is ENAMETOOLONG from the kernel rather than a number in a test.
 func TestComposedSegment_DefaultTemplateIsCreatableOnDisk(t *testing.T) {
 	root := t.TempDir()
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	author := &models.Author{Name: atValueCap("x")}
 	book := &models.Book{Title: atValueCap("y")}
 
@@ -55,7 +55,7 @@ func TestComposedSegment_DefaultTemplateIsCreatableOnDisk(t *testing.T) {
 // is not the fix. A name whose ".epub" was chopped off is invisible to every
 // format check downstream, so it is worse than the error it replaced.
 func TestComposedSegment_KeepsTheExtension(t *testing.T) {
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	author := &models.Author{Name: atValueCap("x")}
 	book := &models.Book{Title: atValueCap("y")}
 
@@ -79,7 +79,7 @@ func TestComposedSegment_KeepsTheExtension(t *testing.T) {
 // staging. The budget reserves for it; this proves the reservation is real.
 func TestComposedSegment_SurvivesStaging(t *testing.T) {
 	root := t.TempDir()
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	author := &models.Author{Name: atValueCap("x")}
 	book := &models.Book{Title: atValueCap("y")}
 
@@ -105,7 +105,7 @@ func TestComposedSegment_SurvivesStaging(t *testing.T) {
 // imports once and fails the second time the same title arrives.
 func TestComposedSegment_SurvivesUniqueSuffix(t *testing.T) {
 	root := t.TempDir()
-	r := NewRenamer("{Author}/{Title} - {Author}")
+	r := NewRenamerWithAudiobook("{Author}/{Title} - {Author}", "")
 	author := &models.Author{Name: atValueCap("x")}
 	book := &models.Book{Title: atValueCap("y")}
 
@@ -131,7 +131,7 @@ func TestComposedSegment_SurvivesUniqueSuffix(t *testing.T) {
 func TestComposedSegment_TruncatesOnRuneBoundaries(t *testing.T) {
 	for _, unit := range []string{"é", "転", "𝄞"} {
 		t.Run(unit, func(t *testing.T) {
-			r := NewRenamer("")
+			r := NewRenamerWithAudiobook("", "")
 			author := &models.Author{Name: atValueCap(unit)}
 			book := &models.Book{Title: atValueCap(unit)}
 
@@ -157,7 +157,7 @@ func TestComposedSegment_TruncatesOnRuneBoundaries(t *testing.T) {
 // outside sanitizePath's per-value cap, and they are the tokens whose loss is
 // unrecoverable. Nothing special-cases them by name — being short is enough.
 func TestComposedSegment_ShortRawTokensSurvive(t *testing.T) {
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	author := &models.Author{Name: atValueCap("x")}
 	book := &models.Book{Title: atValueCap("y")}
 
@@ -175,7 +175,7 @@ func TestComposedSegment_ShortRawTokensSurvive(t *testing.T) {
 // existing libraries: nothing under the budget may move by one byte, or every
 // path row in the database stops matching what is on disk.
 func TestComposedSegment_LeavesShortNamesAlone(t *testing.T) {
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	author := &models.Author{Name: "Test Author"}
 	book := &models.Book{Title: "Dark Matter"}
 
