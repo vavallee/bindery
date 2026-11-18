@@ -1,14 +1,18 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -251,5 +255,67 @@ func TestQueueGrab_PlainUserDoesNotReuseAnOrphanedImport(t *testing.T) {
 	got, err := f.downloads.GetByID(f.ctx, row.ID)
 	if err != nil || got == nil || got.OwnerUserID != f.alice || got.Status != models.StateImported {
 		t.Errorf("alice's row must be untouched: %+v, %v", got, err)
+	}
+}
+
+func grabErrorBody(t *testing.T, body string) string {
+	t.Helper()
+	var m struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatalf("decode %q: %v", body, err)
+	}
+	return m.Error
+}
+
+// TestQueueGrab_RefusedBookMessages: both refusals are 404, but a shared book
+// the caller can see says why, while a book the caller cannot see keeps the
+// generic message that does not reveal it exists.
+func TestQueueGrab_RefusedBookMessages(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newGrabSecFixture(t)
+	shared := regrabBook(t, f.database, f.books, "msg-shared")
+	hidden := regrabOwnedBook(t, f.database, f.books, "msg-hidden", f.alice)
+	f.searchAs(t, f.bob)
+	for _, tc := range []struct {
+		name string
+		id   int64
+		want string
+	}{
+		{"shared", shared.ID, "That book is shared, so only an admin can grab for it."},
+		{"hidden", hidden.ID, "book not found"},
+	} {
+		rec := f.grabAs(f.bob, auth.RoleUser, map[string]any{
+			"guid": f.guid, "title": "x", "nzbUrl": f.downloadURL, "indexerId": f.indexerID, "bookId": tc.id,
+		})
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s: got %d: %s", tc.name, rec.Code, rec.Body.String())
+		}
+		if got := grabErrorBody(t, rec.Body.String()); got != tc.want {
+			t.Errorf("%s: error = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestQueueRetry_OwnerRetriesRowOnNowSharedBook: a row bob owns whose book has
+// since become shared still retries for bob, since the download is his.
+func TestQueueRetry_OwnerRetriesRowOnNowSharedBook(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newGrabSecFixture(t)
+	book := regrabBook(t, f.database, f.books, "retry-shared")
+	signed := newznab.SignDownloadURLFor(f.downloadURL, f.indexerURL+"/3/api", leakedAPIKey)
+	row := &models.Download{
+		GUID: "guid-retry-shared", BookID: &book.ID, OwnerUserID: f.bob, Title: "Bob Release",
+		NZBURL: signed, Status: models.StateFailed, Protocol: "usenet",
+	}
+	if err := f.downloads.Create(f.ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	id := strconv.FormatInt(row.ID, 10)
+	rec := httptest.NewRecorder()
+	f.queue.RetryDownload(rec, withURLParam(asRole(httptest.NewRequest(http.MethodPost, "/api/v1/queue/"+id+"/retry", nil), f.bob, auth.RoleUser), "id", id))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("bob retrying his own row on a shared book: got %d: %s", rec.Code, rec.Body.String())
 	}
 }

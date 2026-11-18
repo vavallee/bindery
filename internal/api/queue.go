@@ -223,6 +223,18 @@ const foreignRowGrabbedDetail = "another user already has this release in their 
 // handlers do, so a caller cannot tell the two apart.
 var errGrabBookNotFound = errors.New("book not found")
 
+// grabBookSharedError is returned instead of errGrabBookNotFound when the book
+// is visible to the caller and only the write check fails: a shared book with
+// no owner. The status stays 404, but hiding why helps nobody, since the
+// caller can already see the book. It matches errGrabBookNotFound with
+// errors.Is so every handler that maps that sentinel still maps this one.
+type grabBookSharedError struct{}
+
+func (grabBookSharedError) Error() string {
+	return "That book is shared, so only an admin can grab for it."
+}
+func (grabBookSharedError) Is(target error) bool { return target == errGrabBookNotFound }
+
 // errReleaseNotSearched refuses a grab of a release no recent search returned,
 // from any caller but an API key. See SearchResultRegistry.
 var errReleaseNotSearched = errors.New("this search result has expired, search again")
@@ -1061,6 +1073,10 @@ type grabRequest struct {
 	// Force re-grabs a release whose earlier download already imported,
 	// after the user confirmed it (#2289). See forceRegrabbable.
 	Force bool `json:"force"`
+	// ownBook skips the write check on BookID. Set only by a retry, whose row
+	// the caller already owns, so a book that became shared since does not
+	// strand it. Not part of the request body.
+	ownBook bool
 }
 
 func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
@@ -1262,7 +1278,9 @@ func (h *QueueHandler) resendRelease(ctx context.Context, d models.Download) (*m
 	if !regrabbable(&d) {
 		return nil, fmt.Errorf("%w: %s", errRetryNotResendable, retryNotResendableDetail(d.Status))
 	}
-	return h.grab(ctx, retryGrabRequest(d))
+	req := retryGrabRequest(d)
+	req.ownBook = true
+	return h.grab(ctx, req)
 }
 
 // RetryDownload handles POST /api/v1/queue/{id}/retry: send this row's release
@@ -1647,8 +1665,11 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		if err != nil {
 			return nil, err
 		}
-		if b == nil || !auth.CheckWriteOwnership(ctx, b.OwnerUserID) {
+		switch {
+		case b == nil || !auth.CheckOwnership(ctx, b.OwnerUserID):
 			return nil, errGrabBookNotFound
+		case !req.ownBook && !auth.CheckWriteOwnership(ctx, b.OwnerUserID):
+			return nil, grabBookSharedError{}
 		}
 		bookOwner = b.OwnerUserID
 	}
