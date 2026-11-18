@@ -205,3 +205,48 @@ func TestWishlistWalksEveryPage(t *testing.T) {
 		t.Fatalf("items = %d, accounts = %d", len(items), len(accounts))
 	}
 }
+
+func TestLibraryBookByID(t *testing.T) {
+	c := newTestClient(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/books/12":
+			writeJSON(t, w, 200, LibraryBook{ID: 12, AccountID: 1, ASIN: "B00ABCDEFG", Status: LibraryStatusDownloading})
+		default:
+			writeJSON(t, w, 404, map[string]string{"detail": "No book with id 13"})
+		}
+	})
+	b, err := c.LibraryBook(context.Background(), 12)
+	if err != nil || b.Status != LibraryStatusDownloading || b.ASIN != "B00ABCDEFG" {
+		t.Fatalf("LibraryBook(12) = %+v, %v", b, err)
+	}
+	// A book gone from the library is ErrNotFound, which the caller acts on.
+	if _, err := c.LibraryBook(context.Background(), 13); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LibraryBook(13) err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestOwnedByIsPerAccount(t *testing.T) {
+	// Account 2 owns the book; account 1, on whose wishlist it is, does not.
+	b := CatalogBook{InLibrary: true, Library: []LibraryCopy{{AccountID: 2, BookID: 7}}}
+	if b.OwnedBy(1) {
+		t.Error("a book only another account owns must not count as owned")
+	}
+	if !b.OwnedBy(2) {
+		t.Error("the owning account must count it as owned")
+	}
+	// No account named, or no copies listed (an older Audible Sync): the
+	// marketplace-wide flag is all there is.
+	if !b.OwnedBy(0) {
+		t.Error("with no account named, InLibrary decides")
+	}
+	if !(CatalogBook{InLibrary: true}).OwnedBy(1) {
+		t.Error("without copies listed, InLibrary decides")
+	}
+}
+
+func TestLibraryBookAsCatalogBookKeepsItsCopy(t *testing.T) {
+	cb := LibraryBook{ID: 9, AccountID: 3, ASIN: "B00ABCDEFG", Status: LibraryStatusUnavailable}.CatalogBook()
+	if c, ok := cb.CopyIn(3); !ok || c.BookID != 9 || c.Status != LibraryStatusUnavailable {
+		t.Fatalf("copy = %+v, %v", c, ok)
+	}
+}

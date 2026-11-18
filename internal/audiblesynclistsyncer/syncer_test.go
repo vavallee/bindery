@@ -3,6 +3,7 @@ package audiblesynclistsyncer
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -25,11 +26,28 @@ type fakeClient struct {
 	asked   []int
 	// library is the account's library; Library filters it by status.
 	library []audiblesync.LibraryBook
+	// libraryReads counts whole-library walks, lookups single-book reads.
+	libraryReads, lookups int
+}
+
+func (f *fakeClient) LibraryBook(_ context.Context, id int) (*audiblesync.LibraryBook, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookups++
+	for _, b := range f.library {
+		if b.ID == id {
+			return &b, nil
+		}
+	}
+	return nil, audiblesync.ErrNotFound
 }
 
 func (f *fakeClient) Library(_ context.Context, _ int, status string) ([]audiblesync.LibraryBook, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if status == "" {
+		f.libraryReads++
+	}
 	var out []audiblesync.LibraryBook
 	for _, b := range f.library {
 		if status == "" || b.Status == status {
@@ -284,8 +302,7 @@ func TestRemoveOnImport(t *testing.T) {
 	}
 
 	b, _ := f.books.GetByForeignID(ctx, "audible:B000000007")
-	b.Status = models.BookStatusImported
-	if err := f.books.Update(ctx, b); err != nil {
+	if err := f.books.AddBookFile(ctx, b.ID, models.MediaTypeAudiobook, "/lib/Finished.m4b"); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.SyncOne(ctx, il.ID); err != nil {
@@ -306,8 +323,9 @@ func TestRemoveOnImportWithDefaultAccountUsesItemAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := f.books.GetByForeignID(ctx, "audible:B000000008")
-	b.Status = models.BookStatusImported
-	_ = f.books.Update(ctx, b)
+	if err := f.books.AddBookFile(ctx, b.ID, models.MediaTypeAudiobook, "/lib/Finished 8.m4b"); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.s.SyncOne(ctx, il.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -368,8 +386,11 @@ func TestStartOneRunsInBackground(t *testing.T) {
 	}
 }
 
+// libBook is a library book of account 1, its Audible Sync id taken from the
+// ASIN's last two characters so each test book has its own.
 func libBook(asin, title, author, status string) audiblesync.LibraryBook {
-	return audiblesync.LibraryBook{ASIN: asin, Title: title, Authors: []string{author}, Narrators: []string{"N"},
+	id, _ := strconv.ParseInt(asin[len(asin)-2:], 16, 64)
+	return audiblesync.LibraryBook{ID: int(id) + 1, ASIN: asin, Title: title, Authors: []string{author}, Narrators: []string{"N"},
 		Length: 600, Status: status, AccountID: 1}
 }
 
@@ -469,5 +490,125 @@ func TestWishlistListRecordsWhatItCreates(t *testing.T) {
 	_ = f.s.SyncOne(ctx, il.ID)
 	if recs, _ := f.lists.ListBooks(ctx, il.ID); len(recs) != 1 || recs[0].ASIN != "B00000000E" {
 		t.Fatalf("records = %v", recs)
+	}
+}
+
+// An ebook Bindery imported is still wanted as an audiobook, which is why it
+// is on the wishlist: it must not be taken off it.
+func TestRemoveOnImportKeepsAnImportedEbook(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	author := &models.Author{ForeignID: "OL11A", Name: "Paper Author", SortName: "Author, Paper", MetadataProvider: "openlibrary", Monitored: true}
+	if err := f.authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	ebook := &models.Book{ForeignID: "OL11W", AuthorID: author.ID, Title: "Paper Only", SortTitle: "Paper Only", ASIN: "B00000000F",
+		Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeEbook, Genres: []string{}, MetadataProvider: "openlibrary"}
+	if err := f.books.Create(ctx, ebook); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.books.AddBookFile(ctx, ebook.ID, models.MediaTypeEbook, "/lib/Paper Only.epub"); err != nil {
+		t.Fatal(err)
+	}
+	f.client.items = []audiblesync.WishlistItem{item("B00000000F", "Paper Only", "Paper Author")}
+	il := f.list(t, func(il *models.ImportList) { il.RemoveOnImport = true })
+
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.client.removed) != 0 {
+		t.Fatalf("an imported ebook must stay on the wishlist: removed %v", f.client.removed)
+	}
+	got, _ := f.books.GetByID(ctx, ebook.ID)
+	if got.MediaType != models.MediaTypeBoth {
+		t.Fatalf("media = %q; the ebook must now want its audiobook", got.MediaType)
+	}
+}
+
+// A tracked ebook the Audible account already owns is not widened: Audible
+// Sync downloads the audiobook, and a search would fetch a second copy.
+func TestSkipOwnedAppliesToTrackedBooks(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	author := &models.Author{ForeignID: "OL12A", Name: "Owned Author", SortName: "Author, Owned", MetadataProvider: "openlibrary", Monitored: true}
+	if err := f.authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	ebook := &models.Book{ForeignID: "OL12W", AuthorID: author.ID, Title: "Owned Twice", SortTitle: "Owned Twice", ASIN: "B000000010",
+		Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeEbook, Genres: []string{}, MetadataProvider: "openlibrary"}
+	if err := f.books.Create(ctx, ebook); err != nil {
+		t.Fatal(err)
+	}
+	owned := item("B000000010", "Owned Twice", "Owned Author")
+	owned.InLibrary = true
+	owned.Library = []audiblesync.LibraryCopy{{AccountID: 1, BookID: 3, Status: audiblesync.LibraryStatusDownloading}}
+	f.client.items = []audiblesync.WishlistItem{owned}
+	il := f.list(t, nil)
+
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := f.books.GetByID(ctx, ebook.ID)
+	if got.MediaType != models.MediaTypeEbook || f.s.Progress().Stats.Owned != 1 {
+		t.Fatalf("media = %q, stats %+v; an owned book must be left as it is", got.MediaType, f.s.Progress().Stats)
+	}
+}
+
+// Owned means owned by the list's own account. A book only another account
+// on the same Audible Sync owns is added.
+func TestSkipOwnedIsPerAccount(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.resolver.authors["House Author"] = &models.Author{ForeignID: "OL13A", Name: "House Author"}
+	theirs := item("B000000011", "Theirs", "House Author")
+	theirs.InLibrary = true
+	theirs.Library = []audiblesync.LibraryCopy{{AccountID: 2, BookID: 5}}
+	f.client.items = []audiblesync.WishlistItem{theirs}
+	il := f.list(t, nil)
+
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := f.books.GetByForeignID(ctx, "audible:B000000011"); b == nil {
+		t.Fatalf("a book only another account owns must be added; stats %+v", f.s.Progress().Stats)
+	}
+}
+
+// Books that left the unavailable list are each looked up by id; the whole
+// library is never read. One gone from the library is forgotten but still
+// searched for; one that failed in Audible Sync is kept and asked about again.
+func TestReturnedBooksAreLookedUpOneByOne(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.resolver.authors["Plus Author"] = &models.Author{ForeignID: "OL14A", Name: "Plus Author"}
+	f.client.library = []audiblesync.LibraryBook{
+		libBook("B000000012", "Refunded", "Plus Author", audiblesync.LibraryStatusUnavailable),
+		libBook("B000000013", "Failing", "Plus Author", audiblesync.LibraryStatusUnavailable),
+	}
+	il := f.list(t, func(il *models.ImportList) { il.URL = models.ImportListSourceUnavailable })
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	if recs, _ := f.lists.ListBooks(ctx, il.ID); len(recs) != 2 || recs[0].SourceID == 0 {
+		t.Fatalf("records = %+v; want both, with their Audible Sync ids", recs)
+	}
+
+	// The first is refunded and leaves the library; the second fails.
+	f.client.library = []audiblesync.LibraryBook{f.client.library[1]}
+	f.client.library[0].Status = audiblesync.LibraryStatusFailed
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	if f.client.libraryReads != 0 || f.client.lookups != 2 {
+		t.Fatalf("library walks %d, lookups %d; want none and 2", f.client.libraryReads, f.client.lookups)
+	}
+	recs, _ := f.lists.ListBooks(ctx, il.ID)
+	if len(recs) != 1 || recs[0].ASIN != "B000000013" {
+		t.Fatalf("records = %+v; want only the failing book kept", recs)
+	}
+	for _, asin := range []string{"B000000012", "B000000013"} {
+		if b, _ := f.books.GetByForeignID(ctx, "audible:"+asin); b == nil || !b.Monitored {
+			t.Fatalf("%s = %+v; want still monitored", asin, b)
+		}
 	}
 }

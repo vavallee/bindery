@@ -56,8 +56,8 @@ Per list options:
 | Option | Lists | Default | What it does |
 |---|---|---|---|
 | Download books from this list | Both | On | Off adds the books unmonitored, so nothing is searched for until you monitor one |
-| Skip owned books | Wishlist | On | A book the Audible account already owns is left alone: Audible Sync downloads it itself |
-| Remove from wishlist once imported | Wishlist | Off | Once Bindery has imported a wishlist book, the next sync takes it off the Audible wishlist. This writes to your Audible account |
+| Skip owned books | Wishlist | On | A book the list's Audible account already owns is left alone, even when Bindery tracks its ebook: Audible Sync downloads it itself. A book only another account on the same Audible Sync owns is still added |
+| Remove from wishlist once imported | Wishlist | Off | Once Bindery has imported a wishlist book's audiobook, the next sync takes it off the Audible wishlist. An imported ebook alone does not count. This writes to your Audible account |
 | Owner | Both | Global | Who sees the books it adds, on a multi user install |
 
 ### Unavailable books that come back
@@ -68,6 +68,12 @@ again, the next sync **stops searching** for it (it is unmonitored, and stays in
 your library). Only books that list created are touched, and only while they
 are still wanted: a book you have imported, or wanted through another list,
 is left as it is. The sync result counts these as *downloadable again*.
+
+Each book that has left the unavailable list is checked on its own in Audible
+Sync, one request per book, so a large library costs nothing extra. A book
+that has left the library altogether (refunded, say) is still searched for and
+no longer checked. One that failed to download in Audible Sync is still
+searched for and checked again at the next sync.
 
 Lists sync every 6 hours, or every `audiblesync.sync_interval` (1h to 168h,
 read at startup). Reading a list does not contact Audible: Audible Sync serves

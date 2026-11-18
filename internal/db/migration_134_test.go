@@ -77,12 +77,13 @@ func TestImportListBooksRecordAndCascade(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []int64{b1.ID, b1.ID, b2.ID} {
-		if err := lists.RecordBook(ctx, il.ID, id, "B0"); err != nil {
+		if err := lists.RecordBook(ctx, il.ID, id, "B0", 40+id); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got, _ := lists.ListBooks(ctx, il.ID); len(got) != 2 {
-		t.Fatalf("recorded = %v, want 2", got)
+	got, _ := lists.ListBooks(ctx, il.ID)
+	if len(got) != 2 || got[0].SourceID != 40+b1.ID || got[1].SourceID != 40+b2.ID {
+		t.Fatalf("recorded = %+v, want 2 with their source ids", got)
 	}
 	if err := lists.ForgetBook(ctx, il.ID, b1.ID); err != nil {
 		t.Fatal(err)
@@ -93,7 +94,7 @@ func TestImportListBooksRecordAndCascade(t *testing.T) {
 	if got, _ := lists.ListBooks(ctx, il.ID); len(got) != 0 {
 		t.Fatalf("after forget and book delete = %v, want none", got)
 	}
-	_ = lists.RecordBook(ctx, il.ID, b1.ID, "B0")
+	_ = lists.RecordBook(ctx, il.ID, b1.ID, "B0", 0)
 	if err := lists.Delete(ctx, il.ID); err != nil {
 		t.Fatal(err)
 	}

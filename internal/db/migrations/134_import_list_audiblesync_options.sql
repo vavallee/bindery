@@ -19,11 +19,15 @@ ALTER TABLE import_lists ADD COLUMN remove_on_import INTEGER NOT NULL DEFAULT 0;
 -- books and nobody else's: the unavailable books list stops searching for a
 -- book once Audible makes it downloadable again and Audible Sync fetches it,
 -- and must not touch a book the operator wanted through another list.
+-- source_id is Audible Sync's own id for the book in the account's library
+-- (0 when the list has none, as for a wishlist book not yet owned), so a sync
+-- can ask after one book instead of reading the whole library.
 -- A row goes when its list or its book does.
 CREATE TABLE import_list_books (
     import_list_id INTEGER NOT NULL REFERENCES import_lists(id) ON DELETE CASCADE,
     book_id        INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     asin           TEXT    NOT NULL DEFAULT '',
+    source_id      INTEGER NOT NULL DEFAULT 0,
     created_at     DATETIME NOT NULL,
     PRIMARY KEY (import_list_id, book_id)
 );

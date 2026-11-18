@@ -14,6 +14,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/audiblesync"
 	"github.com/vavallee/bindery/internal/audiblesynclistsyncer"
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -173,5 +174,58 @@ func TestSyncDispatchesAudibleSyncLists(t *testing.T) {
 	_ = json.NewDecoder(rec.Body).Decode(&p)
 	if rec.Code != http.StatusOK || p.Stats.Owned != 2 {
 		t.Fatalf("status: %d %+v", rec.Code, p)
+	}
+}
+
+// An Audible Sync list never keeps a token, whether one is sent with an
+// update or left over from a list whose type was changed to this one.
+func TestUpdateAudibleSyncListDropsAToken(t *testing.T) {
+	h, repo, _ := importListFixture(t)
+	ctx := context.Background()
+	r := chi.NewRouter()
+	r.Put("/importlist/{id}", h.Update)
+	put := func(id int64, body string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/importlist/"+strconv.FormatInt(id, 10), bytes.NewBufferString(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%d %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	_, il := createList(t, h, `{"name":"Wishlist","type":"audiblesync","enabled":true}`)
+	put(il.ID, `{"apiKey":"smuggled"}`)
+	if got, _ := repo.GetByID(ctx, il.ID); got.APIKey != "" {
+		t.Fatalf("token kept on an Audible Sync list: %q", got.APIKey)
+	}
+
+	shelf := models.ImportList{Name: "Shelf", Type: models.ImportListTypeHardcover, URL: "wtr", APIKey: "hc-token", Enabled: true}
+	if err := repo.Create(ctx, &shelf); err != nil {
+		t.Fatal(err)
+	}
+	put(shelf.ID, `{"type":"audiblesync","url":""}`)
+	if got, _ := repo.GetByID(ctx, shelf.ID); got.Type != models.ImportListTypeAudibleSync || got.APIKey != "" {
+		t.Fatalf("after the type change = type %q token %q", got.Type, got.APIKey)
+	}
+}
+
+// A failed read of the list is an error, not a guess: guessing would send an
+// Audible Sync list to the Hardcover syncer.
+func TestSyncReportsAFailedListRead(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewImportListHandler(db.NewImportListRepo(database), db.NewSettingsRepo(database), nil, db.NewUserRepo(database))
+	hc := &fakeHCSyncer{}
+	h.hcSync = hc
+	h.WithAudibleSyncSyncer(&fakeASSyncer{})
+	database.Close()
+
+	if rec := syncRequest(h, 1); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500", rec.Code)
+	}
+	if len(hc.starts) != 0 {
+		t.Fatalf("hardcover syncer started for an unread list: %v", hc.starts)
 	}
 }

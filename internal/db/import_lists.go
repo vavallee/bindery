@@ -157,12 +157,13 @@ func scanImportList(rows *sql.Rows) (models.ImportList, error) {
 
 // --- Books a list created ---
 
-// RecordBook notes that list listID created book bookID. Recording the same
-// pair twice is not an error.
-func (r *ImportListRepo) RecordBook(ctx context.Context, listID, bookID int64, asin string) error {
+// RecordBook notes that list listID created book bookID, from the source's
+// item sourceID (0 when the source has no id for it). Recording the same pair
+// twice is not an error.
+func (r *ImportListRepo) RecordBook(ctx context.Context, listID, bookID int64, asin string, sourceID int64) error {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO import_list_books (import_list_id, book_id, asin, created_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT(import_list_id, book_id) DO NOTHING`, listID, bookID, asin, time.Now().UTC())
+		INSERT INTO import_list_books (import_list_id, book_id, asin, source_id, created_at) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(import_list_id, book_id) DO NOTHING`, listID, bookID, asin, sourceID, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("record book %d for import list %d: %w", bookID, listID, err)
 	}
@@ -172,7 +173,7 @@ func (r *ImportListRepo) RecordBook(ctx context.Context, listID, bookID int64, a
 // ListBooks returns the books list listID created, as recorded by RecordBook.
 func (r *ImportListRepo) ListBooks(ctx context.Context, listID int64) ([]models.ImportListBook, error) {
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT book_id, asin FROM import_list_books WHERE import_list_id = ? ORDER BY book_id", listID)
+		"SELECT book_id, asin, source_id FROM import_list_books WHERE import_list_id = ? ORDER BY book_id", listID)
 	if err != nil {
 		return nil, fmt.Errorf("list books of import list %d: %w", listID, err)
 	}
@@ -180,7 +181,7 @@ func (r *ImportListRepo) ListBooks(ctx context.Context, listID int64) ([]models.
 	var out []models.ImportListBook
 	for rows.Next() {
 		b := models.ImportListBook{ImportListID: listID}
-		if err := rows.Scan(&b.BookID, &b.ASIN); err != nil {
+		if err := rows.Scan(&b.BookID, &b.ASIN, &b.SourceID); err != nil {
 			return nil, fmt.Errorf("scan import list book: %w", err)
 		}
 		out = append(out, b)

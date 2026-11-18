@@ -55,10 +55,42 @@ type CatalogBook struct {
 	Rating        *float64        `json:"rating"`
 	RatingCount   int             `json:"rating_count"`
 	Multipart     bool            `json:"multipart"`
-	// InLibrary is true when any account of this marketplace owns the book.
+	// InLibrary is true when any account of this marketplace owns the book,
+	// not only the account asked about: use OwnedBy for one account.
 	InLibrary bool `json:"in_library"`
+	// Library is each copy of the book in an account's library.
+	Library []LibraryCopy `json:"library"`
 	// OnWishlist lists the accounts of this marketplace wishing for it.
 	OnWishlist []int `json:"on_wishlist"`
+}
+
+// LibraryCopy is one account's copy of a book: Audible Sync's id for it in
+// that library, and where it is in the download pipeline (a LibraryStatus).
+type LibraryCopy struct {
+	AccountID int    `json:"account_id"`
+	BookID    int    `json:"book_id"`
+	Status    string `json:"status"`
+}
+
+// CopyIn returns the copy of the book in the library of accountID.
+func (b CatalogBook) CopyIn(accountID int) (LibraryCopy, bool) {
+	for _, c := range b.Library {
+		if c.AccountID == accountID {
+			return c, true
+		}
+	}
+	return LibraryCopy{}, false
+}
+
+// OwnedBy reports whether the account accountID owns the book. With no
+// account named, or from an Audible Sync too old to list the copies, it falls
+// back to InLibrary: owned by some account of the marketplace.
+func (b CatalogBook) OwnedBy(accountID int) bool {
+	if accountID <= 0 || len(b.Library) == 0 {
+		return b.InLibrary
+	}
+	_, ok := b.CopyIn(accountID)
+	return ok
 }
 
 // WishlistItem is a book on one account's wishlist.
@@ -125,7 +157,8 @@ type LibraryPage struct {
 }
 
 // CatalogBook gives a library book the catalogue shape, so the import list
-// sync handles both the same way. The book is owned, so InLibrary is set.
+// sync handles both the same way. The book is owned, so InLibrary is set and
+// Library holds this copy.
 func (b LibraryBook) CatalogBook() CatalogBook {
 	authors := make([]CatalogAuthor, 0, len(b.Authors))
 	for _, a := range b.Authors {
@@ -135,6 +168,7 @@ func (b LibraryBook) CatalogBook() CatalogBook {
 		ASIN: b.ASIN, Title: b.Title, Subtitle: b.Subtitle, Authors: authors, Narrators: b.Narrators,
 		Series: b.Series, PrimarySeries: b.PrimarySeries, Genres: b.Genres, ReleaseDate: b.ReleaseDate,
 		CoverURL: b.CoverURL, InLibrary: true,
+		Library: []LibraryCopy{{AccountID: b.AccountID, BookID: b.ID, Status: b.Status}},
 	}
 	if b.Length > 0 {
 		secs := b.Length * 60

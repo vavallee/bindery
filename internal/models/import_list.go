@@ -65,6 +65,10 @@ type ImportListBook struct {
 	ImportListID int64
 	BookID       int64
 	ASIN         string
+	// SourceID is the source's own id for the item the book came from: for
+	// an Audible Sync list, the book's id in the account's library. 0 when
+	// the source has none.
+	SourceID int64
 }
 
 type ImportListExclusion struct {

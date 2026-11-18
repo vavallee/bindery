@@ -201,10 +201,8 @@ func (h *ImportListHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeOwnerError(w, r, err)
 		return
 	}
-	il.APIKey = hardcover.NormalizeAPIToken(il.APIKey)
-	if il.Type == models.ImportListTypeAudibleSync {
-		// The connection, token included, is the global Audible Sync one.
-		il.APIKey = ""
+	if il.Type != models.ImportListTypeAudibleSync {
+		il.APIKey = hardcover.NormalizeAPIToken(il.APIKey)
 	}
 	if err := h.repo.Create(r.Context(), &il); err != nil {
 		writeServerError(w, r, err)
@@ -404,9 +402,16 @@ func (h *ImportListHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
-	// Audible Sync wishlists have their own syncer. Every other type goes to
-	// the Hardcover syncer, which refuses what it cannot sync (ErrWrongType).
-	if il, lerr := h.repo.GetByID(r.Context(), id); lerr == nil && il != nil && il.Type == models.ImportListTypeAudibleSync {
+	// Audible Sync lists have their own syncer. Every other type goes to the
+	// Hardcover syncer, which answers an unknown id with 404 and refuses what
+	// it cannot sync (ErrWrongType). A failed read is reported as one, rather
+	// than guessed past: it would send an Audible Sync list to Hardcover.
+	il, err := h.repo.GetByID(r.Context(), id)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	if il != nil && il.Type == models.ImportListTypeAudibleSync {
 		h.syncAudibleSync(w, r, id)
 		return
 	}
@@ -499,6 +504,10 @@ func normalizeAudibleSyncList(il *models.ImportList) error {
 		return nil
 	}
 	il.MediaType = models.MediaTypeAudiobook
+	// The connection, token included, is the global Audible Sync one, so a
+	// list never keeps a token: not one sent with it, and not one left over
+	// from a list whose type was changed to this one.
+	il.APIKey = ""
 	switch strings.TrimSpace(il.URL) {
 	case "", models.ImportListSourceWishlist:
 		il.URL = models.ImportListSourceWishlist

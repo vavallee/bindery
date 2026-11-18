@@ -121,6 +121,19 @@ func (c *Client) Library(ctx context.Context, accountID int, status string) ([]L
 	return items, nil
 }
 
+// LibraryBook returns one book of a library by Audible Sync's id for it. A
+// book that has left the library (refunded, say) is ErrNotFound.
+func (c *Client) LibraryBook(ctx context.Context, id int) (*LibraryBook, error) {
+	if id <= 0 {
+		return nil, errors.New("a library book id is required")
+	}
+	var out LibraryBook
+	if err := c.do(ctx, http.MethodGet, "/api/books/"+strconv.Itoa(id), nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // WishlistTotal is how many books are on the wishlist of accountID, read with
 // a one-book page.
 func (c *Client) WishlistTotal(ctx context.Context, accountID int) (int, error) {
