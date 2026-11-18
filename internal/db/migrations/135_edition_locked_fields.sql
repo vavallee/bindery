@@ -5,3 +5,7 @@
 -- (migration 062). An empty array is the pre-migration behavior for every
 -- existing row: nothing locked.
 ALTER TABLE editions ADD COLUMN locked_fields TEXT NOT NULL DEFAULT '[]';
+
+-- +migrate Down
+
+ALTER TABLE editions DROP COLUMN locked_fields;

@@ -295,7 +295,7 @@ func (r *EditionRepo) UpsertMetadata(ctx context.Context, e *models.Edition, exp
 // three time-typed columns so legacy rows written by Go's default
 // time.String shape, or by Calibre's own pubdate writer, still Scan
 // successfully (#914 root cause). locked_fields is read as text and decoded;
-// a row from before migration 115 carries the column default, so the set is
+// a row from before migration 135 carries the column default, so the set is
 // never nil.
 func scanEditionFrom(s rowScanner) (models.Edition, error) {
 	var e models.Edition

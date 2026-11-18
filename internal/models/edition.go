@@ -32,7 +32,7 @@ type Edition struct {
 	// LockedFields lists publication fields the user set by hand, see the
 	// EditionField* constants. Both edition upserts test the stored set inside
 	// their SQL and keep a locked column's value, whether the incoming write
-	// would overwrite it or fill it. Persisted as a JSON array (migration 115).
+	// would overwrite it or fill it. Persisted as a JSON array (migration 135).
 	LockedFields []string `json:"lockedFields"`
 	// UpdatedAtRaw is editions.updated_at exactly as stored, for the
 	// compare-and-swap in EditionRepo.UpdateFields; see Book.UpdatedAtRaw for
