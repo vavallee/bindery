@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
@@ -438,6 +440,11 @@ func TestBookUpdate_RecordingFieldValidation(t *testing.T) {
 		t.Fatalf("durationSeconds 0 must neither set nor lock: duration=%d locked=%v", got.DurationSeconds, got.LockedFields)
 	}
 
+	withASIN, _ := books.GetByID(ctx, b.ID)
+	withASIN.ASIN = "B000000001"
+	if err := books.Update(ctx, withASIN); err != nil {
+		t.Fatal(err)
+	}
 	rec = putBook(t, h, id, map[string]any{"asin": ""})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("clearing asin: expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -480,8 +487,8 @@ func TestBookUpdate_RecordingFieldValidation(t *testing.T) {
 		t.Fatalf("unchanged stored asin: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	got, _ = books.GetByID(ctx, b.ID)
-	if got.ASIN != "ODD/ASIN" || !got.IsFieldLocked(models.BookFieldASIN) {
-		t.Fatalf("unchanged asin must stay and lock: asin=%q locked=%v", got.ASIN, got.LockedFields)
+	if got.ASIN != "ODD/ASIN" || got.IsFieldLocked(models.BookFieldASIN) {
+		t.Fatalf("unchanged asin must stay and not lock: asin=%q locked=%v", got.ASIN, got.LockedFields)
 	}
 
 	// Unlock all (the dialog's lockedFields: []) clears the new locks too.
@@ -492,5 +499,122 @@ func TestBookUpdate_RecordingFieldValidation(t *testing.T) {
 	got, _ = books.GetByID(ctx, b.ID)
 	if len(got.LockedFields) != 0 {
 		t.Fatalf("lockedFields = %v, want empty", got.LockedFields)
+	}
+}
+
+// getBookBody reads a book through GET /book/{id} and returns the decoded
+// JSON object, the way a script or companion tool sees it.
+func getBookBody(t *testing.T, h *BookHandler, id string) map[string]any {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.Get(rec, withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/book/"+id, nil), "id", id))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get: %d %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+// TestBookUpdate_RoundTripLocksNothing pins #3216's review point: a client
+// that reads a book and writes it back unchanged must not lock anything,
+// whether or not it echoes lockedFields, and must not get a 400 for the
+// RFC 3339 releaseDate GET returns.
+func TestBookUpdate_RoundTripLocksNothing(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	b := seedLockTestBook(t, books, author.ID, "ROUNDTRIP", "Round Trip")
+	rd := time.Date(2019, 3, 4, 0, 0, 0, 0, time.UTC)
+	b.ReleaseDate = &rd
+	b.Narrator = "Stored Narrator"
+	b.DurationSeconds = 36000
+	b.ASIN = "B000000001"
+	b.Description = "Stored description"
+	if err := books.Update(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	id := strconv.FormatInt(b.ID, 10)
+
+	full := getBookBody(t, h, id)
+	stripped := getBookBody(t, h, id)
+	delete(stripped, "lockedFields")
+	for name, body := range map[string]map[string]any{"full": full, "without lockedFields": stripped} {
+		rec := putBook(t, h, id, body)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s round trip: expected 200, got %d: %s", name, rec.Code, rec.Body.String())
+			continue
+		}
+		got, _ := books.GetByID(ctx, b.ID)
+		if len(got.LockedFields) != 0 {
+			t.Errorf("%s round trip locked %v, want none", name, got.LockedFields)
+			continue
+		}
+		if got.ReleaseDate == nil || !got.ReleaseDate.Equal(rd) || got.Narrator != "Stored Narrator" ||
+			got.DurationSeconds != 36000 || got.ASIN != "B000000001" {
+			t.Fatalf("%s round trip changed values: %+v", name, got)
+		}
+	}
+
+	// Clearing an ASIN the book does not have is not a change.
+	noASIN := seedLockTestBook(t, books, author.ID, "NOASIN", "No ASIN")
+	noID := strconv.FormatInt(noASIN.ID, 10)
+	for _, body := range []map[string]any{{"asin": ""}, {"narrator": ""}, {"durationSeconds": 0}, {"title": "No ASIN"}} {
+		if rec := putBook(t, h, noID, body); rec.Code != http.StatusOK {
+			t.Fatalf("%v: expected 200, got %d: %s", body, rec.Code, rec.Body.String())
+		}
+		if got, _ := books.GetByID(ctx, noASIN.ID); len(got.LockedFields) != 0 {
+			t.Fatalf("%v on an unchanged value locked %v, want none", body, got.LockedFields)
+		}
+	}
+
+	// Naming a field in lockedFields locks it without a value change.
+	if rec := putBook(t, h, noID, map[string]any{"asin": "", "lockedFields": []string{models.BookFieldASIN}}); rec.Code != http.StatusOK {
+		t.Fatalf("explicit lock: %d %s", rec.Code, rec.Body.String())
+	}
+	got, _ := books.GetByID(ctx, noASIN.ID)
+	if !got.IsFieldLocked(models.BookFieldASIN) || len(got.LockedFields) != 1 {
+		t.Fatalf("explicit lock: locked=%v, want [asin]", got.LockedFields)
+	}
+
+	// A real change still locks, and an RFC 3339 releaseDate is read as its day.
+	if rec := putBook(t, h, id, map[string]any{"releaseDate": "2020-05-01T00:00:00Z", "narrator": "New Narrator"}); rec.Code != http.StatusOK {
+		t.Fatalf("change: %d %s", rec.Code, rec.Body.String())
+	}
+	got, _ = books.GetByID(ctx, b.ID)
+	if got.ReleaseDate == nil || got.ReleaseDate.Format("2006-01-02") != "2020-05-01" ||
+		!got.IsFieldLocked(models.BookFieldReleaseDate) || !got.IsFieldLocked(models.BookFieldNarrator) ||
+		got.IsFieldLocked(models.BookFieldASIN) {
+		t.Fatalf("change: date=%v locked=%v", got.ReleaseDate, got.LockedFields)
+	}
+}
+
+// TestBookUpdate_RecordingFieldCaps pins the upper bounds on narrator and
+// durationSeconds: a value past the cap is a 400 and is not stored.
+func TestBookUpdate_RecordingFieldCaps(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	b := seedLockTestBook(t, books, author.ID, "CAPS", "Caps")
+	id := strconv.FormatInt(b.ID, 10)
+
+	for _, body := range []map[string]any{
+		{"narrator": strings.Repeat("n", 1001)},
+		{"durationSeconds": 3600001},
+	} {
+		rec := putBook(t, h, id, body)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"error"`) {
+			t.Errorf("over the cap: expected a JSON 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	got, _ := books.GetByID(ctx, b.ID)
+	if got.Narrator != "" || got.DurationSeconds != 0 || len(got.LockedFields) != 0 {
+		t.Fatalf("refused values stored: %+v", got)
+	}
+	for _, body := range []map[string]any{
+		{"narrator": strings.Repeat("n", 1000)},
+		{"durationSeconds": 3600000},
+	} {
+		if rec := putBook(t, h, id, body); rec.Code != http.StatusOK {
+			t.Errorf("at the cap: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
 	}
 }

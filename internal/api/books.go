@@ -595,11 +595,11 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// DELETE /book/{id}?deleteFiles=true or DELETE /book/{id}/file.
 	//
 	// Title/Description/Genres/Language/ReleaseDate are the manual metadata
-	// edits (#1237, #1446). Setting one updates the value AND locks the field
+	// edits (#1237, #1446). Changing one updates the value AND locks the field
 	// against metadata refresh; LockedFields, when present, replaces the lock
-	// set wholesale so a client can also unlock fields. Narrator,
+	// set wholesale so a client can also lock or unlock fields. Narrator,
 	// durationSeconds and asin follow the same rule since the recording-field
-	// locks.
+	// locks (#3216).
 	var req struct {
 		Monitored       *bool     `json:"monitored"`
 		Status          *string   `json:"status"`
@@ -638,35 +638,52 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Recording fields: setting one applies the value and locks the field,
-	// the same contract as the work fields below. An empty ASIN is a clear,
-	// stored and locked so enrichment does not refill it (#2757 rule).
+	// Every metadata field below follows one rule: a submitted value is applied,
+	// and the field locks only when that value differs from the stored one. A
+	// client that reads a book and writes it back unchanged (scripts, companion
+	// tools) must not lock anything; naming a field in lockedFields is the way
+	// to lock it without changing it. Caps and format checks also run only on
+	// a change, so a stored value an import wrote is never refused on a
+	// round trip.
 	if req.ASIN != nil {
-		// Validated only when the value changes: an import may have stored an
-		// ASIN that would not pass today, and a client that reads the book and
-		// writes it back must not be refused for it.
 		asin := isbnutil.NormalizeASIN(*req.ASIN)
-		if asin != "" && asin != book.ASIN && !validASIN(asin) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "asin must be 10 letters or digits"})
-			return
+		if asin != book.ASIN {
+			if asin != "" && !validASIN(asin) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "asin must be 10 letters or digits"})
+				return
+			}
+			// An empty ASIN is a clear, stored and locked so enrichment does not
+			// refill it (#2757 rule).
+			book.ASIN = asin
+			book.LockField(models.BookFieldASIN)
 		}
-		book.ASIN = asin
-		book.LockField(models.BookFieldASIN)
 	}
 	if req.Narrator != nil {
-		book.Narrator = strings.TrimSpace(*req.Narrator)
-		book.LockField(models.BookFieldNarrator)
+		narrator := strings.TrimSpace(*req.Narrator)
+		if narrator != book.Narrator {
+			if len(narrator) > maxBookNarratorBytes {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("narrator must be at most %d bytes", maxBookNarratorBytes)})
+				return
+			}
+			book.Narrator = narrator
+			book.LockField(models.BookFieldNarrator)
+		}
 	}
 	// Zero is what GET serializes for an unknown runtime, so a client that
 	// reads a book and PUTs it back sends it; it means "not set" and neither
 	// writes nor locks. Only a negative value is an error.
 	if req.DurationSeconds != nil {
-		if *req.DurationSeconds < 0 {
+		d := *req.DurationSeconds
+		if d < 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "durationSeconds must be a positive integer"})
 			return
 		}
-		if *req.DurationSeconds > 0 {
-			book.DurationSeconds = *req.DurationSeconds
+		if d > 0 && d != book.DurationSeconds {
+			if d > maxBookDurationSeconds {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("durationSeconds must be at most %d", maxBookDurationSeconds)})
+				return
+			}
+			book.DurationSeconds = d
 			book.LockField(models.BookFieldDurationSeconds)
 		}
 	}
@@ -679,11 +696,13 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title must not be empty"})
 			return
 		}
-		book.Title = title
-		book.SortTitle = title
-		book.LockField(models.BookFieldTitle)
+		if title != book.Title {
+			book.Title = title
+			book.SortTitle = title
+			book.LockField(models.BookFieldTitle)
+		}
 	}
-	if req.Description != nil {
+	if req.Description != nil && *req.Description != book.Description {
 		book.Description = *req.Description
 		book.LockField(models.BookFieldDescription)
 	}
@@ -694,28 +713,30 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 				genres = append(genres, g)
 			}
 		}
-		book.Genres = genres
-		book.LockField(models.BookFieldGenres)
+		if !slices.Equal(genres, book.Genres) {
+			book.Genres = genres
+			book.LockField(models.BookFieldGenres)
+		}
 	}
 	if req.Language != nil {
 		// Stored in the same ISO 639-2/B form the providers write (#3086).
 		// Anything NormalizeLanguageCode does not recognise passes through
 		// lowercased, so a hand-typed code is never rejected or dropped.
-		book.Language = models.NormalizeLanguageCode(*req.Language)
-		book.LockField(models.BookFieldLanguage)
+		if lang := models.NormalizeLanguageCode(*req.Language); lang != models.NormalizeLanguageCode(book.Language) {
+			book.Language = lang
+			book.LockField(models.BookFieldLanguage)
+		}
 	}
 	if req.ReleaseDate != nil {
-		if *req.ReleaseDate == "" {
-			book.ReleaseDate = nil
-		} else {
-			rd, perr := time.Parse("2006-01-02", *req.ReleaseDate)
-			if perr != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "releaseDate must be YYYY-MM-DD or empty"})
-				return
-			}
-			book.ReleaseDate = &rd
+		rd, ok := parseDateField(*req.ReleaseDate)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "releaseDate must be YYYY-MM-DD, an RFC 3339 timestamp, or empty"})
+			return
 		}
-		book.LockField(models.BookFieldReleaseDate)
+		if !sameDay(rd, book.ReleaseDate) {
+			book.ReleaseDate = rd
+			book.LockField(models.BookFieldReleaseDate)
+		}
 	}
 	// An explicit lock set replaces the computed one — this is the unlock
 	// path. Validated against the closed lockable-field list.
