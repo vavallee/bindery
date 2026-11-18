@@ -88,9 +88,15 @@ Re-binding to the record the book is already bound to changes no editions.
 ## Edition locks
 
 An edition's publisher, publish date, ISBN-13, ISBN-10 and ASIN can be set
-and locked through `PUT /api/v1/book/{id}/edition/{editionId}`. Both the
-import upsert (Audiobookshelf, Calibre) and provider hydration keep a locked
-column's value, whether they would overwrite it or fill it. There is no
+and locked through `PUT /api/v1/book/{id}/edition/{editionId}`. As on a book,
+only a change locks: sending a value the edition already has, such as
+`{"publisher": ""}` on an edition with no publisher, or writing back an
+edition exactly as GET returned it, locks nothing. `publishDate` takes
+`YYYY-MM-DD` or the RFC 3339 timestamp GET returns, and `publisher` is capped
+at 500 bytes (a 400 above that). Both the import upsert (Audiobookshelf,
+Calibre) and Hardcover hydration keep a locked column's value, whether they
+would overwrite it or fill it. An edition's narrators and edition type are not
+editable here, so they have no lock. There is no
 edition editor in the UI; edition locks are API-only. `GET /api/v1/book/{id}`
 returns each edition's `lockedFields` when the book has editions. The PUT
 answers the stored edition, **404** when the edition is not this book's, and
@@ -133,8 +139,8 @@ Send `lockedFields` (an array of those names) to replace the lock set
 explicitly, which is also how to lock a field without changing it; an empty
 array unlocks everything. A narrator over 1000 bytes or a `durationSeconds`
 over 3600000 is a 400. `PUT /api/v1/book/{id}/edition/{editionId}` does the same for an
-edition with `publisher`, `publishDate` (`YYYY-MM-DD` or empty to clear),
-`isbn13`, `isbn10` and `asin`, and its own `lockedFields`. Bulk endpoints:
+edition with `publisher`, `publishDate` (`YYYY-MM-DD`, RFC 3339, or empty to
+clear), `isbn13`, `isbn10` and `asin`, and its own `lockedFields`. Bulk endpoints:
 `PUT /api/v1/author/{id}/genres` and `PUT /api/v1/series/{id}/genres` with
 `{"genres": ["Fantasy"]}`. `DELETE /api/v1/series/{id}/genres` removes a series
 override.
