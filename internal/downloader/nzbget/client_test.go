@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/downloader/rttest"
 )
 
 // serverHostPort parses a test server URL into host and port.
@@ -694,11 +696,6 @@ func TestBasicAuth(t *testing.T) {
 	}
 }
 
-// roundTripFunc is a test helper that implements http.RoundTripper via a function.
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 // netTimeoutErr is a minimal net.Error that signals a timeout.
 type netTimeoutErr struct{}
 
@@ -712,7 +709,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 	dnsErr := &net.DNSError{Name: "nzbget-container", IsNotFound: true}
 	c := New("nzbget-container", 6789, "u", "p", "", false)
 	c.http = &http.Client{
-		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		Transport: rttest.Func(func(*http.Request) (*http.Response, error) {
 			return nil, fmt.Errorf("dial: %w", dnsErr)
 		}),
 	}
@@ -731,7 +728,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 func TestTest_ConnectionRefused(t *testing.T) {
 	c := New("127.0.0.1", 6789, "u", "p", "", false)
 	c.http = &http.Client{
-		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		Transport: rttest.Func(func(*http.Request) (*http.Response, error) {
 			return nil, fmt.Errorf("dial tcp: %w", syscall.ECONNREFUSED)
 		}),
 	}
@@ -750,7 +747,7 @@ func TestTest_ConnectionRefused(t *testing.T) {
 func TestTest_Timeout(t *testing.T) {
 	c := New("10.0.0.1", 6789, "u", "p", "", false)
 	c.http = &http.Client{
-		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		Transport: rttest.Func(func(*http.Request) (*http.Response, error) {
 			return nil, &netTimeoutErr{}
 		}),
 	}

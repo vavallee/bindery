@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/downloader/rttest"
 )
 
 func TestAuthError_Messages(t *testing.T) {
@@ -78,7 +80,7 @@ func TestLoginFailureStopsEveryCall(t *testing.T) {
 // failingAfterLogin logs in successfully (v5 204) and then fails every other
 // request at the transport, standing in for qBittorrent dying mid-session.
 func failingAfterLogin() *Client {
-	return newTransportClient(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	return newTransportClient(rttest.Func(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == "/api/v2/auth/login" {
 			return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: r}, nil
 		}
@@ -413,7 +415,7 @@ func TestGet_RetryPaths(t *testing.T) {
 	})
 	t.Run("retry transport error", func(t *testing.T) {
 		versionHits := 0
-		c := newTransportClient(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		c := newTransportClient(rttest.Func(func(r *http.Request) (*http.Response, error) {
 			switch r.URL.Path {
 			case "/api/v2/auth/login":
 				return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: r}, nil

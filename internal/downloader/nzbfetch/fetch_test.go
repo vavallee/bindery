@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/downloader/rttest"
+
 	"github.com/vavallee/bindery/internal/downloader/nzbfetch"
 )
 
@@ -109,7 +111,7 @@ func TestFetch_SuccessStatusWithoutNZBIsRejected(t *testing.T) {
 }
 
 func TestFetch_TransportErrorIsRedacted(t *testing.T) {
-	failing := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+	failing := &http.Client{Transport: rttest.Func(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("connection refused")
 	})}
 
@@ -121,7 +123,3 @@ func TestFetch_TransportErrorIsRedacted(t *testing.T) {
 		t.Fatalf("error leaks the apikey: %v", err)
 	}
 }
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
