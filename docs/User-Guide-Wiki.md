@@ -238,6 +238,14 @@ matches none of the books with that title and the folder name does. Loose files 
 filename alone; if those are misread, move them into author folders, or use
 Manual Import, which lets you pick the right book.
 
+A release folder, one whose name carries a format tag such as `[epub]` or
+`(m4b)`, like `The War of the Worlds - H. G. Wells [m4b]`, is read as a release
+name when a file sits directly in it: the author and title come from the name
+and the tags come off. A tagged folder with a book folder below it is still an
+author folder. Initials keep their dots (`H. G. Wells`, `J.R.R. Tolkien`) so the
+metadata search sees the name the way providers spell it; the same applies to
+automatic import and the library scan (#3974).
+
 Every token, the brace rules and some layouts to copy are in
 [File naming templates](File-Naming-Wiki.md).
 
@@ -873,16 +881,18 @@ writes a Calibre style `metadata.opf` next to each imported ebook and
 audiobook with its own title, author, series and identifiers. The book file
 itself is never modified.
 
-Reorganize also refreshes the sidecar for books that are already in the right
-place, so a library gets consistent sidecars without renaming anything. It only
+Reorganize also refreshes the sidecar, for every book it touches: one it moves
+and one that is already in the right place (#4008, #4034), so a library gets
+consistent sidecars without renaming anything. It only
 writes a `metadata.opf` that is missing or that Bindery wrote itself (new files
 carry a `bindery:generator` marker). A `metadata.opf` from Calibre,
 Audiobookshelf or a hand edit is left alone and counted as skipped, and a file
 that is already up to date is not rewritten. A folder that holds more than one book (a flat
 template such as `{Author}/{Title}.{ext}`) gets no sidecar, since one file cannot
 describe two books, and a `metadata.opf` that is a symlink is never replaced.
-Formats in External import mode
-are skipped. A write that fails, say on a read only mount, is reported for that
+When Reorganize finds a folder is shared and it holds a `metadata.opf` that
+Bindery wrote earlier, it removes that stale file. Formats in External import mode
+are skipped, unless Reorganize also moves the file after you confirm. A write that fails, say on a read only mount, is reported for that
 book and the run carries on. Imports still replace an existing sidecar.
 
 **Queue and History.** The Queue page shows live downloads and, importantly,
