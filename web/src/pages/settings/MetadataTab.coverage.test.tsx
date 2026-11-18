@@ -85,7 +85,7 @@ describe('MetadataTab library defaults', () => {
   it('persists default media type, strict flag and monitor mode', async () => {
     render(<MetadataTab />)
     await waitFor(() => expect(api.listSettings).toHaveBeenCalled())
-    const [, mediaType, monitorMode] = screen.getAllByRole('combobox')
+    const [, , mediaType, monitorMode] = screen.getAllByRole('combobox')
     expect(mediaType).toHaveValue('ebook')
     expect(monitorMode).toHaveValue('all')
 
@@ -134,7 +134,7 @@ describe('MetadataTab library defaults', () => {
     seedSettings({ 'author.default_monitor_mode': 'bogus' })
     render(<MetadataTab />)
     await waitFor(() => expect(api.listSettings).toHaveBeenCalled())
-    await waitFor(() => expect(screen.getAllByRole('combobox')[2]).toHaveValue('all'))
+    await waitFor(() => expect(screen.getAllByRole('combobox')[3]).toHaveValue('all'))
   })
 
   // #3287: Wikidata author enrichment is opt in and saved as a plain setting.

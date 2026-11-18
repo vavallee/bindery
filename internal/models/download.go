@@ -1,9 +1,11 @@
 package models
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type DownloadClient struct {
@@ -129,6 +131,16 @@ type Download struct {
 // reports the folder, the files come separately), or loose audiobook tracks.
 // Recording their folder instead would cover every unrelated file beside them.
 // An absolute path never starts with "[", so the two forms cannot be confused.
+//
+// A Linux path is any bytes but NUL, so a name can be invalid UTF-8 (a Latin-1
+// name from an old archive), and encoding/json would swap those bytes for
+// U+FFFD, naming a file that does not exist. Only such a path is written
+// differently: as the object {"b64":"<base64 of its bytes>"} in the array.
+// Every valid UTF-8 path is written exactly as before, so a downgrade still
+// reads the common case. An object entry cannot be mistaken for a path, since
+// it sits inside the array and a path there is always a JSON string. A single
+// path is stored as the plain string whatever its bytes: the TEXT column keeps
+// them as they are (see the database round trip test).
 func EncodeHandedOffSources(paths []string) string {
 	kept := make([]string, 0, len(paths))
 	for _, p := range paths {
@@ -142,11 +154,24 @@ func EncodeHandedOffSources(paths []string) string {
 	case 1:
 		return kept[0]
 	}
-	raw, err := json.Marshal(kept)
+	entries := make([]any, len(kept))
+	for i, p := range kept {
+		if utf8.ValidString(p) {
+			entries[i] = p
+		} else {
+			entries[i] = handedOffRawPath{B64: base64.StdEncoding.EncodeToString([]byte(p))}
+		}
+	}
+	raw, err := json.Marshal(entries)
 	if err != nil {
 		return ""
 	}
 	return string(raw)
+}
+
+// handedOffRawPath is how a path that is not valid UTF-8 is recorded.
+type handedOffRawPath struct {
+	B64 string `json:"b64"`
 }
 
 // HandedOffSources decodes ImportPath as EncodeHandedOffSources wrote it. A
@@ -157,9 +182,26 @@ func (d *Download) HandedOffSources() []string {
 		return nil
 	}
 	if strings.HasPrefix(v, "[") {
-		var paths []string
-		if err := json.Unmarshal([]byte(v), &paths); err != nil {
+		var entries []json.RawMessage
+		if err := json.Unmarshal([]byte(v), &entries); err != nil {
 			return nil
+		}
+		paths := make([]string, 0, len(entries))
+		for _, e := range entries {
+			var s string
+			if err := json.Unmarshal(e, &s); err == nil {
+				paths = append(paths, s)
+				continue
+			}
+			var o handedOffRawPath
+			if err := json.Unmarshal(e, &o); err != nil || o.B64 == "" {
+				return nil
+			}
+			b, err := base64.StdEncoding.DecodeString(o.B64)
+			if err != nil {
+				return nil
+			}
+			paths = append(paths, string(b))
 		}
 		return paths
 	}

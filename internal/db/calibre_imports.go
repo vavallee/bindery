@@ -371,20 +371,22 @@ func (r *CalibreEntitySnapshotRepo) Record(ctx context.Context, entity *models.C
 	outcome := mergeCalibreSnapshotOutcome(existingOutcome, entity.Outcome)
 	mergedJSON := mergeCalibreSnapshotMetadata(existingMetadata, metadataJSON)
 
-	result, err := r.db.ExecContext(ctx, `
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO calibre_entity_snapshots (run_id, source_id, entity_type, external_id, local_id, outcome, metadata_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(run_id, entity_type, external_id, local_id) DO UPDATE SET
 			outcome       = excluded.outcome,
-			metadata_json = excluded.metadata_json`,
-		entity.RunID, sourceID, entity.EntityType, entity.ExternalID, entity.LocalID, outcome, mergedJSON)
+			metadata_json = excluded.metadata_json
+		RETURNING id`,
+		entity.RunID, sourceID, entity.EntityType, entity.ExternalID, entity.LocalID, outcome, mergedJSON).Scan(&id)
 	if err != nil {
 		return fmt.Errorf("record calibre snapshot %d/%s/%s: %w", entity.RunID, entity.EntityType, entity.ExternalID, err)
 	}
+	// RETURNING, not LastInsertId: a conflict update leaves the connection's
+	// last insert id on an unrelated row (#3978).
 	if entity.ID == 0 {
-		if id, err := result.LastInsertId(); err == nil && id > 0 {
-			entity.ID = id
-		}
+		entity.ID = id
 	}
 	entity.SourceID = sourceID
 	entity.Outcome = outcome

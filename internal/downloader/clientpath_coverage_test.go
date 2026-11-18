@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
+
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -40,10 +42,8 @@ type qbitFake struct {
 
 func (f qbitFake) server(t *testing.T) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/app/version":
 			_, _ = w.Write([]byte("v4.6.0"))
 		case "/api/v2/torrents/categories":
@@ -61,9 +61,8 @@ func (f qbitFake) server(t *testing.T) *httptest.Server {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv
+	})
+	return srv.Server
 }
 
 // nzbgetFake answers version and config; config entries are Name/Value pairs.

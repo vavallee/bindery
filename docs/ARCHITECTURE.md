@@ -37,6 +37,12 @@ provider, so a save applies to the next lookup. Because the provider set is part
 of the cache keys, a smaller set never serves answers cached under a larger one;
 the two audiobook sources return before their cache is read while off.
 
+`metadata.audnex_region` picks the Audible marketplace audnex is asked (`us` by
+default; `ca`, `uk`, `au`, `fr`, `de`, `jp`, `it`, `in` and `es` are accepted). The
+audnex client is rebuilt for the new region on a save, sharing the old one's
+refusal gate, and the aggregator's answer cache starts empty so a result cached
+for one marketplace is not served for another (#3982).
+
 An author's photo and bio come from the author's own provider. When it has none,
 the optional *author enrichers* fill the gap on the staggered `refresh-metadata`
 job and on the two single author actions, adding an author and its Refresh
