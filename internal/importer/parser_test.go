@@ -1,6 +1,9 @@
 package importer
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseFilename(t *testing.T) {
 	tests := []struct {
@@ -331,5 +334,22 @@ func TestParseFilenameReleaseFolderNames(t *testing.T) {
 	}
 	if got := ParseFilename("/in/Title - Author (2019) [epub]"); got.Year != "2019" {
 		t.Errorf("year: got %q, want 2019", got.Year)
+	}
+}
+
+// A file name with a Latin-1 byte is legal on Linux. The parsed fields must
+// stay substrings of the name, because the title is used to look files up
+// again; a rune round trip had turned the byte into the 3 byte U+FFFD.
+func TestParseFilename_InvalidUTF8StaysSubstring(t *testing.T) {
+	for _, in := range []string{" 00\xbd0", " \xe5", "Caf\xe9 Society - Anne Author.epub", "Anne Author - Caf\xe9 Society.epub"} {
+		p := ParseFilename(in)
+		for name, f := range map[string]string{"title": p.Title, "author": p.Author, "series": p.Series} {
+			if f != "" && !strings.Contains(in, f) {
+				t.Errorf("%q: %s %q is not a substring of the input", in, name, f)
+			}
+		}
+	}
+	if p := ParseFilename("Caf\xe9 Society - Anne Author.epub"); p.Title != "Caf\xe9 Society" || p.Author != "Anne Author" {
+		t.Errorf("got title %q author %q", p.Title, p.Author)
 	}
 }
