@@ -11,6 +11,7 @@ import { FilterGroup } from '../components/FilterPopover'
 import FilterBar from '../components/FilterBar'
 import DataTable, { type Column } from '../components/DataTable'
 import Checkbox from '../components/Checkbox'
+import { selectingCardProps } from '../components/selectingClick'
 import { nextSort, splitSort } from '../components/tableSort'
 import { SkeletonCards, SkeletonRows } from '../components/Skeleton'
 import EmptyState from '../components/EmptyState'
@@ -634,7 +635,9 @@ export default function AuthorsPage() {
                     className={selectedIds.has(author.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}
                   />
                 </label>
-                <Link to={`/author/${author.id}`} state={authorNavState(i)} className="flex gap-3 p-4 pl-9 rounded-t-lg focus-visible:-outline-offset-2 hover:bg-slate-200/40 dark:hover:bg-zinc-800/40 transition-colors">
+                {/* While selecting, a click or Enter/Space on the card toggles
+                    it instead of opening the author (#3960). */}
+                <Link to={`/author/${author.id}`} state={authorNavState(i)} {...selectingCardProps(selectedIds.size > 0, () => toggleSelect(author.id))} className="flex gap-3 p-4 pl-9 rounded-t-lg focus-visible:-outline-offset-2 hover:bg-slate-200/40 dark:hover:bg-zinc-800/40 transition-colors">
                   <CoverImage loading="lazy" decoding="async" src={author.imageUrl} alt={author.authorName} className="w-16 h-16 rounded-full object-cover flex-shrink-0"
                     fallback={
                       <div className="w-16 h-16 rounded-full bg-slate-200 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0 text-xl font-bold text-fg-muted">
