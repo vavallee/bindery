@@ -14,9 +14,10 @@ const (
 
 // parseDateField reads a date sent on a metadata PUT. It accepts YYYY-MM-DD,
 // which the UI sends, and the RFC 3339 timestamp GET serializes, so a client
-// can write back what it read. The result is the calendar date at midnight
-// UTC, the form every date column is stored in. An empty string is a clear
-// and returns nil, true.
+// can write back what it read. A timestamp is read as the calendar date in
+// its own offset (midnight at +02:00 on 1 March is 1 March, not 29 February
+// in UTC). The result is that date at midnight UTC, the form every date
+// column is stored in. An empty string is a clear and returns nil, true.
 func parseDateField(s string) (*time.Time, bool) {
 	if s == "" {
 		return nil, true
@@ -28,13 +29,14 @@ func parseDateField(s string) (*time.Time, bool) {
 	if err != nil {
 		return nil, false
 	}
-	t = t.UTC()
 	d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 	return &d, true
 }
 
-// sameDay reports whether two optional dates name the same calendar day in
-// UTC, treating two nils as equal.
+// sameDay reports whether two optional dates name the same calendar day,
+// treating two nils as equal. Both sides are a stored date or a
+// parseDateField result, so both are midnight UTC and comparing the UTC date
+// is the calendar date the client meant.
 func sameDay(a, b *time.Time) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil

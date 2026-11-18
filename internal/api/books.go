@@ -702,7 +702,11 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 			book.LockField(models.BookFieldTitle)
 		}
 	}
-	if req.Description != nil && *req.Description != book.Description {
+	// GET serves the description cleaned of HTML (cleanBookDescription), so a
+	// client writing back what it read sends the cleaned form. That is not an
+	// edit: it neither locks nor replaces the stored HTML.
+	if req.Description != nil && *req.Description != book.Description &&
+		*req.Description != textutil.CleanDescription(book.Description) {
 		book.Description = *req.Description
 		book.LockField(models.BookFieldDescription)
 	}

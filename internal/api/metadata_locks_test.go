@@ -530,7 +530,10 @@ func TestBookUpdate_RoundTripLocksNothing(t *testing.T) {
 	b.Narrator = "Stored Narrator"
 	b.DurationSeconds = 36000
 	b.ASIN = "B000000001"
-	b.Description = "Stored description"
+	// GET serves the description cleaned of HTML, so the round trip sends
+	// back text that differs from the stored value without being an edit.
+	storedHTML := "<p>Stored <b>description</b></p>"
+	b.Description = storedHTML
 	if err := books.Update(ctx, b); err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +554,7 @@ func TestBookUpdate_RoundTripLocksNothing(t *testing.T) {
 			continue
 		}
 		if got.ReleaseDate == nil || !got.ReleaseDate.Equal(rd) || got.Narrator != "Stored Narrator" ||
-			got.DurationSeconds != 36000 || got.ASIN != "B000000001" {
+			got.DurationSeconds != 36000 || got.ASIN != "B000000001" || got.Description != storedHTML {
 			t.Fatalf("%s round trip changed values: %+v", name, got)
 		}
 	}
@@ -615,6 +618,30 @@ func TestBookUpdate_RecordingFieldCaps(t *testing.T) {
 	} {
 		if rec := putBook(t, h, id, body); rec.Code != http.StatusOK {
 			t.Errorf("at the cap: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestParseDateField_KeepsTheOffsetsCalendarDay pins that an RFC 3339 value is
+// read as the calendar date in its own offset, not the UTC date: midnight in
+// UTC+2 on 1 March is still 1 March.
+func TestParseDateField_KeepsTheOffsetsCalendarDay(t *testing.T) {
+	for in, want := range map[string]string{
+		"2024-03-01T00:00:00+02:00": "2024-03-01",
+		"2024-03-01T23:30:00-05:00": "2024-03-01",
+		"2024-03-01T00:00:00Z":      "2024-03-01",
+		"2024-03-01":                "2024-03-01",
+	} {
+		got, ok := parseDateField(in)
+		if !ok || got == nil {
+			t.Fatalf("%s: not parsed", in)
+		}
+		if got.Format("2006-01-02") != want || got.Location() != time.UTC || got.Hour() != 0 {
+			t.Errorf("%s: got %v, want %s at midnight UTC", in, got, want)
+		}
+		stored := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
+		if !sameDay(got, &stored) {
+			t.Errorf("%s: sameDay with the stored 2024-03-01 = false", in)
 		}
 	}
 }
