@@ -185,22 +185,6 @@ func (r *BookFileRepo) Add(ctx context.Context, bookID int64, format, path strin
 	return err
 }
 
-// AddIfMissing records a new on-disk file and reports whether this call is the
-// one that made the row the book's (see TrackResult.Created). A path the book
-// already tracks comes back false; a path another book owns comes back as
-// *PathOwnedError rather than being stolen or reported as handled.
-//
-// Callers that need to know what they own use this instead of Add: the Calibre
-// importer may only claim, and later roll back, a file row it actually created
-// (#1635), mirroring SeriesRepo.LinkBookIfMissing.
-func (r *BookFileRepo) AddIfMissing(ctx context.Context, bookID int64, format, path string) (bool, error) {
-	res, err := r.Track(ctx, bookID, format, path)
-	if err != nil {
-		return false, err
-	}
-	return res.Created(), nil
-}
-
 // MoveToBook makes bookID the owner of path, whoever held it before, and
 // returns the previous owner (0 when the path was untracked, bookID when it
 // was already the book's). It is for the explicit "this file belongs to that

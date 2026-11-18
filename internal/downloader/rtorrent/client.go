@@ -610,14 +610,6 @@ func (c *Client) RemoveTorrent(ctx context.Context, hash string) error {
 	return nil
 }
 
-// SetLabel writes a torrent's ruTorrent label (d.custom1).
-func (c *Client) SetLabel(ctx context.Context, hash, label string) error {
-	if _, err := c.call(ctx, "d.custom1.set", wireHash(hash), encodeLabel(label)); err != nil {
-		return fmt.Errorf("d.custom1.set: %w", err)
-	}
-	return nil
-}
-
 // wireHash renders a Bindery-side (lower-case) infohash in the upper-case hex
 // form rTorrent uses canonically.
 func wireHash(hash string) string {

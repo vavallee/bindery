@@ -227,27 +227,6 @@ func (r *HistoryRepo) ListForUser(ctx context.Context, userID int64) ([]models.H
 	return r.query(ctx, q, userID, userID)
 }
 
-// ListByBookAndUser is ListByBook filtered to the user's library — the route
-// already takes a bookId, but the user could supply someone else's id and
-// we'd happily list their grab/import history. The book lookup gates it.
-func (r *HistoryRepo) ListByBookAndUser(ctx context.Context, bookID, userID int64) ([]models.HistoryEvent, error) {
-	if userID == 0 {
-		return r.ListByBook(ctx, bookID)
-	}
-	q := "SELECT " + historyColumns + " FROM history WHERE book_id = ? AND " + historyUserScope + " ORDER BY created_at DESC"
-	return r.query(ctx, q, bookID, userID, userID)
-}
-
-// ListByTypeAndUser is ListByType filtered to the events userID may see
-// (historyUserScope).
-func (r *HistoryRepo) ListByTypeAndUser(ctx context.Context, eventType string, userID int64) ([]models.HistoryEvent, error) {
-	if userID == 0 {
-		return r.ListByType(ctx, eventType)
-	}
-	q := "SELECT " + historyColumns + " FROM history WHERE event_type = ? AND " + historyUserScope + " ORDER BY created_at DESC"
-	return r.query(ctx, q, eventType, userID, userID)
-}
-
 // GetOwnerByID resolves the owner of a history event: the owner stamped on the
 // row, or for a row with none, the current owner of its book. Returns:
 //   - (owner, true, nil) when the event exists and has an owner;

@@ -85,14 +85,10 @@ func TestBookRepo_ExcludedFlagAndListVariants(t *testing.T) {
 		t.Errorf("ListByAuthorIncludingExcluded: want 2, got %d", len(byAuthorAll))
 	}
 
-	// ListByStatus / IncludingExcluded
+	// ListByStatus skips excluded books.
 	byStatus, _ := bookRepo.ListByStatus(ctx, "wanted")
 	if len(byStatus) != 1 {
 		t.Errorf("ListByStatus: want 1, got %d", len(byStatus))
-	}
-	byStatusAll, _ := bookRepo.ListByStatusIncludingExcluded(ctx, "wanted")
-	if len(byStatusAll) != 2 {
-		t.Errorf("ListByStatusIncludingExcluded: want 2, got %d", len(byStatusAll))
 	}
 
 	// Unexclude.
@@ -172,58 +168,6 @@ func TestBookRepo_CalibreIDRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBookRepo_FindByAuthorAndTitleCaseInsensitive(t *testing.T) {
-	database, err := OpenMemory()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
-	ctx := context.Background()
-
-	authorRepo := NewAuthorRepo(database)
-	bookRepo := NewBookRepo(database)
-
-	a := mkAuthor(t, authorRepo, ctx, "OL-FT-A")
-	b := mkBook(t, bookRepo, ctx, a.ID, "OL-FT-B", "The Great Novel", "wanted")
-
-	// Exact match.
-	got, err := bookRepo.FindByAuthorAndTitle(ctx, a.ID, "The Great Novel")
-	if err != nil {
-		t.Fatalf("FindByAuthorAndTitle exact: %v", err)
-	}
-	if got == nil || got.ID != b.ID {
-		t.Errorf("exact match failed: %+v", got)
-	}
-
-	// Case-insensitive match.
-	got, err = bookRepo.FindByAuthorAndTitle(ctx, a.ID, "the great novel")
-	if err != nil {
-		t.Fatalf("FindByAuthorAndTitle lower: %v", err)
-	}
-	if got == nil || got.ID != b.ID {
-		t.Errorf("case-insensitive match failed: %+v", got)
-	}
-
-	// Wrong author — no match.
-	got, err = bookRepo.FindByAuthorAndTitle(ctx, 999, "The Great Novel")
-	if err != nil {
-		t.Fatalf("FindByAuthorAndTitle other author: %v", err)
-	}
-	if got != nil {
-		t.Errorf("expected nil for wrong author, got %+v", got)
-	}
-
-	// No match on title.
-	got, _ = bookRepo.FindByAuthorAndTitle(ctx, a.ID, "Unrelated")
-	if got != nil {
-		t.Error("expected nil for unrelated title")
-	}
-}
-
-// TestBookRepo_ListPopulatesAuthor is the regression test for #882. The
-// Books page and book detail page in the frontend both read
-// book.author.authorName; before the LEFT JOIN to authors was added, that
-// field was nil on every row and the UI rendered empty author columns.
 func TestBookRepo_ListPopulatesAuthor(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {

@@ -283,8 +283,8 @@ func TestAuthorRepo_GetByAnyForeignIDForUser_TenantIsolation(t *testing.T) {
 }
 
 // TestUserRepo_SessionEpoch exercises the session-revocation primitive: a fresh
-// user starts at epoch 0, BumpSessionEpoch increments it, and the new value is
-// persisted (re-read from the DB, not just returned in-memory).
+// user starts at epoch 1, each UpdatePassword increments it, and the new value
+// is persisted (re-read from the DB, not just returned in-memory).
 func TestUserRepo_SessionEpoch(t *testing.T) {
 	database, err := db.OpenMemory()
 	if err != nil {
@@ -315,9 +315,9 @@ func TestUserRepo_SessionEpoch(t *testing.T) {
 		t.Fatalf("initial epoch = %d, want %d", got, initialEpoch)
 	}
 
-	// Bump increments by one and is persisted.
-	if err := users.BumpSessionEpoch(ctx, u.ID); err != nil {
-		t.Fatalf("BumpSessionEpoch: %v", err)
+	// A password change increments the epoch by one and persists it.
+	if err := users.UpdatePassword(ctx, u.ID, "hash-2"); err != nil {
+		t.Fatalf("UpdatePassword: %v", err)
 	}
 	got, err = users.GetSessionEpoch(ctx, u.ID)
 	if err != nil {
@@ -329,8 +329,8 @@ func TestUserRepo_SessionEpoch(t *testing.T) {
 
 	// A second bump confirms monotonic increment, re-read from a fresh repo so
 	// the value can only come from the DB (no in-memory caching).
-	if err := users.BumpSessionEpoch(ctx, u.ID); err != nil {
-		t.Fatalf("second BumpSessionEpoch: %v", err)
+	if err := users.UpdatePassword(ctx, u.ID, "hash-3"); err != nil {
+		t.Fatalf("second UpdatePassword: %v", err)
 	}
 	freshRepo := db.NewUserRepo(database)
 	got, err = freshRepo.GetSessionEpoch(ctx, u.ID)

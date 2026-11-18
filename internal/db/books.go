@@ -621,11 +621,6 @@ func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userI
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
 }
 
-// ListByStatusIncludingExcluded returns books with the given status regardless of excluded flag.
-func (r *BookRepo) ListByStatusIncludingExcluded(ctx context.Context, status string) ([]models.Book, error) {
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 ORDER BY books.sort_key, sort_title", []any{status})
-}
-
 // ListByStatusIncludingExcludedAndUser is ListByStatusIncludingExcluded scoped
 // to a user's own + unowned books (userID 0 leaves it unscoped, for admins and
 // single-tenant deployments). The excluded-aware counterpart to
@@ -1829,33 +1824,13 @@ func (r *BookRepo) GetByCalibreID(ctx context.Context, calibreID int64) (*models
 	return &books[0], nil
 }
 
-// FindByAuthorAndTitle locates a book under authorID whose title matches
-// `title` case-insensitively (raw LOWER(title) = LOWER(?)).
-//
-// Deprecated for cross-source dedup: this exact-match-modulo-case lookup is
-// what caused #940 (it disagreed with the ABS importer's normalized match and
-// produced duplicate rows). Importers now use FindByAuthorAndDedupKey. Retained
-// only for callers that genuinely need a raw-title match.
-func (r *BookRepo) FindByAuthorAndTitle(ctx context.Context, authorID int64, title string) (*models.Book, error) {
-	books, err := r.query(ctx,
-		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND LOWER(title) = LOWER(?)",
-		[]any{authorID, title})
-	if err != nil {
-		return nil, err
-	}
-	if len(books) == 0 {
-		return nil, nil
-	}
-	return &books[0], nil
-}
-
 // FindByAuthorAndDedupKey locates a book under authorID whose stored canonical
 // dedup_key equals the key computed for `title` by indexer.CanonicalDedupKey.
-// This is the cross-source bind used by both the Calibre and ABS importers
-// (#940): because both sides compute the key with the same function and the
-// key is persisted at create time, a book imported from one source binds to
-// the existing row from the other regardless of import order, subtitle, case,
-// bracketed qualifier, or umlaut form.
+// It is the unscoped form of FindByAuthorAndDedupKeyVisibleTo, which the add
+// and list-sync paths call (#940): because every writer computes the key with
+// the same function and the key is persisted at create time, a book added
+// from one source binds to the existing row from another regardless of order,
+// subtitle, case, bracketed qualifier, or umlaut form.
 //
 // An empty computed key (blank/whitespace title) never matches: the early
 // return avoids a query that would otherwise collapse every untitled row under

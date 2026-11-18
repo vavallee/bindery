@@ -480,15 +480,6 @@ func TestDownloadClientRepo_ExtraMethods(t *testing.T) {
 	ctx := context.Background()
 	repo := NewDownloadClientRepo(database)
 
-	// GetFirstEnabled — empty
-	client, err := repo.GetFirstEnabled(ctx)
-	if err != nil {
-		t.Fatalf("GetFirstEnabled empty: %v", err)
-	}
-	if client != nil {
-		t.Error("expected nil when no clients")
-	}
-
 	// List — empty
 	all, err := repo.List(ctx)
 	if err != nil {
@@ -518,15 +509,6 @@ func TestDownloadClientRepo_ExtraMethods(t *testing.T) {
 	}
 	if len(all) != 1 {
 		t.Errorf("expected 1 client, got %d", len(all))
-	}
-
-	// GetFirstEnabled
-	first, err := repo.GetFirstEnabled(ctx)
-	if err != nil {
-		t.Fatalf("GetFirstEnabled: %v", err)
-	}
-	if first == nil || first.Name != "My SAB" {
-		t.Errorf("GetFirstEnabled: got %v", first)
 	}
 
 	// Update

@@ -893,7 +893,10 @@ func TestPickClientForMediaType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := PickClientForMediaType(tt.clients, tt.mediaType)
+			var got *models.DownloadClient
+			if ranked := RankClientsForMediaType(tt.clients, tt.mediaType); len(ranked) > 0 {
+				got = &ranked[0]
+			}
 			if tt.wantID == 0 {
 				if got != nil {
 					t.Errorf("expected nil, got client ID %d", got.ID)
@@ -1158,16 +1161,6 @@ func TestDownloadClientRepoGetEnabledByProtocol(t *testing.T) {
 	}
 	if len(torrents) != 1 || torrents[0].Type != "qbittorrent" {
 		t.Errorf("torrent: expected 1 qbittorrent client, got %v", torrents)
-	}
-
-	// GetFirstEnabledByProtocol falls back to any client when none of the
-	// preferred type exists
-	client, err := repo.GetFirstEnabledByProtocol(ctx, "torrent")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if client == nil || client.Type != "qbittorrent" {
-		t.Errorf("expected qbittorrent fallback, got %v", client)
 	}
 }
 
@@ -2395,15 +2388,6 @@ func TestUserRepoCRUD(t *testing.T) {
 	got, _ = repo.GetByID(ctx, u.ID)
 	if got.PasswordHash != "new-hash" {
 		t.Errorf("expected new-hash, got %q", got.PasswordHash)
-	}
-
-	// UpdateUsername
-	if err := repo.UpdateUsername(ctx, u.ID, "superadmin"); err != nil {
-		t.Fatalf("UpdateUsername: %v", err)
-	}
-	got, _ = repo.GetByID(ctx, u.ID)
-	if got.Username != "superadmin" {
-		t.Errorf("expected superadmin, got %q", got.Username)
 	}
 }
 
