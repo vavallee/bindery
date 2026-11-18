@@ -3,9 +3,10 @@ package qbittorrent
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
 )
 
 // shareLimitsStub records the form of the last setShareLimits call, enforcing
@@ -13,10 +14,8 @@ import (
 func shareLimitsStub(t *testing.T) (*Client, *url.Values) {
 	t.Helper()
 	got := &url.Values{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/setShareLimits":
 			_ = r.ParseForm()
 			if !requireShareLimitParams(w, r) {
@@ -27,10 +26,8 @@ func shareLimitsStub(t *testing.T) (*Client, *url.Values) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	t.Cleanup(srv.Close)
+	})
 	c := newTestClient(srv.URL, "u", "p")
-	c.loggedIn = true
 	return c, got
 }
 

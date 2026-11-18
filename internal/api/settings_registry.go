@@ -5,6 +5,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/abs"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/metadata/audnex"
 )
 
 // SettingType is the shape of a stored setting value. Every value in the
@@ -175,6 +176,12 @@ var settingDescriptors = []SettingDescriptor{
 	{
 		Key: SettingMetadataAuthorWikidata, Type: SettingTypeBool, Default: "false",
 		Description: "Fill an author's missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author's authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Off by default: while off, Wikimedia is sent no request. A change applies to the next metadata lookup, without a restart.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingMetadataAudnexRegion, Type: SettingTypeEnum, Default: audnex.DefaultRegion,
+		Values:      audnex.Regions,
+		Description: "Audible marketplace audnex looks an ASIN up in: us, ca, uk, au, fr, de, jp, it, in or es. An ASIN sold only on another marketplace is a 404 in the US one, so set this to the marketplace your audiobooks come from. Only one marketplace is asked, with no fallback to the others. A change applies to the next metadata lookup, without a restart.",
 		State:       SettingStateActive,
 	},
 	{

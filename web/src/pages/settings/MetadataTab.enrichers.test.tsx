@@ -141,3 +141,34 @@ describe('Metadata sources that can be turned off', () => {
     expect(ol.checked).toBe(true)
   })
 })
+
+// #3982: audnex answers per Audible marketplace, so the region is a setting.
+describe('audnex marketplace', () => {
+  const REGION_KEY = 'metadata.audnex_region'
+
+  it('shows the US marketplace when nothing is stored', async () => {
+    render(<MetadataTab />)
+    const select = (await screen.findByLabelText('audnex marketplace')) as HTMLSelectElement
+    expect(select.value).toBe('us')
+    expect(Array.from(select.options).map(o => o.value)).toEqual(
+      ['us', 'ca', 'uk', 'au', 'fr', 'de', 'jp', 'it', 'in', 'es'],
+    )
+  })
+
+  it('reflects a stored marketplace and falls back to US for an unknown one', async () => {
+    seedSettings({ [REGION_KEY]: 'de' })
+    const { unmount } = render(<MetadataTab />)
+    await waitFor(async () => expect(((await screen.findByLabelText('audnex marketplace')) as HTMLSelectElement).value).toBe('de'))
+    unmount()
+    seedSettings({ [REGION_KEY]: 'atlantis' })
+    render(<MetadataTab />)
+    expect(((await screen.findByLabelText('audnex marketplace')) as HTMLSelectElement).value).toBe('us')
+  })
+
+  it('saves the chosen marketplace', async () => {
+    render(<MetadataTab />)
+    fireEvent.change(await screen.findByLabelText('audnex marketplace'), { target: { value: 'de' } })
+    await waitFor(() => expect(api.setSetting).toHaveBeenLastCalledWith(REGION_KEY, 'de'))
+    expect(((await screen.findByLabelText('audnex marketplace')) as HTMLSelectElement).value).toBe('de')
+  })
+})

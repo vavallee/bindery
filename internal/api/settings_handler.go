@@ -19,6 +19,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/importer"
+	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
@@ -97,6 +98,13 @@ const SettingMetadataPrimaryProvider = "metadata.primary_provider"
 // stores. Off by default, so an install that has not chosen it sends
 // Wikimedia nothing.
 const SettingMetadataAuthorWikidata = "metadata.author_enrichment.wikidata"
+
+// SettingMetadataAudnexRegion is the Audible marketplace audnex is asked for
+// an ASIN (#3982). Default "us". A German or French ASIN is a 404 in the US
+// catalogue and resolves in its own, so an operator whose library is bought
+// from another marketplace sets this to match. The values are
+// audnex.Regions.
+const SettingMetadataAudnexRegion = "metadata.audnex_region"
 
 // SettingMetadataEnrichersDisabled lists the metadata enrichers an operator
 // has turned off (#1890): a comma separated list of names from
@@ -1240,6 +1248,12 @@ func validateSettingValue(key, value string) error {
 		// this pure validator can't see — Set() enforces that separately.
 		if !IsMetadataPrimaryProviderValid(value) {
 			return fmt.Errorf("metadata.primary_provider %q is not one of: %s", value, strings.Join(MetadataPrimaryProviders, ", "))
+		}
+	case SettingMetadataAudnexRegion:
+		// Empty means us. Anything else must be a marketplace audnex accepts,
+		// since it answers 400 to the rest and every lookup would fail.
+		if value != "" && !audnex.ValidRegion(value) {
+			return fmt.Errorf("%s %q is not one of: %s", key, value, strings.Join(audnex.Regions, ", "))
 		}
 	case SettingMetadataEnrichersDisabled:
 		// Unknown names are refused rather than dropped, like an unknown

@@ -537,3 +537,39 @@ func TestManualImportScan_HeldDownloadHidesOnlyItsOwnFile(t *testing.T) {
 		t.Errorf("an unrelated audiobook folder beside it was hidden: %+v", items)
 	}
 }
+
+// TestHandedOffSources_NonUTF8SourceStaysHidden: a source whose name is not
+// valid UTF-8 (a Latin-1 name from an old archive) is recorded with several
+// others and must still be in the index byte for byte, or the folder scan
+// would offer it again.
+func TestHandedOffSources_NonUTF8SourceStaysHidden(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	ctx := context.Background()
+	downloads := db.NewDownloadRepo(database)
+	root := resolvedTempDir(t)
+	intake := filepath.Join(root, "downloads")
+	odd := filepath.Join(intake, "Book", "caf\xe9.epub")
+	plain := filepath.Join(intake, "Book", "plain.epub")
+
+	dl := &models.Download{GUID: "handoff-nonutf8", Title: "t", Status: models.StateImportExternal}
+	if err := downloads.Create(ctx, dl); err != nil {
+		t.Fatal(err)
+	}
+	if err := downloads.SetImportPath(ctx, dl.ID, models.EncodeHandedOffSources([]string{odd, plain})); err != nil {
+		t.Fatal(err)
+	}
+	h := NewManualImportHandler(&stubManualImportScanner{}, downloads, nil).
+		WithRoots(NewLibraryRoots(nil, root)).WithExcludedDirs(intake)
+
+	idx, err := h.handedOffSources(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !idx.covers(odd) || !idx.covers(plain) {
+		t.Errorf("index %q misses a handed off source", idx.paths)
+	}
+}
