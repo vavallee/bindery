@@ -606,7 +606,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		slog.Info("importing audiobook folder", "src", audiobookSource, "dst", destDir, "mode", mode, "perFile", usePerFile)
 		// Single-file audiobook releases (e.g. a lone .m4b from a torrent) give
-		// us a file path rather than a folder. MoveDir/CopyDir/HardlinkDir all
+		// us a file path rather than a folder. MoveDirCtx/CopyDirCtx/HardlinkDir all
 		// reject non-directory sources, so place the file inside destDir.
 		var dirErr error
 		if usePerFile {
