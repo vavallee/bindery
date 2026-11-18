@@ -1,2 +1,0 @@
-### Fixed
-- **Approving a request now searches for a book that was already wanted** (#3961). If a request was approved for a book the library already monitored but had no file for, the request resolved and nothing went looking for it, even with search on add ticked, which was most visible when the author was not monitored. Approving now starts the search whenever the requested format is monitored and not on disk, and a format that is already on disk is still left alone. Thanks to flaevers for the report.
