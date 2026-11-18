@@ -3,7 +3,6 @@ package importer
 import (
 	"context"
 	"log/slog"
-	"os"
 	"path/filepath"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -19,19 +18,14 @@ type folderIndex struct {
 }
 
 // folderOf is the folder a tracked path occupies: the path itself for an
-// audiobook folder, its parent for a single file. A path that is not on disk
-// yet (a planned destination) is a folder unless it carries a file extension.
-func folderOf(path string) string {
-	if info, err := os.Stat(path); err == nil {
-		if info.IsDir() {
-			return path
-		}
-		return filepath.Dir(path)
+// audiobook folder, its parent for a single file. It decides from the format
+// and the file extension alone and never touches disk, so a planned
+// destination that does not exist yet is classified the same way.
+func folderOf(path, format string) string {
+	if format == models.MediaTypeAudiobook && !IsAudioFile(path) {
+		return path
 	}
-	if IsAudioFile(path) || IsEbookFile(path) {
-		return filepath.Dir(path)
-	}
-	return path
+	return filepath.Dir(path)
 }
 
 func (x *folderIndex) add(s *Scanner, folder string, bookID int64, delta int) {
@@ -65,14 +59,14 @@ func (s *Scanner) buildFolderIndex(ctx context.Context, planned []ReorganizeMove
 	}
 	x := &folderIndex{byFolder: make(map[string]map[int64]int, len(owners))}
 	for _, o := range owners {
-		x.add(s, folderOf(o.Path), o.BookID, 1)
+		x.add(s, folderOf(o.Path, o.Format), o.BookID, 1)
 	}
 	for _, m := range planned {
 		if m.Status != ReorgStatusMove {
 			continue
 		}
-		x.add(s, folderOf(m.Current), m.BookID, -1)
-		x.add(s, folderOf(m.Proposed), m.BookID, 1)
+		x.add(s, folderOf(m.Current, m.Format), m.BookID, -1)
+		x.add(s, folderOf(m.Proposed, m.Format), m.BookID, 1)
 	}
 	return x
 }
@@ -122,7 +116,7 @@ func (s *Scanner) annotateSidecars(ctx context.Context, moves []ReorganizeMove) 
 			m.Sidecar, m.SidecarMessage = s.sidecarForNoop(ctx, true, idx, c.book, c.author, c.sTitle, c.sNum,
 				models.BookFile{ID: m.FileID, Format: m.Format, Path: m.Current})
 		case ReorgStatusMove:
-			if idx != nil && idx.sharedBy(s, folderOf(m.Proposed), m.BookID) {
+			if idx != nil && idx.sharedBy(s, folderOf(m.Proposed, m.Format), m.BookID) {
 				m.Sidecar = ReorgSidecarShared
 				m.SidecarMessage = "folder holds files of more than one book, no metadata.opf written"
 			}
