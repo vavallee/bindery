@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,19 +47,31 @@ func (c AudibleSyncStoredConfig) Client() (*audiblesync.Client, error) {
 }
 
 // LoadAudibleSyncConfig reads the Audible Sync configuration from settings.
-func LoadAudibleSyncConfig(ctx context.Context, settings *db.SettingsRepo) AudibleSyncStoredConfig {
+//
+// A failed settings read is returned, not taken for an unset value: it would
+// otherwise pass for "not configured" and send the admin to fix settings that
+// are fine.
+func LoadAudibleSyncConfig(ctx context.Context, settings *db.SettingsRepo) (AudibleSyncStoredConfig, error) {
+	var firstErr error
 	get := func(key string) string {
-		s, _ := settings.Get(ctx, key)
+		s, err := settings.Get(ctx, key)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("read setting %s: %w", key, err)
+			}
+			return ""
+		}
 		if s == nil {
 			return ""
 		}
 		return strings.TrimSpace(s.Value)
 	}
-	return AudibleSyncStoredConfig{
+	cfg := AudibleSyncStoredConfig{
 		Enabled:  strings.EqualFold(get(SettingAudibleSyncEnabled), "true"),
 		BaseURL:  get(SettingAudibleSyncBaseURL),
 		APIToken: get(SettingAudibleSyncAPIToken),
 	}
+	return cfg, firstErr
 }
 
 // AudibleSyncConfigResponse is GET /audiblesync/config. The token is never
@@ -116,7 +129,12 @@ func NewAudibleSyncHandler(settings *db.SettingsRepo) *AudibleSyncHandler {
 
 // GetConfig returns the stored configuration with the token redacted.
 func (h *AudibleSyncHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, audibleSyncConfigResponse(LoadAudibleSyncConfig(r.Context(), h.settings)))
+	cfg, err := LoadAudibleSyncConfig(r.Context(), h.settings)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, audibleSyncConfigResponse(cfg))
 }
 
 func audibleSyncConfigResponse(cfg AudibleSyncStoredConfig) AudibleSyncConfigResponse {
@@ -173,7 +191,12 @@ func (h *AudibleSyncHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, audibleSyncConfigResponse(LoadAudibleSyncConfig(ctx, h.settings)))
+	cfg, err := LoadAudibleSyncConfig(ctx, h.settings)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, audibleSyncConfigResponse(cfg))
 }
 
 // Test probes the saved Audible Sync URL. A token in the body is tried in
@@ -198,7 +221,10 @@ func (h *AudibleSyncHandler) Test(w http.ResponseWriter, r *http.Request) {
 	}
 	accounts, err := client.Accounts(ctx)
 	if err != nil {
-		msg := err.Error()
+		// Through upstreamDetail, as Accounts does: Audible Sync's own error
+		// text is redacted and cut to its first line.
+		slog.Warn("Audible Sync: test could not list accounts", "baseURL", cfg.BaseURL, "error", err)
+		msg := upstreamDetail(err.Error())
 		if errors.Is(err, audiblesync.ErrUnauthorized) {
 			msg = "Audible Sync answered, but rejected the API token. Find it in Settings, API token in Audible Sync, or its AUDIBLE_SYNC_API_TOKEN."
 		}
@@ -237,7 +263,10 @@ func (h *AudibleSyncHandler) Accounts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AudibleSyncHandler) clientFromProbe(r *http.Request) (audibleSyncProber, AudibleSyncStoredConfig, error) {
-	cfg := LoadAudibleSyncConfig(r.Context(), h.settings)
+	cfg, err := LoadAudibleSyncConfig(r.Context(), h.settings)
+	if err != nil {
+		return nil, cfg, err
+	}
 	var req struct {
 		APIToken string `json:"apiToken"`
 	}

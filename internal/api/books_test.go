@@ -326,6 +326,27 @@ func TestBookUpdate_PatchesOnlyProvidedFields(t *testing.T) {
 	}
 }
 
+// TestBookUpdate_NormalizesASIN: a hand-typed ASIN is stored as every ingest
+// path stores it, so exact matches (the importer's, an import list's) find it.
+func TestBookUpdate_NormalizesASIN(t *testing.T) {
+	h, books, _, author, ctx := bookFixture(t)
+	book := &models.Book{ForeignID: "B2", AuthorID: author.ID, Title: "T", SortTitle: "t", Status: "wanted",
+		MediaType: models.MediaTypeAudiobook, Genres: []string{}, MetadataProvider: "openlibrary"}
+	if err := books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	body := bytes.NewBufferString(`{"asin":" b0abc12345 "}`)
+	req := withURLParam(httptest.NewRequest(http.MethodPut, "/api/v1/book/"+strconv.FormatInt(book.ID, 10), body), "id", strconv.FormatInt(book.ID, 10))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got, _ := books.GetByID(ctx, book.ID); got.ASIN != "B0ABC12345" {
+		t.Fatalf("ASIN = %q, want B0ABC12345", got.ASIN)
+	}
+}
+
 // TestBookUpdate_RejectsInvalidMediaType guards the enum. Free-form media
 // types would break the importer routing (ebook vs audiobook folder logic).
 func TestBookUpdate_RejectsInvalidMediaType(t *testing.T) {

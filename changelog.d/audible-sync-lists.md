@@ -3,3 +3,4 @@
 
 ### Fixed
 - Books and authors with an `audible:` or `audnex:` id are no longer classified as OpenLibrary, so Bindery stops asking OpenLibrary for an id it cannot know.
+- An ASIN typed into a book's edit form is stored in the same case as every import stores it, so the importer and import lists match it.

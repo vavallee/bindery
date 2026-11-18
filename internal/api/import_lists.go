@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -248,6 +250,15 @@ func (h *ImportListHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
+	// The books a list created were created from its source and account;
+	// pointed elsewhere, those records would make the next sync act on books
+	// the new source never listed (an unavailable books list releasing a
+	// wishlist's books, say). Start the record afresh.
+	if existing.Type != il.Type || existing.URL != il.URL || existing.Account != il.Account {
+		if err := h.repo.ForgetBooks(r.Context(), id); err != nil {
+			slog.Warn("import list: could not clear the books it created after its source changed", "list", il.Name, "error", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, importListResponse(il))
 }
 
@@ -304,8 +315,16 @@ func (h *ImportListHandler) HardcoverLists(w http.ResponseWriter, r *http.Reques
 // per Audible account: its wishlist and its unavailable books, with counts,
 // for the Import tab to pick from the way it picks Hardcover lists.
 // GET /api/v1/importlist/audiblesync/lists
+// audibleSyncCountTimeout bounds the list counts the Import tab shows; a
+// variable so tests can shorten it.
+var audibleSyncCountTimeout = 5 * time.Second
+
 func (h *ImportListHandler) AudibleSyncLists(w http.ResponseWriter, r *http.Request) {
-	cfg := LoadAudibleSyncConfig(r.Context(), h.settings)
+	cfg, err := LoadAudibleSyncConfig(r.Context(), h.settings)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
 	if !cfg.Usable() {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": audiblesynclistsyncer.ErrNotConfigured.Error()})
 		return
@@ -318,26 +337,42 @@ func (h *ImportListHandler) AudibleSyncLists(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 	accounts, err := client.Accounts(ctx)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeUpstreamDetail(w, r, http.StatusBadGateway, err.Error(), err)
 		return
 	}
 	out := make([]AudibleSyncList, 0, 2*len(accounts))
-	count := func(n int, err error) int {
-		if err != nil {
-			slog.Debug("Audible Sync lists: count unavailable", "error", err)
-			return -1
-		}
-		return n
-	}
 	for _, a := range accounts {
-		base := AudibleSyncList{AccountID: a.ID, AccountName: a.Name, CountryCode: a.CountryCode, NeedsLogin: a.NeedsLogin}
+		base := AudibleSyncList{AccountID: a.ID, AccountName: a.Name, CountryCode: a.CountryCode, NeedsLogin: a.NeedsLogin, BooksCount: -1}
 		wish, unavailable := base, base
 		wish.Source = models.ImportListSourceWishlist
-		wish.BooksCount = count(client.WishlistTotal(ctx, a.ID))
 		unavailable.Source = models.ImportListSourceUnavailable
-		unavailable.BooksCount = count(client.LibraryTotal(ctx, a.ID, audiblesync.LibraryStatusUnavailable))
 		out = append(out, wish, unavailable)
 	}
+	// The counts are only shown beside each list, so they are read side by
+	// side under one short deadline, and a slow or failing read leaves its
+	// count unknown (-1) instead of holding the whole answer up.
+	countCtx, cancel := context.WithTimeout(ctx, audibleSyncCountTimeout)
+	defer cancel()
+	var wg sync.WaitGroup
+	for i := range out {
+		wg.Add(1)
+		go func(l *AudibleSyncList) {
+			defer wg.Done()
+			var n int
+			var err error
+			if l.Source == models.ImportListSourceWishlist {
+				n, err = client.WishlistTotal(countCtx, l.AccountID)
+			} else {
+				n, err = client.LibraryTotal(countCtx, l.AccountID, audiblesync.LibraryStatusUnavailable)
+			}
+			if err != nil {
+				slog.Debug("Audible Sync lists: count unavailable", "account", l.AccountID, "source", l.Source, "error", err)
+				return
+			}
+			l.BooksCount = n
+		}(&out[i])
+	}
+	wg.Wait()
 	writeJSON(w, http.StatusOK, out)
 }
 

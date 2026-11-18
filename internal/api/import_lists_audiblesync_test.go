@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -227,5 +228,111 @@ func TestSyncReportsAFailedListRead(t *testing.T) {
 	}
 	if len(hc.starts) != 0 {
 		t.Fatalf("hardcover syncer started for an unread list: %v", hc.starts)
+	}
+}
+
+// fakeSlowBrowser answers the accounts but never a count, as an Audible Sync
+// behind a proxy that hangs would.
+type fakeSlowBrowser struct{ fakeASBrowser }
+
+func (fakeSlowBrowser) WishlistTotal(ctx context.Context, _ int) (int, error) {
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
+func (fakeSlowBrowser) LibraryTotal(ctx context.Context, _ int, _ string) (int, error) {
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
+
+// Slow counts do not hold the lists up: they come back unknown once the
+// short deadline passes.
+func TestAudibleSyncListsDoesNotWaitOnSlowCounts(t *testing.T) {
+	h, _, settings := importListFixture(t)
+	ctx := context.Background()
+	_ = settings.Set(ctx, SettingAudibleSyncEnabled, "true")
+	_ = settings.Set(ctx, SettingAudibleSyncBaseURL, "http://10.0.0.5:8080")
+	_ = settings.Set(ctx, SettingAudibleSyncAPIToken, "t")
+	h.asLists = func(AudibleSyncStoredConfig) (audibleSyncListBrowser, error) { return fakeSlowBrowser{}, nil }
+	prev := audibleSyncCountTimeout
+	audibleSyncCountTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { audibleSyncCountTimeout = prev })
+
+	start := time.Now()
+	rec := httptest.NewRecorder()
+	h.AudibleSyncLists(rec, httptest.NewRequest(http.MethodGet, "/importlist/audiblesync/lists", nil))
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("took %v; the counts must be read side by side under one deadline", elapsed)
+	}
+	var lists []AudibleSyncList
+	_ = json.NewDecoder(rec.Body).Decode(&lists)
+	if rec.Code != http.StatusOK || len(lists) != 4 {
+		t.Fatalf("%d %+v", rec.Code, lists)
+	}
+	for _, l := range lists {
+		if l.BooksCount != -1 {
+			t.Fatalf("list %+v; a count that timed out is unknown", l)
+		}
+	}
+}
+
+// A list pointed at another source forgets the books it created, so the next
+// sync cannot act on books the new source never listed.
+func TestChangingAnAudibleSyncListsSourceForgetsItsBooks(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	repo := db.NewImportListRepo(database)
+	h := NewImportListHandler(repo, db.NewSettingsRepo(database), nil, db.NewUserRepo(database))
+	ctx := context.Background()
+	author := &models.Author{ForeignID: "OL1A", Name: "A", SortName: "A", MetadataProvider: "openlibrary"}
+	if err := db.NewAuthorRepo(database).Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ForeignID: "OL1W", AuthorID: author.ID, Title: "B", SortTitle: "B", Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary"}
+	if err := db.NewBookRepo(database).Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	bookID := book.ID
+	_, il := createList(t, h, `{"name":"Wishlist","type":"audiblesync","account":"1","enabled":true}`)
+	r := chi.NewRouter()
+	r.Put("/importlist/{id}", h.Update)
+	put := func(body string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/importlist/"+strconv.FormatInt(il.ID, 10), bytes.NewBufferString(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%d %s", rec.Code, rec.Body.String())
+		}
+	}
+	record := func() {
+		t.Helper()
+		if err := repo.RecordBook(ctx, il.ID, bookID, "B000000001", 7); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func() int {
+		t.Helper()
+		recs, err := repo.ListBooks(ctx, il.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(recs)
+	}
+
+	record()
+	put(`{"skipOwned":false}`)
+	if count() != 1 {
+		t.Fatal("an option change must keep the list's books")
+	}
+	put(`{"url":"unavailable"}`)
+	if count() != 0 {
+		t.Fatal("a source change must forget the list's books")
+	}
+	record()
+	put(`{"account":"2"}`)
+	if count() != 0 {
+		t.Fatal("an account change must forget the list's books")
 	}
 }

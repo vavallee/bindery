@@ -144,17 +144,31 @@ func TestAudibleSyncTestReportsAccountsAndBadToken(t *testing.T) {
 func TestLoadAudibleSyncConfigUsable(t *testing.T) {
 	_, settings := audibleSyncFixture(t)
 	ctx := context.Background()
-	if LoadAudibleSyncConfig(ctx, settings).Usable() {
-		t.Fatal("empty config must not be usable")
+	if cfg, err := LoadAudibleSyncConfig(ctx, settings); err != nil || cfg.Usable() {
+		t.Fatalf("empty config = %+v, %v; must load and not be usable", cfg, err)
 	}
 	_ = settings.SetMany(ctx, []db.SettingKV{
 		{Key: SettingAudibleSyncEnabled, Value: "true"},
 		{Key: SettingAudibleSyncBaseURL, Value: "http://10.0.0.5:8080"},
 		{Key: SettingAudibleSyncAPIToken, Value: "t"},
 	})
-	cfg := LoadAudibleSyncConfig(ctx, settings)
-	if !cfg.Usable() {
-		t.Fatalf("cfg = %+v", cfg)
+	cfg, err := LoadAudibleSyncConfig(ctx, settings)
+	if err != nil || !cfg.Usable() {
+		t.Fatalf("cfg = %+v, %v", cfg, err)
+	}
+}
+
+// A failed read is an error, not an empty setting that would pass for "not
+// configured".
+func TestLoadAudibleSyncConfigReportsAFailedRead(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := db.NewSettingsRepo(database)
+	database.Close()
+	if _, err := LoadAudibleSyncConfig(context.Background(), settings); err == nil {
+		t.Fatal("a failed settings read must be reported")
 	}
 }
 

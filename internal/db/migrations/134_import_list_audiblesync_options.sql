@@ -33,7 +33,30 @@ CREATE TABLE import_list_books (
 );
 CREATE INDEX idx_import_list_books_book ON import_list_books(book_id);
 
+-- Audible ids name their own providers now (models.BookProviderFromForeignID,
+-- models.AuthorProviderFromForeignID): "audible:" ids, from the direct Audible
+-- client or Audible Sync, and "audnex:" ids. Rows written before fell through
+-- to "openlibrary", which made Bindery ask OpenLibrary for an id it cannot
+-- know; correct them, as migration 078 did for "calibre:" and "abs:".
+UPDATE book_identifiers SET provider = 'audible'
+    WHERE provider = 'openlibrary' AND LOWER(foreign_id) LIKE 'audible:%';
+UPDATE book_identifiers SET provider = 'audnex'
+    WHERE provider = 'openlibrary' AND LOWER(foreign_id) LIKE 'audnex:%';
+UPDATE author_identifiers SET provider = 'audible'
+    WHERE provider = 'openlibrary' AND LOWER(foreign_id) LIKE 'audible:%';
+UPDATE author_identifiers SET provider = 'audnex'
+    WHERE provider = 'openlibrary' AND LOWER(foreign_id) LIKE 'audnex:%';
+UPDATE books SET metadata_provider = 'audible'
+    WHERE metadata_provider = 'openlibrary' AND LOWER(foreign_id) LIKE 'audible:%';
+UPDATE books SET metadata_provider = 'audnex'
+    WHERE metadata_provider = 'openlibrary' AND LOWER(foreign_id) LIKE 'audnex:%';
+UPDATE authors SET metadata_provider = 'audible'
+    WHERE metadata_provider = 'openlibrary' AND LOWER(foreign_id) LIKE 'audible:%';
+UPDATE authors SET metadata_provider = 'audnex'
+    WHERE metadata_provider = 'openlibrary' AND LOWER(foreign_id) LIKE 'audnex:%';
+
 -- +migrate Down
+-- The provider corrections above stay: "openlibrary" was never right for them.
 DROP TABLE import_list_books;
 ALTER TABLE import_lists DROP COLUMN remove_on_import;
 ALTER TABLE import_lists DROP COLUMN skip_owned;

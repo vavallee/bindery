@@ -199,6 +199,16 @@ func (r *ImportListRepo) ForgetBook(ctx context.Context, listID, bookID int64) e
 	return nil
 }
 
+// ForgetBooks drops every record of the books list listID created, as when
+// the list is pointed at another source or account and the records no longer
+// describe it. The books themselves are untouched.
+func (r *ImportListRepo) ForgetBooks(ctx context.Context, listID int64) error {
+	if _, err := r.db.ExecContext(ctx, "DELETE FROM import_list_books WHERE import_list_id = ?", listID); err != nil {
+		return fmt.Errorf("forget the books of import list %d: %w", listID, err)
+	}
+	return nil
+}
+
 // --- Exclusions ---
 
 func (r *ImportListRepo) ListExclusions(ctx context.Context) ([]models.ImportListExclusion, error) {

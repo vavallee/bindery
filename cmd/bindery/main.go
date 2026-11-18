@@ -630,7 +630,10 @@ func main() {
 	// every pass, so configuring Audible Sync needs no restart.
 	asListSyncer := audiblesynclistsyncer.New(importListRepo, authorRepo, bookRepo,
 		func(ctx context.Context) (audiblesynclistsyncer.Client, error) {
-			cfg := api.LoadAudibleSyncConfig(ctx, settingsRepo)
+			cfg, err := api.LoadAudibleSyncConfig(ctx, settingsRepo)
+			if err != nil {
+				return nil, err
+			}
 			if !cfg.Usable() {
 				return nil, audiblesynclistsyncer.ErrNotConfigured
 			}

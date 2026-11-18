@@ -21,6 +21,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/searchruns"
@@ -635,7 +636,9 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.ASIN != nil {
-		book.ASIN = *req.ASIN
+		// Stored as every ingest path stores it, so an exact match (the
+		// importer's, an import list's) finds a hand-typed one too.
+		book.ASIN = isbnutil.NormalizeASIN(*req.ASIN)
 	}
 	if req.Narrator != nil {
 		book.Narrator = *req.Narrator

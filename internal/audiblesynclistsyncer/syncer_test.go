@@ -718,3 +718,50 @@ func TestWishlistBooksTakeTheirDescription(t *testing.T) {
 		t.Fatalf("second pass looked up %v", f.client.catalogAsked)
 	}
 }
+
+// A book addBook skips as already in the library is not described: the
+// description can be a live Audible request, which would otherwise repeat.
+func TestDuplicateIsNotDescribed(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	author := &models.Author{ForeignID: "OL20A", Name: "Dup Author", SortName: "Author, Dup", MetadataProvider: "openlibrary", Monitored: true}
+	if err := f.authors.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	existing := &models.Book{ForeignID: "OL20W", AuthorID: author.ID, Title: "Already Here", SortTitle: "Already Here",
+		Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeAudiobook, Genres: []string{}, MetadataProvider: "openlibrary"}
+	if err := f.books.Create(ctx, existing); err != nil {
+		t.Fatal(err)
+	}
+	f.resolver.books["B000000020"] = &models.Book{ForeignID: "OL20W", Title: "Already Here",
+		Author: &models.Author{ForeignID: "OL20A", Name: "Dup Author"}}
+	f.client.items = []audiblesync.WishlistItem{item("B000000020", "Already Here", "Dup Author")}
+	il := f.list(t, nil)
+
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.client.catalogAsked) != 0 || f.s.Progress().Stats.Skipped != 1 {
+		t.Fatalf("catalogue lookups %v, stats %+v; a duplicate must be skipped undescribed", f.client.catalogAsked, f.s.Progress().Stats)
+	}
+}
+
+// The same title in two accounts' libraries, read by a list with no account,
+// is added once and looked up once.
+func TestSameASINTwiceInOnePassIsAddedOnce(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.resolver.authors["Plus Author"] = &models.Author{ForeignID: "OL21A", Name: "Plus Author"}
+	first := libBook("B000000021", "Shared", "Plus Author", audiblesync.LibraryStatusUnavailable)
+	second := first
+	second.ID, second.AccountID = 99, 2
+	f.client.library = []audiblesync.LibraryBook{first, second}
+	il := f.list(t, func(il *models.ImportList) { il.URL = models.ImportListSourceUnavailable; il.Account = "" })
+
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.s.Progress().Stats; st.Imported != 1 || st.Skipped != 1 || f.client.lookups != 1 {
+		t.Fatalf("stats %+v, lookups %d; want one add, one skip, one lookup", st, f.client.lookups)
+	}
+}

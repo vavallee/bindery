@@ -103,3 +103,85 @@ func TestImportListBooksRecordAndCascade(t *testing.T) {
 		t.Fatalf("rows after list delete = %d, %v", n, err)
 	}
 }
+
+// TestMigrate134ReclassifiesAudibleIDs: rows written before "audible:" and
+// "audnex:" ids named their own providers say "openlibrary"; the migration
+// corrects them and leaves real OpenLibrary rows alone.
+func TestMigrate134ReclassifiesAudibleIDs(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	authors := NewAuthorRepo(database)
+	books := NewBookRepo(database)
+	audibleAuthor := mkAuthor(t, authors, ctx, "audible:AUTH1")
+	olAuthor := mkAuthor(t, authors, ctx, "OL1A")
+	mkBook(t, books, ctx, audibleAuthor.ID, "audible:B000000001", "Audible One", models.BookStatusWanted)
+	mkBook(t, books, ctx, audibleAuthor.ID, "audnex:B000000002", "Audnex Two", models.BookStatusWanted)
+	mkBook(t, books, ctx, olAuthor.ID, "OL1W", "Paper", models.BookStatusWanted)
+
+	// As an older Bindery wrote them.
+	for _, q := range []string{
+		`UPDATE book_identifiers SET provider = 'openlibrary'`,
+		`UPDATE author_identifiers SET provider = 'openlibrary'`,
+		`UPDATE books SET metadata_provider = 'openlibrary'`,
+		`UPDATE authors SET metadata_provider = 'openlibrary'`,
+		`DROP TABLE import_list_books`,
+		`ALTER TABLE import_lists DROP COLUMN remove_on_import`,
+		`ALTER TABLE import_lists DROP COLUMN skip_owned`,
+	} {
+		mustExec(t, database, q)
+	}
+	v134 := migrationVersionForTest(t, "134_import_list_audiblesync_options.sql")
+	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = ?`, v134); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(database); err != nil {
+		t.Fatalf("rerun migration 134: %v", err)
+	}
+
+	providers := func(q string) map[string]string {
+		t.Helper()
+		rows, err := database.QueryContext(ctx, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string]string{}
+		for rows.Next() {
+			var id, p string
+			if err := rows.Scan(&id, &p); err != nil {
+				t.Fatal(err)
+			}
+			out[id] = p
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	want := map[string]string{"audible:B000000001": "audible", "audnex:B000000002": "audnex", "OL1W": "openlibrary"}
+	for name, got := range map[string]map[string]string{
+		"book_identifiers":        providers(`SELECT foreign_id, provider FROM book_identifiers`),
+		"books.metadata_provider": providers(`SELECT foreign_id, metadata_provider FROM books`),
+	} {
+		for id, p := range want {
+			if got[id] != p {
+				t.Errorf("%s %s = %q, want %q", name, id, got[id], p)
+			}
+		}
+	}
+	wantAuthors := map[string]string{"audible:AUTH1": "audible", "OL1A": "openlibrary"}
+	for name, got := range map[string]map[string]string{
+		"author_identifiers":        providers(`SELECT foreign_id, provider FROM author_identifiers`),
+		"authors.metadata_provider": providers(`SELECT foreign_id, metadata_provider FROM authors`),
+	} {
+		for id, p := range wantAuthors {
+			if got[id] != p {
+				t.Errorf("%s %s = %q, want %q", name, id, got[id], p)
+			}
+		}
+	}
+}

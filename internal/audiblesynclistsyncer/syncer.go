@@ -212,13 +212,6 @@ func (s *ListSyncer) syncAll(ctx context.Context) error {
 	return firstErr
 }
 
-// RunSync is Sync for callers that only log errors.
-func (s *ListSyncer) RunSync(ctx context.Context) {
-	if err := s.Sync(ctx); err != nil {
-		slog.Error("Audible Sync wishlist sync error (top-level)", "error", err)
-	}
-}
-
 // SyncOne syncs one list and waits for it.
 func (s *ListSyncer) SyncOne(ctx context.Context, id int64) error {
 	il, err := s.loadSyncableList(ctx, id)
@@ -562,13 +555,18 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		if c, ok := item.CopyIn(account); ok {
 			sourceID = int64(c.BookID)
 		}
-		if book.Description == "" {
-			s.describe(ctx, client, book, item, account, sourceID)
-		}
-		target, outcome := s.addBook(ctx, il, book, sourceID, ownerID, scope, nameIndex)
+		// Described only once addBook knows it will create the book: a
+		// description can cost a live Audible request, which a book skipped
+		// as a duplicate would repeat on every pass.
+		describe := func(b *models.Book) { s.describe(ctx, client, b, item, account, sourceID) }
+		target, outcome := s.addBook(ctx, il, book, sourceID, ownerID, scope, nameIndex, describe)
 		switch outcome {
 		case outcomeImported:
 			s.count(func(st *SyncStats) { st.Imported++ })
+			// The same ASIN can come twice in one pass (an unavailable list
+			// with no account reads every account's library): the second is
+			// then a tracked book, not another resolve and lookup.
+			tracked[asin] = *book
 		case outcomeSkipped:
 			s.count(func(st *SyncStats) { st.Skipped++ })
 		case outcomeFailed:
@@ -722,8 +720,10 @@ const (
 // addBook creates book unless the library already has it, and returns the
 // book to search for when the pass made it wanted and monitored. sourceID is
 // Audible Sync's library id for the book, 0 when the account has no copy.
+// describe fills an empty description, and runs only for a book about to be
+// created.
 // A failed duplicate check fails the book rather than risk a second copy.
-func (s *ListSyncer) addBook(ctx context.Context, il models.ImportList, book *models.Book, sourceID, ownerID, scope int64, nameIndex map[string][]models.Author) (*models.Book, outcome) {
+func (s *ListSyncer) addBook(ctx context.Context, il models.ImportList, book *models.Book, sourceID, ownerID, scope int64, nameIndex map[string][]models.Author, describe func(*models.Book)) (*models.Book, outcome) {
 	existing, err := s.books.GetByForeignIDVisibleTo(ctx, book.ForeignID, scope)
 	if err != nil {
 		slog.Warn("Audible Sync wishlist: lookup by foreign id failed", "title", book.Title, "foreignID", book.ForeignID, "error", err)
@@ -757,6 +757,9 @@ func (s *ListSyncer) addBook(ctx context.Context, il models.ImportList, book *mo
 		return s.widenTarget(ctx, owned, book.ASIN), outcomeSkipped
 	}
 
+	if book.Description == "" && describe != nil {
+		describe(book)
+	}
 	book.AuthorID = authorID
 	book.Monitored = il.MonitorNew
 	book.Status = models.BookStatusWanted
