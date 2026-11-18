@@ -152,8 +152,8 @@ func TestDirPlacement_SiblingSharingPrefixIsNotContainment(t *testing.T) {
 	src := newAudiobookFolder(t, tmp, "Book")
 	dst := filepath.Join(tmp, "Author", "Book Two")
 
-	if err := MoveDir(src, dst); err != nil {
-		t.Fatalf("MoveDir to sibling with shared prefix: %v", err)
+	if err := MoveDirCtx(t.Context(), src, dst); err != nil {
+		t.Fatalf("MoveDirCtx to sibling with shared prefix: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "book.m4b")); err != nil {
 		t.Fatalf("file not at destination: %v", err)
@@ -192,9 +192,9 @@ func TestDirPlacement_EqualSourceAndDestination(t *testing.T) {
 	tmp := t.TempDir()
 	src := newAudiobookFolder(t, tmp, "Title")
 
-	err := MoveDir(src, src)
+	err := MoveDirCtx(t.Context(), src, src)
 	if err == nil {
-		t.Fatal("MoveDir(src, src) returned nil, want an error")
+		t.Fatal("MoveDirCtx(src, src) returned nil, want an error")
 	}
 	if errors.Is(err, ErrDestInsideSource) {
 		t.Fatalf("equal paths reported as containment: %v", err)

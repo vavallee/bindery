@@ -10,7 +10,7 @@ import (
 )
 
 func TestAudiobookFileName(t *testing.T) {
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	author := &models.Author{Name: "Brandon Sanderson"}
 	book := &models.Book{Title: "The Way of Kings"}
 
@@ -39,7 +39,7 @@ func TestAudiobookFileName(t *testing.T) {
 // TestAudiobookFileName_NoSeparatorEscape ensures a template that would inject a
 // path separator collapses to a bare filename (defence against directory escape).
 func TestAudiobookFileName_NoSeparatorEscape(t *testing.T) {
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	book := &models.Book{Title: "Book"}
 	// {Author} of "../evil" sanitises, and any separator is stripped by Base.
 	got := r.AudiobookFileName("{Author}/{Title} - {Part:3}.{ext}", &models.Author{Name: "../evil"}, book, "", "", "mp3", 1)
@@ -52,7 +52,7 @@ func TestFlattenAudiobookDirNamed_Ordering(t *testing.T) {
 	src := buildMultiDiscTree(t)
 	dst := filepath.Join(t.TempDir(), "Author", "Book")
 
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	book := &models.Book{Title: "Recursion"}
 	author := &models.Author{Name: "Blake Crouch"}
 	namer := func(index, _ int, ext string) string {
