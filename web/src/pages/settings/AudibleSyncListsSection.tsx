@@ -209,74 +209,74 @@ export default function AudibleSyncListsSection({ onNavigate }: { onNavigate?: (
           const name = il?.name ?? listName(row.accountName, row.source)
           return (
             <div key={row.key} className="p-3 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-              <div className="flex items-start justify-between gap-3">
-                <label className="flex items-start gap-3 min-w-0 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="mt-1"
-                    checked={Boolean(il?.enabled)}
-                    disabled={busyKey === row.key || (!row.remote && !il)}
-                    onChange={() => toggle(row)}
-                    aria-label={t('settings.import.audibleSync.watch', { name, defaultValue: 'Watch {{name}}' })}
-                  />
-                  <span className="min-w-0">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium">{name}</span>
-                      {row.countryCode && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{row.countryCode.toUpperCase()}</span>}
-                      {row.needsLogin && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 rounded">{t('settings.import.audibleSync.needsLogin', 'Needs signing in again in Audible Sync')}</span>}
-                      {!row.remote && il && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 rounded">{t('settings.import.hardcoverSavedOnly', 'Saved only')}</span>}
-                    </span>
-                    <span className="block text-xs text-fg-muted mt-0.5">
-                      {il?.lastSyncAt
-                        ? t('settings.import.hardcoverLastSync', { date: new Date(il.lastSyncAt).toLocaleString() })
-                        : il
-                          ? t('settings.import.hardcoverNeverSynced')
-                          : t('settings.import.hardcoverNotSelected', 'Not selected')}
-                      {row.booksCount >= 0 && t('settings.import.hardcoverListBooks', { count: row.booksCount })}
-                    </span>
+              <label className="flex items-start gap-3 min-w-0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={Boolean(il?.enabled)}
+                  disabled={busyKey === row.key || (!row.remote && !il)}
+                  onChange={() => toggle(row)}
+                  aria-label={t('settings.import.audibleSync.watch', { name, defaultValue: 'Watch {{name}}' })}
+                />
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">{name}</span>
+                    {row.countryCode && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{row.countryCode.toUpperCase()}</span>}
+                    {row.needsLogin && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 rounded">{t('settings.import.audibleSync.needsLogin', 'Needs signing in again in Audible Sync')}</span>}
+                    {!row.remote && il && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 rounded">{t('settings.import.hardcoverSavedOnly', 'Saved only')}</span>}
                   </span>
-                </label>
-                {il && (
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <label className={`flex items-center gap-1.5 cursor-pointer ${chip}`} title={t('settings.import.downloadBooksHint', 'On: books synced from this list are marked wanted and downloaded. Off: they are added to your library unmonitored, so nothing is downloaded until you monitor one.')}>
-                      <input type="checkbox" checked={il.monitorNew} onChange={e => update(il, { monitorNew: e.target.checked })} />
-                      {t('settings.import.downloadBooks', 'Download books from this list')}
-                    </label>
-                    {row.source === 'wishlist' && (
-                      <>
-                        <label className={`flex items-center gap-1.5 cursor-pointer ${chip}`} title={t('settings.import.audibleSync.skipOwnedHint', 'Leave books the Audible account owns alone: Audible Sync downloads them.')}>
-                          <input type="checkbox" checked={il.skipOwned ?? true} onChange={e => update(il, { skipOwned: e.target.checked })} />
-                          {t('settings.import.audibleSync.skipOwned', 'Skip owned books')}
-                        </label>
-                        <label className={`flex items-center gap-1.5 cursor-pointer ${chip}`} title={t('settings.import.audibleSync.removeOnImportHint', 'Once Bindery has imported a wishlist book, take it off the Audible wishlist. This changes your Audible account.')}>
-                          <input type="checkbox" checked={il.removeOnImport ?? false} onChange={e => update(il, { removeOnImport: e.target.checked })} />
-                          {t('settings.import.audibleSync.removeOnImport', 'Remove from wishlist once imported')}
-                        </label>
-                      </>
-                    )}
-                    <select
-                      value={il.ownerUserId ?? ''}
-                      onChange={e => update(il, { ownerUserId: e.target.value === '' ? null : Number(e.target.value) })}
-                      aria-label={t('settings.import.ownerLabel', 'Owner')}
-                      title={t('settings.import.ownerHint', 'Who sees books synced from this list. Global shows them to all users.')}
-                      className={chip}
-                    >
-                      <option value="">{t('settings.import.ownerGlobal', 'Global (all users)')}</option>
-                      {users.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
-                    </select>
-                    <button
-                      onClick={() => sync(il)}
-                      disabled={running || !il.enabled || !configured}
-                      className={`${chip} hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50`}
-                    >
-                      {running && progress?.listId === il.id ? t('settings.import.hardcoverSyncing', 'Syncing…') : t('settings.import.hardcoverSyncNow', 'Sync now')}
-                    </button>
-                    <button onClick={() => remove(il)} className="text-xs text-red-700 dark:text-red-400 hover:underline">{t('common.delete')}</button>
-                  </div>
-                )}
-              </div>
+                  <span className="block text-xs text-fg-muted mt-0.5">
+                    {il?.lastSyncAt
+                      ? t('settings.import.hardcoverLastSync', { date: new Date(il.lastSyncAt).toLocaleString() })
+                      : il
+                        ? t('settings.import.hardcoverNeverSynced')
+                        : t('settings.import.hardcoverNotSelected', 'Not selected')}
+                    {row.booksCount >= 0 && t('settings.import.hardcoverListBooks', { count: row.booksCount })}
+                  </span>
+                </span>
+              </label>
+              {/* Options sit on their own line under the name, indented to
+                  line up with it, so a saved list's name never wraps. */}
+              {il && (
+                <div className="mt-2 ml-7 flex flex-wrap items-center gap-2">
+                  <label className={`flex items-center gap-1.5 cursor-pointer ${chip}`} title={t('settings.import.downloadBooksHint', 'On: books synced from this list are marked wanted and downloaded. Off: they are added to your library unmonitored, so nothing is downloaded until you monitor one.')}>
+                    <input type="checkbox" checked={il.monitorNew} onChange={e => update(il, { monitorNew: e.target.checked })} />
+                    {t('settings.import.downloadBooks', 'Download books from this list')}
+                  </label>
+                  {row.source === 'wishlist' && (
+                    <>
+                      <label className={`flex items-center gap-1.5 cursor-pointer ${chip}`} title={t('settings.import.audibleSync.skipOwnedHint', 'Leave books the Audible account owns alone: Audible Sync downloads them.')}>
+                        <input type="checkbox" checked={il.skipOwned ?? true} onChange={e => update(il, { skipOwned: e.target.checked })} />
+                        {t('settings.import.audibleSync.skipOwned', 'Skip owned books')}
+                      </label>
+                      <label className={`flex items-center gap-1.5 cursor-pointer ${chip}`} title={t('settings.import.audibleSync.removeOnImportHint', 'Once Bindery has imported a wishlist book, take it off the Audible wishlist. This changes your Audible account.')}>
+                        <input type="checkbox" checked={il.removeOnImport ?? false} onChange={e => update(il, { removeOnImport: e.target.checked })} />
+                        {t('settings.import.audibleSync.removeOnImport', 'Remove from wishlist once imported')}
+                      </label>
+                    </>
+                  )}
+                  <select
+                    value={il.ownerUserId ?? ''}
+                    onChange={e => update(il, { ownerUserId: e.target.value === '' ? null : Number(e.target.value) })}
+                    aria-label={t('settings.import.ownerLabel', 'Owner')}
+                    title={t('settings.import.ownerHint', 'Who sees books synced from this list. Global shows them to all users.')}
+                    className={chip}
+                  >
+                    <option value="">{t('settings.import.ownerGlobal', 'Global (all users)')}</option>
+                    {users.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                  </select>
+                  <button
+                    onClick={() => sync(il)}
+                    disabled={running || !il.enabled || !configured}
+                    className={`${chip} hover:bg-slate-300 dark:hover:bg-zinc-700 disabled:opacity-50`}
+                  >
+                    {running && progress?.listId === il.id ? t('settings.import.hardcoverSyncing', 'Syncing…') : t('settings.import.hardcoverSyncNow', 'Sync now')}
+                  </button>
+                  <button onClick={() => remove(il)} className="text-xs text-red-700 dark:text-red-400 hover:underline">{t('common.delete')}</button>
+                </div>
+              )}
               {il && progress?.listId === il.id && (
-                <p className={`mt-2 text-xs ${progress.error ? 'text-red-700 dark:text-red-400' : 'text-accent-text'}`}>
+                <p className={`mt-2 ml-7 text-xs ${progress.error ? 'text-red-700 dark:text-red-400' : 'text-accent-text'}`}>
                   {progress.running
                     ? `${progress.message ?? t('settings.import.hardcoverSyncing', 'Syncing…')}${progress.stats.total > 0 ? ` (${progress.stats.processed}/${progress.stats.total})` : ''}`
                     : progress.error
