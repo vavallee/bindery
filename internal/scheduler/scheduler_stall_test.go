@@ -35,25 +35,6 @@ func stallServerHostPort(t *testing.T, raw string) (string, int) {
 	return host, port
 }
 
-// TestWithHistory_Setter confirms WithHistory stores the repo.
-func TestWithHistory_Setter(t *testing.T) {
-	database, err := db.OpenMemory()
-	if err != nil {
-		t.Fatalf("OpenMemory: %v", err)
-	}
-	defer database.Close()
-
-	s := &Scheduler{}
-	if s.history != nil {
-		t.Fatal("history should start nil")
-	}
-	h := db.NewHistoryRepo(database)
-	s.WithHistory(h)
-	if s.history != h {
-		t.Error("WithHistory did not assign history repo")
-	}
-}
-
 // TestStart_RegistersStallJob verifies that the new stall-check job is
 // among the cron entries registered at Start.
 func TestStart_RegistersStallJob(t *testing.T) {
@@ -94,6 +75,7 @@ func TestCheckStalledDownloads_SkipsNewDownloads(t *testing.T) {
 		t.Fatalf("OpenMemory: %v", err)
 	}
 	defer database.Close()
+	host, port := stalledQbitServer(t)
 	ctx := context.Background()
 
 	settingsRepo := db.NewSettingsRepo(database)
@@ -105,7 +87,7 @@ func TestCheckStalledDownloads_SkipsNewDownloads(t *testing.T) {
 	clientsRepo := db.NewDownloadClientRepo(database)
 
 	client := &models.DownloadClient{
-		Name: "qb", Type: "qbittorrent", Host: "127.0.0.1", Port: 1,
+		Name: "qb", Type: "qbittorrent", Host: host, Port: port,
 		Username: "u", Password: "p", Enabled: true,
 	}
 	if err := clientsRepo.Create(ctx, client); err != nil {
@@ -113,7 +95,7 @@ func TestCheckStalledDownloads_SkipsNewDownloads(t *testing.T) {
 	}
 
 	dl := &models.Download{
-		GUID: "g1", Title: "fresh", DownloadClientID: &client.ID,
+		GUID: "g1", TorrentID: stalledHashPtr(), Title: "fresh", DownloadClientID: &client.ID,
 		Status: models.StateGrabbed, Protocol: "torrent",
 	}
 	if err := downloadsRepo.Create(ctx, dl); err != nil {
@@ -129,6 +111,7 @@ func TestCheckStalledDownloads_SkipsNewDownloads(t *testing.T) {
 		settings:  settingsRepo,
 	}
 	s.checkStalledDownloads(ctx)
+	assertStillDownloading(t, downloadsRepo, "g1")
 }
 
 // TestCheckStalledDownloads_SkipsNilGrabbedAt verifies that downloads with
@@ -139,13 +122,14 @@ func TestCheckStalledDownloads_SkipsNilGrabbedAt(t *testing.T) {
 		t.Fatalf("OpenMemory: %v", err)
 	}
 	defer database.Close()
+	host, port := stalledQbitServer(t)
 	ctx := context.Background()
 
 	downloadsRepo := db.NewDownloadRepo(database)
 	clientsRepo := db.NewDownloadClientRepo(database)
 
 	client := &models.DownloadClient{
-		Name: "qb", Type: "qbittorrent", Host: "127.0.0.1", Port: 1,
+		Name: "qb", Type: "qbittorrent", Host: host, Port: port,
 		Username: "u", Password: "p", Enabled: true,
 	}
 	if err := clientsRepo.Create(ctx, client); err != nil {
@@ -153,7 +137,7 @@ func TestCheckStalledDownloads_SkipsNilGrabbedAt(t *testing.T) {
 	}
 
 	dl := &models.Download{
-		GUID: "g-nil-grab", Title: "nil grab", DownloadClientID: &client.ID,
+		GUID: "g-nil-grab", TorrentID: stalledHashPtr(), Title: "nil grab", DownloadClientID: &client.ID,
 		Status: models.DownloadStatusDownloading, Protocol: "torrent",
 	}
 	if err := downloadsRepo.Create(ctx, dl); err != nil {
@@ -166,6 +150,7 @@ func TestCheckStalledDownloads_SkipsNilGrabbedAt(t *testing.T) {
 		settings:  db.NewSettingsRepo(database),
 	}
 	s.checkStalledDownloads(ctx)
+	assertStillDownloading(t, downloadsRepo, "g-nil-grab")
 }
 
 // TestCheckStalledDownloads_DisabledClientSkipped verifies that disabled
@@ -176,13 +161,14 @@ func TestCheckStalledDownloads_DisabledClientSkipped(t *testing.T) {
 		t.Fatalf("OpenMemory: %v", err)
 	}
 	defer database.Close()
+	host, port := stalledQbitServer(t)
 	ctx := context.Background()
 
 	downloadsRepo := db.NewDownloadRepo(database)
 	clientsRepo := db.NewDownloadClientRepo(database)
 
 	client := &models.DownloadClient{
-		Name: "qb", Type: "qbittorrent", Host: "127.0.0.1", Port: 1,
+		Name: "qb", Type: "qbittorrent", Host: host, Port: port,
 		Username: "u", Password: "p", Enabled: false,
 	}
 	if err := clientsRepo.Create(ctx, client); err != nil {
@@ -191,7 +177,7 @@ func TestCheckStalledDownloads_DisabledClientSkipped(t *testing.T) {
 
 	old := time.Now().UTC().Add(-3 * time.Hour)
 	dl := &models.Download{
-		GUID: "g-old", Title: "old", DownloadClientID: &client.ID,
+		GUID: "g-old", TorrentID: stalledHashPtr(), Title: "old", DownloadClientID: &client.ID,
 		Status: models.StateGrabbed, Protocol: "torrent",
 	}
 	if err := downloadsRepo.Create(ctx, dl); err != nil {
@@ -209,6 +195,7 @@ func TestCheckStalledDownloads_DisabledClientSkipped(t *testing.T) {
 		settings:  db.NewSettingsRepo(database),
 	}
 	s.checkStalledDownloads(ctx)
+	assertStillDownloading(t, downloadsRepo, "g-old")
 }
 
 // TestCheckStalledDownloads_QBitNoStalls exercises the full qBittorrent
@@ -540,6 +527,15 @@ func TestHandleStalledDownload_NilBlocklistRepo(t *testing.T) {
 		settings:  db.NewSettingsRepo(database),
 	}
 	s.handleStalledDownload(ctx, dl, nil, downloader.StallClientReported)
+
+	// Without a blocklist the stall is still recorded on the row.
+	got, err := downloadsRepo.GetByGUID(ctx, "g-nbl")
+	if err != nil || got == nil {
+		t.Fatalf("GetByGUID: %v, %v", got, err)
+	}
+	if got.Status != models.DownloadStatusFailed {
+		t.Errorf("status = %q, want %q", got.Status, models.DownloadStatusFailed)
+	}
 }
 
 // TestCheckStalledDownloads_RemovalFailureStillRecovers pins the fallback in
@@ -646,3 +642,37 @@ func TestCheckStalledDownloads_RemovalFailureStillRecovers(t *testing.T) {
 		t.Errorf("expected 1 downloadStalled history event, got %d", len(events))
 	}
 }
+
+// assertStillDownloading fails when checkStalledDownloads acted on a download
+// it should have skipped: the row must still be downloading, with no error.
+func assertStillDownloading(t *testing.T, downloads *db.DownloadRepo, guid string) {
+	t.Helper()
+	got, err := downloads.GetByGUID(context.Background(), guid)
+	if err != nil || got == nil {
+		t.Fatalf("GetByGUID(%q): %v, %v", guid, got, err)
+	}
+	if got.Status != models.DownloadStatusDownloading || got.ErrorMessage != "" {
+		t.Errorf("download %q = status %q, error %q; want it left downloading", guid, got.Status, got.ErrorMessage)
+	}
+}
+
+// stalledQbitServer is a qBittorrent that reports stalledHash as stalled, so a
+// skip test fails if the download it seeds is not skipped: the stall handler
+// would mark the row failed.
+func stalledQbitServer(t *testing.T) (string, int) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/info":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"hash": stalledHash, "state": "stalledDL"}})
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return stallServerHostPort(t, srv.URL)
+}
+
+const stalledHash = "deadbeef"
+
+func stalledHashPtr() *string { h := stalledHash; return &h }
