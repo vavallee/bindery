@@ -27,7 +27,7 @@ npm test --prefix web -- YourComponent.test.tsx     # frontend
 
 Run it and read the output. It must fail **for the reason in the issue** — a wrong value, a wrong status code, a wrong row. A test that fails because it doesn't compile, panics on nil, or asserts something unrelated proves nothing. Keep the exact failure output; it goes in `PR_BODY.md`.
 
-If you cannot make a test fail, you have not found the bug. Stop (step 3) — do not "fix" code on a theory. A fix with no test that failed beforehand is not a fix.
+If you cannot make a test fail, you have not found the bug. Stop (step 3) — do not "fix" code on a theory. A fix with no test that failed beforehand is not a fix. If the buggy logic exists in more than one copy, fix every copy or write a test that covers all of them (see the `testing` skill).
 
 Test patterns are in the `testing` skill: `db.OpenMemory()` for DB-backed tests (never mock `internal/db`), `httptest` for handlers, no live network, `vitest` + `@testing-library/react` for the frontend.
 
