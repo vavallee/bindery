@@ -82,6 +82,11 @@ func SyncOPFSidecarFile(dir string, roots []string, dryRun bool, book *models.Bo
 	if err != nil {
 		return "", fmt.Errorf("opfsidecar: build xml: %w", err)
 	}
+	// A symlink named metadata.opf was put there on purpose; never read
+	// through it or replace it.
+	if fi, lerr := os.Lstat(filepath.Join(target, opfSidecarFileName)); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return SidecarForeign, nil
+	}
 	existing, err := os.ReadFile(filepath.Join(target, opfSidecarFileName))
 	switch {
 	case err == nil:

@@ -58,6 +58,7 @@ type reorganizeSummary struct {
 	SidecarUnchanged int `json:"sidecarUnchanged,omitempty"`
 	SidecarForeign   int `json:"sidecarForeign,omitempty"`
 	SidecarFailed    int `json:"sidecarFailed,omitempty"`
+	SidecarShared    int `json:"sidecarShared,omitempty"`
 }
 
 type reorganizeResponse struct {
@@ -96,6 +97,8 @@ func summarize(moves []importer.ReorganizeMove) reorganizeSummary {
 			s.SidecarForeign++
 		case importer.ReorgSidecarFailed:
 			s.SidecarFailed++
+		case importer.ReorgSidecarShared:
+			s.SidecarShared++
 		}
 		switch m.Status {
 		case importer.ReorgStatusMove:

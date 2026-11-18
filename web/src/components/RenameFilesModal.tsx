@@ -49,7 +49,7 @@ function knownFormats(raw: unknown): string[] {
 // setting is off and nothing was reported.
 function sidecarSummary(s: ReorganizeResponse['summary'], t: TFunction): string {
   const written = s.sidecarWritten ?? 0
-  const skipped = (s.sidecarUnchanged ?? 0) + (s.sidecarForeign ?? 0)
+  const skipped = (s.sidecarUnchanged ?? 0) + (s.sidecarForeign ?? 0) + (s.sidecarShared ?? 0)
   const failed = s.sidecarFailed ?? 0
   if (written + skipped + failed === 0) return ''
   return ', ' + t('renameFiles.sidecarSummary', {

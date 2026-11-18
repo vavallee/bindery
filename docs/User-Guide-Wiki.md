@@ -878,7 +878,10 @@ place, so a library gets consistent sidecars without renaming anything. It only
 writes a `metadata.opf` that is missing or that Bindery wrote itself (new files
 carry a `bindery:generator` marker). A `metadata.opf` from Calibre,
 Audiobookshelf or a hand edit is left alone and counted as skipped, and a file
-that is already up to date is not rewritten. Formats in External import mode
+that is already up to date is not rewritten. A folder that holds more than one book (a flat
+template such as `{Author}/{Title}.{ext}`) gets no sidecar, since one file cannot
+describe two books, and a `metadata.opf` that is a symlink is never replaced.
+Formats in External import mode
 are skipped. A write that fails, say on a read only mount, is reported for that
 book and the run carries on. Imports still replace an existing sidecar.
 

@@ -270,3 +270,117 @@ func TestSyncOPFSidecarFile_DryRunAndRoots(t *testing.T) {
 		t.Fatal("expected an error for a nil book")
 	}
 }
+
+// flatBooks seeds two books of one author whose files share one folder, the
+// shape a flat {Author}/{Title}.{ext} template produces.
+func flatBooks(t *testing.T, env reorgEnv, libraryDir string) (dir string, ids []int64) {
+	t.Helper()
+	ctx := t.Context()
+	a := env.seedAuthor(t, ctx, "Jane Doe")
+	dir = filepath.Join(libraryDir, "Jane Doe")
+	for _, title := range []string{"Alpha", "Beta"} {
+		b := env.seedBook(t, ctx, a, title)
+		p := filepath.Join(dir, title+".epub")
+		writeFileAt(t, p)
+		if err := env.books.AddBookFile(ctx, b.ID, models.MediaTypeEbook, p); err != nil {
+			t.Fatal(err)
+		}
+		fs, _ := env.books.ListBookFiles(ctx, b.ID)
+		ids = append(ids, fs[0].ID)
+	}
+	if err := env.s.settings.Set(ctx, "naming.bookTemplate", "{Author}/{Title}.{ext}"); err != nil {
+		t.Fatal(err)
+	}
+	return dir, ids
+}
+
+func TestReorganizeOPF_SharedFolderWritesNothing(t *testing.T) {
+	env, libraryDir, _, ctx := reorgFixture(t)
+	setOPF(t, env, "true")
+	dir, ids := flatBooks(t, env, libraryDir)
+	opf := filepath.Join(dir, "metadata.opf")
+
+	moves, err := env.s.PreviewReorganizeLibrary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range moves {
+		if m.Status != ReorgStatusNoop || m.Sidecar != ReorgSidecarShared {
+			t.Fatalf("preview row = %+v, want noop and shared", m)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		for _, r := range env.s.ApplyReorganize(ctx, ids) {
+			if r.Sidecar != ReorgSidecarShared {
+				t.Fatalf("apply %d = %+v, want shared", i, r)
+			}
+		}
+		if _, err := os.Stat(opf); err == nil {
+			t.Fatal("a sidecar was written into a folder shared by two books")
+		}
+	}
+}
+
+func TestReorganizeOPF_TwoFormatsOfOneBookWriteOnce(t *testing.T) {
+	env, libraryDir, _, ctx := reorgFixture(t)
+	setOPF(t, env, "true")
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+	dir := filepath.Join(libraryDir, "Jane Doe", "My Book (2020)")
+	var ids []int64
+	for _, name := range []string{"My Book - Jane Doe.epub", "My Book - Jane Doe.mobi"} {
+		writeFileAt(t, filepath.Join(dir, name))
+		if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fs, _ := env.books.ListBookFiles(ctx, book.ID)
+	for _, f := range fs {
+		ids = append(ids, f.ID)
+	}
+	moves, _ := env.s.PreviewReorganizeBook(ctx, book.ID)
+	writes := 0
+	for _, m := range moves {
+		if m.Sidecar == ReorgSidecarWrite {
+			writes++
+		}
+	}
+	if writes != 1 {
+		t.Fatalf("preview offers %d writes for one folder, want 1: %+v", writes, moves)
+	}
+	written := 0
+	for _, r := range env.s.ApplyReorganize(ctx, ids) {
+		if r.Sidecar == ReorgSidecarWritten {
+			written++
+		}
+	}
+	if written != 1 {
+		t.Fatalf("apply wrote %d times, want 1", written)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "metadata.opf")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReorganizeOPF_SymlinkIsNeverReplaced(t *testing.T) {
+	env, libraryDir, _, ctx := reorgFixture(t)
+	setOPF(t, env, "true")
+	_, p, fileID := placedBook(t, env, libraryDir)
+	elsewhere := filepath.Join(t.TempDir(), "mine.opf")
+	if err := os.WriteFile(elsewhere, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(filepath.Dir(p), "metadata.opf")
+	if err := os.Symlink(elsewhere, link); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	r := env.s.ApplyReorganize(ctx, []int64{fileID})
+	if r[0].Sidecar != ReorgSidecarForeign {
+		t.Fatalf("sidecar = %q, want foreign", r[0].Sidecar)
+	}
+	if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced")
+	}
+	if b, _ := os.ReadFile(elsewhere); string(b) != "mine" {
+		t.Fatal("the link target was written through")
+	}
+}

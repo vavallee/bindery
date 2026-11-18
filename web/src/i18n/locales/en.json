@@ -3496,6 +3496,7 @@
       "written": "metadata.opf written",
       "unchanged": "metadata.opf already up to date",
       "foreign": "metadata.opf left alone, Bindery did not write it",
+      "shared": "metadata.opf skipped, this folder holds more than one book",
       "failed": "metadata.opf could not be written"
     },
     "apply_one": "Rename {{count}} file",
