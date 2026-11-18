@@ -23,6 +23,20 @@ type fakeClient struct {
 	err     error
 	removed []string
 	asked   []int
+	// library is the account's library; Library filters it by status.
+	library []audiblesync.LibraryBook
+}
+
+func (f *fakeClient) Library(_ context.Context, _ int, status string) ([]audiblesync.LibraryBook, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []audiblesync.LibraryBook
+	for _, b := range f.library {
+		if status == "" || b.Status == status {
+			out = append(out, b)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeClient) Wishlist(_ context.Context, accountID int) ([]audiblesync.WishlistItem, []audiblesync.WishlistAccount, error) {
@@ -99,7 +113,7 @@ func newFixture(t *testing.T) *fixture {
 		searcher: &recordingSearcher{},
 	}
 	f.s = New(f.lists, f.authors, f.books,
-		func(context.Context) (WishlistClient, error) { return f.client, nil }, f.resolver).
+		func(context.Context) (Client, error) { return f.client, nil }, f.resolver).
 		WithSearcher(f.searcher)
 	return f
 }
@@ -321,7 +335,7 @@ func TestPreconditions(t *testing.T) {
 	}
 
 	on := f.list(t, nil)
-	f.s.clients = func(context.Context) (WishlistClient, error) { return nil, ErrNotConfigured }
+	f.s.clients = func(context.Context) (Client, error) { return nil, ErrNotConfigured }
 	if err := f.s.StartOne(ctx, on.ID); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("unconfigured: %v", err)
 	}
@@ -351,5 +365,109 @@ func TestStartOneRunsInBackground(t *testing.T) {
 	waitFor(t, func() bool { p := f.s.Progress(); return !p.Running && p.FinishedAt != nil })
 	if p := f.s.Progress(); p.Stats.Imported != 1 || p.Trigger != TriggerManual {
 		t.Fatalf("progress = %+v", p)
+	}
+}
+
+func libBook(asin, title, author, status string) audiblesync.LibraryBook {
+	return audiblesync.LibraryBook{ASIN: asin, Title: title, Authors: []string{author}, Narrators: []string{"N"},
+		Length: 600, Status: status, AccountID: 1}
+}
+
+func TestUnavailableListAddsWithdrawnBooksAndReleasesReturnedOnes(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.resolver.authors["Plus Author"] = &models.Author{ForeignID: "OL7A", Name: "Plus Author"}
+	f.client.library = []audiblesync.LibraryBook{
+		libBook("B00000000A", "Withdrawn", "Plus Author", audiblesync.LibraryStatusUnavailable),
+		libBook("B00000000B", "Still Fine", "Plus Author", audiblesync.LibraryStatusDownloaded),
+	}
+	il := f.list(t, func(il *models.ImportList) {
+		il.URL = models.ImportListSourceUnavailable
+		il.SkipOwned, il.RemoveOnImport = true, true // ignored for this source
+	})
+
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.s.Progress().Stats; st.Imported != 1 || st.Owned != 0 || st.Total != 1 {
+		t.Fatalf("first pass stats = %+v; owned books must not be skipped on this list", st)
+	}
+	b, _ := f.books.GetByForeignID(ctx, "audible:B00000000A")
+	if b == nil || !b.Monitored || b.DurationSeconds != 36000 {
+		t.Fatalf("withdrawn book = %+v; want monitored, 600 minutes as seconds", b)
+	}
+	if len(f.client.asked) != 0 || len(f.client.removed) != 0 {
+		t.Fatalf("an unavailable list must not touch the wishlist: asked %v removed %v", f.client.asked, f.client.removed)
+	}
+
+	// Audible brings the title back and Audible Sync starts downloading it.
+	f.client.library[0].Status = audiblesync.LibraryStatusWaiting
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st := f.s.Progress().Stats; st.Released != 1 {
+		t.Fatalf("second pass stats = %+v, want one released", st)
+	}
+	b, _ = f.books.GetByID(ctx, b.ID)
+	if b.Monitored || b.Status != models.BookStatusWanted {
+		t.Fatalf("returned book = monitored %v status %q; want unmonitored and still in the library", b.Monitored, b.Status)
+	}
+	if recs, _ := f.lists.ListBooks(ctx, il.ID); len(recs) != 0 {
+		t.Fatalf("a released book must be forgotten, still recorded: %v", recs)
+	}
+}
+
+func TestUnavailableListOnlyReleasesItsOwnBooks(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	// A book the operator wanted through another path, not created by the list.
+	author := &models.Author{ForeignID: "OL8A", Name: "Other", SortName: "Other", MetadataProvider: "openlibrary", Monitored: true}
+	_ = f.authors.Create(ctx, author)
+	mine := &models.Book{ForeignID: "OL8W", AuthorID: author.ID, Title: "Wanted Elsewhere", SortTitle: "Wanted Elsewhere",
+		Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeAudiobook, ASIN: "B00000000C",
+		Genres: []string{}, MetadataProvider: "openlibrary"}
+	_ = f.books.Create(ctx, mine)
+	f.client.library = []audiblesync.LibraryBook{libBook("B00000000C", "Wanted Elsewhere", "Other", audiblesync.LibraryStatusUnavailable)}
+	il := f.list(t, func(il *models.ImportList) { il.URL = models.ImportListSourceUnavailable })
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.client.library[0].Status = audiblesync.LibraryStatusDownloaded
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := f.books.GetByID(ctx, mine.ID)
+	if !got.Monitored {
+		t.Fatal("a book the list did not create must not be unmonitored")
+	}
+}
+
+func TestReturnedBookAlreadyImportedIsLeftAlone(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.resolver.authors["Plus Author"] = &models.Author{ForeignID: "OL9A", Name: "Plus Author"}
+	f.client.library = []audiblesync.LibraryBook{libBook("B00000000D", "Got It", "Plus Author", audiblesync.LibraryStatusUnavailable)}
+	il := f.list(t, func(il *models.ImportList) { il.URL = models.ImportListSourceUnavailable })
+	_ = f.s.SyncOne(ctx, il.ID)
+	b, _ := f.books.GetByForeignID(ctx, "audible:B00000000D")
+	b.Status = models.BookStatusImported
+	_ = f.books.Update(ctx, b)
+	f.client.library[0].Status = audiblesync.LibraryStatusDownloaded
+	_ = f.s.SyncOne(ctx, il.ID)
+	got, _ := f.books.GetByID(ctx, b.ID)
+	if !got.Monitored || f.s.Progress().Stats.Released != 0 {
+		t.Fatalf("imported book = monitored %v, released %d; want it untouched", got.Monitored, f.s.Progress().Stats.Released)
+	}
+}
+
+func TestWishlistListRecordsWhatItCreates(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.resolver.authors["Rec Author"] = &models.Author{ForeignID: "OL10A", Name: "Rec Author"}
+	f.client.items = []audiblesync.WishlistItem{item("B00000000E", "Recorded", "Rec Author")}
+	il := f.list(t, nil)
+	_ = f.s.SyncOne(ctx, il.ID)
+	if recs, _ := f.lists.ListBooks(ctx, il.ID); len(recs) != 1 || recs[0].ASIN != "B00000000E" {
+		t.Fatalf("records = %v", recs)
 	}
 }

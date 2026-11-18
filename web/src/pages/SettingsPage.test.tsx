@@ -75,7 +75,7 @@ vi.mock('../api/client', async importOriginal => {
       syncImportList: vi.fn(),
       importListSyncStatus: vi.fn(),
       audibleSyncConfig: vi.fn(),
-      audibleSyncAccounts: vi.fn(),
+      audibleSyncLists: vi.fn(),
       audibleSyncListSyncStatus: vi.fn(),
       hardcoverLists: vi.fn(),
       triggerLibraryScan: vi.fn(),
@@ -316,9 +316,9 @@ function seedSettingsMocks(options: {
     // importListSyncStatus until running flips false (#1854).
     vi.mocked(api.syncImportList).mockResolvedValue(options.syncStart ?? makeSyncProgress({ running: true }))
     vi.mocked(api.importListSyncStatus).mockResolvedValue(options.syncStatus ?? makeSyncProgress())
-    vi.mocked(api.audibleSyncConfig).mockResolvedValue({ enabled: false, baseUrl: '', apiTokenConfigured: false, accountId: 0 })
-    vi.mocked(api.audibleSyncAccounts).mockResolvedValue([])
-    vi.mocked(api.audibleSyncListSyncStatus).mockResolvedValue({ ...makeSyncProgress(), stats: { ...makeSyncProgress().stats, owned: 0, unresolved: 0, removed: 0 } })
+    vi.mocked(api.audibleSyncConfig).mockResolvedValue({ enabled: false, baseUrl: '', apiTokenConfigured: false })
+    vi.mocked(api.audibleSyncLists).mockResolvedValue([])
+    vi.mocked(api.audibleSyncListSyncStatus).mockResolvedValue({ ...makeSyncProgress(), stats: { ...makeSyncProgress().stats, owned: 0, unresolved: 0, removed: 0, released: 0 } })
     vi.mocked(api.hardcoverLists).mockResolvedValue({ account: options.hardcoverAccount ?? '', lists: options.hardcoverLists ?? [] })
     vi.mocked(api.triggerLibraryScan).mockResolvedValue({ message: 'started' })
     vi.mocked(api.createBackup).mockResolvedValue({ name: 'bindery-backup.zip', size: 0, modTime: '' })

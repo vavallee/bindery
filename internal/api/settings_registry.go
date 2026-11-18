@@ -637,11 +637,6 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
-		Key: SettingAudibleSyncAccountID, Type: SettingTypeInt, Default: "", Min: "1",
-		Description: "The Audible Sync account wishlist lists read unless a list picks another. Empty uses Audible Sync's oldest signed in account.",
-		State:       SettingStateActive,
-	},
-	{
 		Key: SettingAudibleSyncSyncInterval, Type: SettingTypeDuration, Default: "6h", Min: "1h", Max: "168h",
 		Description:     "How often Audible Sync wishlist import lists sync.",
 		RestartRequired: true,

@@ -84,3 +84,61 @@ type WishlistPage struct {
 	PageSize int               `json:"page_size"`
 	Accounts []WishlistAccount `json:"accounts"`
 }
+
+// Library book statuses, as Audible Sync's pipeline names them.
+const (
+	LibraryStatusWaiting     = "waiting_download"
+	LibraryStatusDownloading = "downloading"
+	LibraryStatusDownloaded  = "downloaded"
+	// LibraryStatusUnavailable is a book Audible will not let the account
+	// download, usually a title withdrawn from the Plus catalogue. Audible
+	// Sync treats it as temporary: Audible does bring titles back.
+	LibraryStatusUnavailable = "unavailable"
+	LibraryStatusFailed      = "failed"
+)
+
+// LibraryBook is one book of an account's library (BookOut). Unlike a
+// catalogue book its authors are plain names and Length is in minutes.
+type LibraryBook struct {
+	ID            int           `json:"id"`
+	AccountID     int           `json:"account_id"`
+	ASIN          string        `json:"asin"`
+	Title         string        `json:"title"`
+	Subtitle      string        `json:"subtitle"`
+	Authors       []string      `json:"authors"`
+	Narrators     []string      `json:"narrators"`
+	Series        []SeriesEntry `json:"series"`
+	PrimarySeries *SeriesEntry  `json:"primary_series"`
+	Genres        []string      `json:"genres"`
+	Length        int           `json:"length"`
+	ReleaseDate   string        `json:"release_date"`
+	CoverURL      string        `json:"cover_url"`
+	Status        string        `json:"status"`
+}
+
+// LibraryPage is GET /api/books.
+type LibraryPage struct {
+	Items    []LibraryBook `json:"items"`
+	Total    int           `json:"total"`
+	Page     int           `json:"page"`
+	PageSize int           `json:"page_size"`
+}
+
+// CatalogBook gives a library book the catalogue shape, so the import list
+// sync handles both the same way. The book is owned, so InLibrary is set.
+func (b LibraryBook) CatalogBook() CatalogBook {
+	authors := make([]CatalogAuthor, 0, len(b.Authors))
+	for _, a := range b.Authors {
+		authors = append(authors, CatalogAuthor{Name: a})
+	}
+	cb := CatalogBook{
+		ASIN: b.ASIN, Title: b.Title, Subtitle: b.Subtitle, Authors: authors, Narrators: b.Narrators,
+		Series: b.Series, PrimarySeries: b.PrimarySeries, Genres: b.Genres, ReleaseDate: b.ReleaseDate,
+		CoverURL: b.CoverURL, InLibrary: true,
+	}
+	if b.Length > 0 {
+		secs := b.Length * 60
+		cb.LengthSeconds = &secs
+	}
+	return cb
+}

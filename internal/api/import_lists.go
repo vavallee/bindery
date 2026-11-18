@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/audiblesync"
 	"github.com/vavallee/bindery/internal/audiblesynclistsyncer"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/hardcoverlistsyncer"
@@ -54,6 +55,26 @@ type ImportListHandler struct {
 	asSync       AudibleSyncListSyncer
 	users        userLookup
 	hcListClient func(token string) hardcoverUserListClient
+	asLists      func(cfg AudibleSyncStoredConfig) (audibleSyncListBrowser, error)
+}
+
+// audibleSyncListBrowser is what AudibleSyncLists asks of Audible Sync.
+// Satisfied by *audiblesync.Client.
+type audibleSyncListBrowser interface {
+	Accounts(ctx context.Context) ([]audiblesync.Account, error)
+	WishlistTotal(ctx context.Context, accountID int) (int, error)
+	LibraryTotal(ctx context.Context, accountID int, status string) (int, error)
+}
+
+// AudibleSyncList is one list an Audible Sync account offers: its wishlist,
+// or its unavailable books. BooksCount is -1 when the count could not be read.
+type AudibleSyncList struct {
+	AccountID   int    `json:"accountId"`
+	AccountName string `json:"accountName"`
+	CountryCode string `json:"countryCode"`
+	NeedsLogin  bool   `json:"needsLogin"`
+	Source      string `json:"source"`
+	BooksCount  int    `json:"booksCount"`
 }
 
 func NewImportListHandler(repo *db.ImportListRepo, settings *db.SettingsRepo, hcSync HardcoverListSyncer, users userLookup) *ImportListHandler {
@@ -64,6 +85,9 @@ func NewImportListHandler(repo *db.ImportListRepo, settings *db.SettingsRepo, hc
 		users:    users,
 		hcListClient: func(token string) hardcoverUserListClient {
 			return hardcover.NewAuthenticated(token)
+		},
+		asLists: func(cfg AudibleSyncStoredConfig) (audibleSyncListBrowser, error) {
+			return cfg.Client()
 		},
 	}
 }
@@ -278,6 +302,47 @@ func (h *ImportListHandler) HardcoverLists(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"account": account, "lists": lists})
 }
 
+// AudibleSyncLists returns the lists the configured Audible Sync offers, two
+// per Audible account: its wishlist and its unavailable books, with counts,
+// for the Import tab to pick from the way it picks Hardcover lists.
+// GET /api/v1/importlist/audiblesync/lists
+func (h *ImportListHandler) AudibleSyncLists(w http.ResponseWriter, r *http.Request) {
+	cfg := LoadAudibleSyncConfig(r.Context(), h.settings)
+	if !cfg.Usable() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": audiblesynclistsyncer.ErrNotConfigured.Error()})
+		return
+	}
+	client, err := h.asLists(cfg)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	ctx := r.Context()
+	accounts, err := client.Accounts(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	out := make([]AudibleSyncList, 0, 2*len(accounts))
+	count := func(n int, err error) int {
+		if err != nil {
+			slog.Debug("Audible Sync lists: count unavailable", "error", err)
+			return -1
+		}
+		return n
+	}
+	for _, a := range accounts {
+		base := AudibleSyncList{AccountID: a.ID, AccountName: a.Name, CountryCode: a.CountryCode, NeedsLogin: a.NeedsLogin}
+		wish, unavailable := base, base
+		wish.Source = models.ImportListSourceWishlist
+		wish.BooksCount = count(client.WishlistTotal(ctx, a.ID))
+		unavailable.Source = models.ImportListSourceUnavailable
+		unavailable.BooksCount = count(client.LibraryTotal(ctx, a.ID, audiblesync.LibraryStatusUnavailable))
+		out = append(out, wish, unavailable)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // --- Exclusions ---
 
 func (h *ImportListHandler) ListExclusions(w http.ResponseWriter, r *http.Request) {
@@ -422,16 +487,27 @@ func (h *ImportListHandler) syncAudibleSync(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// normalizeAudibleSyncList applies the rules of an Audible Sync wishlist list:
-// its books are audiobooks, it has no URL or token of its own (the connection
-// is the global one), and its account is an Audible Sync account id or empty
-// for Audible Sync's default. Other list types pass unchanged.
+// normalizeAudibleSyncList applies the rules of an Audible Sync list: its
+// books are audiobooks, its URL names its source (the wishlist, the default,
+// or the unavailable books), it has no token of its own (the connection is the
+// global one), and its account is an Audible Sync account id or empty for
+// Audible Sync's default. The wishlist options do not apply to unavailable
+// books, which are all owned and on no wishlist. Other list types pass
+// unchanged.
 func normalizeAudibleSyncList(il *models.ImportList) error {
 	if il.Type != models.ImportListTypeAudibleSync {
 		return nil
 	}
 	il.MediaType = models.MediaTypeAudiobook
-	il.URL = ""
+	switch strings.TrimSpace(il.URL) {
+	case "", models.ImportListSourceWishlist:
+		il.URL = models.ImportListSourceWishlist
+	case models.ImportListSourceUnavailable:
+		il.URL = models.ImportListSourceUnavailable
+		il.SkipOwned, il.RemoveOnImport = false, false
+	default:
+		return errors.New("url must name the list's source: wishlist or unavailable")
+	}
 	il.Account = strings.TrimSpace(il.Account)
 	if il.Account != "" {
 		if n, err := strconv.Atoi(il.Account); err != nil || n < 1 {

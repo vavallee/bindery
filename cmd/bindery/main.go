@@ -626,10 +626,10 @@ func main() {
 		WithJobs(bgJobs)     // drain a manual "Sync now" on shutdown (#1854)
 	sched.WithHardcoverSyncer(hcSyncer)
 
-	// Audible Sync wishlist lists. The connection is read from settings on
+	// Audible Sync lists (wishlist, unavailable books). The connection is read from settings on
 	// every pass, so configuring Audible Sync needs no restart.
 	asListSyncer := audiblesynclistsyncer.New(importListRepo, authorRepo, bookRepo,
-		func(ctx context.Context) (audiblesynclistsyncer.WishlistClient, error) {
+		func(ctx context.Context) (audiblesynclistsyncer.Client, error) {
 			cfg := api.LoadAudibleSyncConfig(ctx, settingsRepo)
 			if !cfg.Usable() {
 				return nil, audiblesynclistsyncer.ErrNotConfigured
@@ -1252,6 +1252,7 @@ func main() {
 			r.Get("/importlist", importListHandler.List)
 			r.Post("/importlist", importListHandler.Create)
 			r.Get("/importlist/hardcover/lists", importListHandler.HardcoverLists)
+			r.Get("/importlist/audiblesync/lists", importListHandler.AudibleSyncLists)
 			r.Get("/importlist/{id}", importListHandler.Get)
 			r.Put("/importlist/{id}", importListHandler.Update)
 			r.Delete("/importlist/{id}", importListHandler.Delete)

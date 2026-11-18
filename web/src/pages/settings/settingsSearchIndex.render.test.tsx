@@ -43,6 +43,7 @@ vi.mock('../../api/client', async importOriginal => {
     absImportRuns: [],
     absReviewItems: { items: [], total: 0 },
     audibleSyncAccounts: [],
+    audibleSyncLists: [],
   }
   const api = new Proxy({}, {
     get: (_t, name: string) => vi.fn(() => Promise.resolve(name in shaped ? shaped[name] : /^list/.test(name) ? [] : {})),

@@ -1320,13 +1320,6 @@ func validateSettingValue(key, value string) error {
 		if d < time.Hour || d > 168*time.Hour {
 			return fmt.Errorf("audiblesync.sync_interval %q must be between 1h and 168h", value)
 		}
-	case SettingAudibleSyncAccountID:
-		if value == "" {
-			return nil
-		}
-		if n, err := strconv.Atoi(value); err != nil || n < 1 {
-			return fmt.Errorf("audiblesync.account_id %q is not an Audible Sync account id", value)
-		}
 	case SettingABSEnabled:
 		if value == "" {
 			return nil

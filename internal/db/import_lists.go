@@ -155,6 +155,49 @@ func scanImportList(rows *sql.Rows) (models.ImportList, error) {
 	return il, nil
 }
 
+// --- Books a list created ---
+
+// RecordBook notes that list listID created book bookID. Recording the same
+// pair twice is not an error.
+func (r *ImportListRepo) RecordBook(ctx context.Context, listID, bookID int64, asin string) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO import_list_books (import_list_id, book_id, asin, created_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(import_list_id, book_id) DO NOTHING`, listID, bookID, asin, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("record book %d for import list %d: %w", bookID, listID, err)
+	}
+	return nil
+}
+
+// ListBooks returns the books list listID created, as recorded by RecordBook.
+func (r *ImportListRepo) ListBooks(ctx context.Context, listID int64) ([]models.ImportListBook, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT book_id, asin FROM import_list_books WHERE import_list_id = ? ORDER BY book_id", listID)
+	if err != nil {
+		return nil, fmt.Errorf("list books of import list %d: %w", listID, err)
+	}
+	defer rows.Close()
+	var out []models.ImportListBook
+	for rows.Next() {
+		b := models.ImportListBook{ImportListID: listID}
+		if err := rows.Scan(&b.BookID, &b.ASIN); err != nil {
+			return nil, fmt.Errorf("scan import list book: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// ForgetBook drops the record that list listID created book bookID. The book
+// itself is untouched.
+func (r *ImportListRepo) ForgetBook(ctx context.Context, listID, bookID int64) error {
+	if _, err := r.db.ExecContext(ctx,
+		"DELETE FROM import_list_books WHERE import_list_id = ? AND book_id = ?", listID, bookID); err != nil {
+		return fmt.Errorf("forget book %d for import list %d: %w", bookID, listID, err)
+	}
+	return nil
+}
+
 // --- Exclusions ---
 
 func (r *ImportListRepo) ListExclusions(ctx context.Context) ([]models.ImportListExclusion, error) {

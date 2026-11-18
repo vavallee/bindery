@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import RichText from '../../components/RichText'
-import { api, AudibleSyncAccount, AudibleSyncConfig, AudibleSyncTestResult } from '../../api/client'
+import { api, AudibleSyncConfig, AudibleSyncTestResult } from '../../api/client'
 import { inputCls } from './formStyles'
 import { secretInputAttrs, urlInputAttrs } from '../../util/inputAttrs'
 import { primaryFill } from '../../components/buttons'
@@ -11,7 +11,6 @@ interface Draft {
   enabled: boolean
   baseUrl: string
   apiToken: string
-  accountId: number
 }
 
 function draftFrom(cfg: AudibleSyncConfig): Draft {
@@ -19,7 +18,6 @@ function draftFrom(cfg: AudibleSyncConfig): Draft {
     enabled: cfg.enabled,
     baseUrl: cfg.baseUrl ?? '',
     apiToken: '',
-    accountId: cfg.accountId ?? 0,
   }
 }
 
@@ -27,8 +25,7 @@ export default function AudibleSyncTab() {
   const { t } = useTranslation()
   const fid = useId()
   const [config, setConfig] = useState<AudibleSyncConfig | null>(null)
-  const [draft, setDraft] = useState<Draft>({ enabled: false, baseUrl: '', apiToken: '', accountId: 0 })
-  const [accounts, setAccounts] = useState<AudibleSyncAccount[]>([])
+  const [draft, setDraft] = useState<Draft>({ enabled: false, baseUrl: '', apiToken: '' })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -41,10 +38,6 @@ export default function AudibleSyncTab() {
       .then(cfg => {
         setConfig(cfg)
         setDraft(draftFrom(cfg))
-        // The account picker only fills once a connection is saved.
-        if (cfg.baseUrl && cfg.apiTokenConfigured) {
-          api.audibleSyncAccounts().then(setAccounts).catch(() => {})
-        }
       })
       .catch(console.error)
       .finally(() => setLoading(false))
@@ -55,18 +48,14 @@ export default function AudibleSyncTab() {
     setSaveError(null)
     setTestResult(null)
     try {
-      const payload: { enabled: boolean; baseUrl: string; accountId: number; apiToken?: string } = {
+      const payload: { enabled: boolean; baseUrl: string; apiToken?: string } = {
         enabled: draft.enabled,
         baseUrl: draft.baseUrl,
-        accountId: draft.accountId,
       }
       if (draft.apiToken) payload.apiToken = draft.apiToken
       const next = await api.audibleSyncSetConfig(payload)
       setConfig(next)
       setDraft(draftFrom(next))
-      if (next.baseUrl && next.apiTokenConfigured) {
-        api.audibleSyncAccounts().then(setAccounts).catch(() => {})
-      }
     } catch (err) {
       setSaveError(errorText(err, t('settings.audiblesync.errors.save', 'Save failed')))
     } finally {
@@ -81,7 +70,6 @@ export default function AudibleSyncTab() {
     try {
       const r = await api.audibleSyncTest(draft.apiToken ? { apiToken: draft.apiToken } : {})
       setTestResult(r)
-      if (r.accounts) setAccounts(r.accounts)
     } catch (err) {
       setTestError(errorText(err, t('settings.audiblesync.errors.test', 'Test failed')))
     } finally {
@@ -100,7 +88,7 @@ export default function AudibleSyncTab() {
         <h3 className="text-lg font-semibold mb-1">{t('settings.audiblesync.heading', 'Audible Sync')}</h3>
         <p className="text-xs text-fg-muted mb-4">
           <RichText
-            text={t('settings.audiblesync.intro', 'Connect a self-hosted <site>Audible Sync</site> instance to bring your Audible wishlist into Bindery. Once it is connected, add the wishlist under Settings, Import.')}
+            text={t('settings.audiblesync.intro', 'Connect a self-hosted <site>Audible Sync</site> instance to bring your Audible wishlist, and the library books Audible no longer lets you download, into Bindery. Once it is connected, pick the lists to watch under Settings, Import.')}
             components={{ site: <a href="https://github.com/AlexStansfield/audible-sync" target="_blank" rel="noopener noreferrer" className="underline" /> }}
           />
         </p>
@@ -145,29 +133,6 @@ export default function AudibleSyncTab() {
           />
           <p className="mt-1 text-[11px] text-fg-muted">
             {t('settings.audiblesync.fields.apiTokenHint', 'Audible Sync logs a token on its first start, or uses AUDIBLE_SYNC_API_TOKEN when that is set. Its last four characters are shown in its own settings.')}
-          </p>
-        </div>
-        <div>
-          <label htmlFor={`${fid}-account`} className="block text-xs font-medium mb-1">{t('settings.audiblesync.fields.account', 'Audible account')}</label>
-          <select id={`${fid}-account`}
-            value={draft.accountId}
-            onChange={e => setDraft(prev => ({ ...prev, accountId: Number(e.target.value) }))}
-            className={inputCls}
-          >
-            <option value={0}>{t('settings.audiblesync.fields.accountDefault', 'Audible Sync default (oldest signed in account)')}</option>
-            {accounts.map(a => (
-              <option key={a.id} value={a.id}>
-                {a.needsLogin
-                  ? t('settings.audiblesync.fields.accountNeedsLogin', { name: a.name, country: a.countryCode.toUpperCase(), defaultValue: '{{name}} ({{country}}), needs signing in again' })
-                  : t('settings.audiblesync.fields.accountOption', { name: a.name, country: a.countryCode.toUpperCase(), defaultValue: '{{name}} ({{country}})' })}
-              </option>
-            ))}
-            {draft.accountId > 0 && !accounts.some(a => a.id === draft.accountId) && (
-              <option value={draft.accountId}>{t('settings.audiblesync.fields.accountUnknown', { id: draft.accountId, defaultValue: 'Account {{id}}' })}</option>
-            )}
-          </select>
-          <p className="mt-1 text-[11px] text-fg-muted">
-            {t('settings.audiblesync.fields.accountHint', 'The account whose wishlist a list reads unless the list picks another.')}
           </p>
         </div>
       </div>

@@ -91,3 +91,57 @@ func (c *Client) RemoveFromWishlist(ctx context.Context, accountID int, asin str
 	}
 	return err
 }
+
+// Library returns the books in the library of accountID (zero: the client's
+// account, or every account when neither names one), walking every page.
+// status, when not empty, keeps only books in that state, such as
+// LibraryStatusUnavailable.
+func (c *Client) Library(ctx context.Context, accountID int, status string) ([]LibraryBook, error) {
+	var items []LibraryBook
+	for page := 1; page <= maxListPages; page++ {
+		q := url.Values{
+			"page":      {strconv.Itoa(page)},
+			"page_size": {strconv.Itoa(listPageSize)},
+		}
+		if accountID > 0 {
+			q.Set("account_id", strconv.Itoa(accountID))
+		}
+		if status != "" {
+			q.Set("status", status)
+		}
+		var out LibraryPage
+		if err := c.do(ctx, http.MethodGet, "/api/books", c.query(q), nil, &out); err != nil {
+			return nil, err
+		}
+		items = append(items, out.Items...)
+		if len(out.Items) == 0 || len(items) >= out.Total {
+			break
+		}
+	}
+	return items, nil
+}
+
+// WishlistTotal is how many books are on the wishlist of accountID, read with
+// a one-book page.
+func (c *Client) WishlistTotal(ctx context.Context, accountID int) (int, error) {
+	q := url.Values{"page": {"1"}, "page_size": {"1"}, "account_id": {strconv.Itoa(accountID)}}
+	var out WishlistPage
+	if err := c.do(ctx, http.MethodGet, "/api/wishlist", q, nil, &out); err != nil {
+		return 0, err
+	}
+	return out.Total, nil
+}
+
+// LibraryTotal is how many books of the library of accountID are in status
+// (every book when status is empty), read with a one-book page.
+func (c *Client) LibraryTotal(ctx context.Context, accountID int, status string) (int, error) {
+	q := url.Values{"page": {"1"}, "page_size": {"1"}, "account_id": {strconv.Itoa(accountID)}}
+	if status != "" {
+		q.Set("status", status)
+	}
+	var out LibraryPage
+	if err := c.do(ctx, http.MethodGet, "/api/books", q, nil, &out); err != nil {
+		return 0, err
+	}
+	return out.Total, nil
+}

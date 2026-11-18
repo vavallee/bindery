@@ -48,6 +48,25 @@ type ImportList struct {
 	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
+// Sources of an Audible Sync list, stored in ImportList.URL (the field a
+// Hardcover list keeps its slug in: which list on the provider it reads).
+const (
+	// ImportListSourceWishlist reads the account's wishlist. An empty URL
+	// means the same, for rows written before there was a choice.
+	ImportListSourceWishlist = "wishlist"
+	// ImportListSourceUnavailable reads the books in the account's library
+	// Audible no longer lets it download, typically titles withdrawn from the
+	// Plus catalogue.
+	ImportListSourceUnavailable = "unavailable"
+)
+
+// ImportListBook records that a list created a book.
+type ImportListBook struct {
+	ImportListID int64
+	BookID       int64
+	ASIN         string
+}
+
 type ImportListExclusion struct {
 	ID         int64     `json:"id"`
 	ForeignID  string    `json:"foreignId"`

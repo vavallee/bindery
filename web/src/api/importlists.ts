@@ -76,10 +76,10 @@ export interface ImportListSyncProgress {
   stats: ImportListSyncStats
 }
 
-// AudibleSyncListSyncProgress is the polled shape of the Audible Sync wishlist
-// sync: the Hardcover shape with the counts only a wishlist has.
+// AudibleSyncListSyncProgress is the polled shape of the Audible Sync list
+// sync: the Hardcover shape with the counts only those lists have.
 export interface AudibleSyncListSyncProgress extends Omit<ImportListSyncProgress, 'stats'> {
-  stats: ImportListSyncStats & { owned: number; unresolved: number; removed: number }
+  stats: ImportListSyncStats & { owned: number; unresolved: number; removed: number; released: number }
 }
 
 // MigrateResult is one section of an import summary (authors, indexers, ...).

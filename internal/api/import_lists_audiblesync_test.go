@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/audiblesync"
 	"github.com/vavallee/bindery/internal/audiblesynclistsyncer"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -40,11 +42,11 @@ func createList(t *testing.T, h *ImportListHandler, body string) (*httptest.Resp
 
 func TestCreateAudibleSyncListNormalises(t *testing.T) {
 	h, _, _ := importListFixture(t)
-	rec, il := createList(t, h, `{"name":"Wishlist","type":"audiblesync","url":"ignored","apiKey":"ignored","account":" 2 ","mediaType":"ebook","enabled":true}`)
+	rec, il := createList(t, h, `{"name":"Wishlist","type":"audiblesync","apiKey":"ignored","account":" 2 ","mediaType":"ebook","enabled":true}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
-	if il.MediaType != models.MediaTypeAudiobook || il.URL != "" || il.APIKeyConfigured || il.Account != "2" {
+	if il.MediaType != models.MediaTypeAudiobook || il.URL != models.ImportListSourceWishlist || il.APIKeyConfigured || il.Account != "2" {
 		t.Fatalf("list = %+v", il)
 	}
 	if !il.SkipOwned || il.RemoveOnImport {
@@ -54,6 +56,65 @@ func TestCreateAudibleSyncListNormalises(t *testing.T) {
 	rec, _ = createList(t, h, `{"name":"Bad","type":"audiblesync","account":"main"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("a non-numeric account must be refused, got %d", rec.Code)
+	}
+	rec, _ = createList(t, h, `{"name":"Bad","type":"audiblesync","url":"library"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("an unknown source must be refused, got %d", rec.Code)
+	}
+
+	// The unavailable books source ignores the wishlist options.
+	rec, il = createList(t, h, `{"name":"Gone","type":"audiblesync","url":"unavailable","account":"2","skipOwned":true,"removeOnImport":true}`)
+	if rec.Code != http.StatusCreated || il.URL != models.ImportListSourceUnavailable || il.SkipOwned || il.RemoveOnImport {
+		t.Fatalf("%d %+v", rec.Code, il)
+	}
+}
+
+type fakeASBrowser struct{}
+
+func (fakeASBrowser) Accounts(context.Context) ([]audiblesync.Account, error) {
+	return []audiblesync.Account{{ID: 1, Name: "Main", CountryCode: "uk"}, {ID: 2, Name: "Spare", CountryCode: "us", NeedsLogin: true}}, nil
+}
+func (fakeASBrowser) WishlistTotal(_ context.Context, id int) (int, error) { return 10 * id, nil }
+func (fakeASBrowser) LibraryTotal(_ context.Context, id int, status string) (int, error) {
+	if id == 2 {
+		return 0, errors.New("needs login")
+	}
+	if status != audiblesync.LibraryStatusUnavailable {
+		return 0, errors.New("wrong status")
+	}
+	return 3, nil
+}
+
+func TestAudibleSyncListsOffersTwoListsPerAccount(t *testing.T) {
+	h, _, settings := importListFixture(t)
+	rec := httptest.NewRecorder()
+	h.AudibleSyncLists(rec, httptest.NewRequest(http.MethodGet, "/importlist/audiblesync/lists", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unconfigured: %d", rec.Code)
+	}
+
+	ctx := context.Background()
+	_ = settings.Set(ctx, SettingAudibleSyncEnabled, "true")
+	_ = settings.Set(ctx, SettingAudibleSyncBaseURL, "http://10.0.0.5:8080")
+	_ = settings.Set(ctx, SettingAudibleSyncAPIToken, "t")
+	h.asLists = func(AudibleSyncStoredConfig) (audibleSyncListBrowser, error) { return fakeASBrowser{}, nil }
+	rec = httptest.NewRecorder()
+	h.AudibleSyncLists(rec, httptest.NewRequest(http.MethodGet, "/importlist/audiblesync/lists", nil))
+	var lists []AudibleSyncList
+	_ = json.NewDecoder(rec.Body).Decode(&lists)
+	if rec.Code != http.StatusOK || len(lists) != 4 {
+		t.Fatalf("%d %+v", rec.Code, lists)
+	}
+	want := []AudibleSyncList{
+		{AccountID: 1, AccountName: "Main", CountryCode: "uk", Source: "wishlist", BooksCount: 10},
+		{AccountID: 1, AccountName: "Main", CountryCode: "uk", Source: "unavailable", BooksCount: 3},
+		{AccountID: 2, AccountName: "Spare", CountryCode: "us", NeedsLogin: true, Source: "wishlist", BooksCount: 20},
+		{AccountID: 2, AccountName: "Spare", CountryCode: "us", NeedsLogin: true, Source: "unavailable", BooksCount: -1},
+	}
+	for i := range want {
+		if lists[i] != want[i] {
+			t.Errorf("list %d = %+v, want %+v", i, lists[i], want[i])
+		}
 	}
 }
 

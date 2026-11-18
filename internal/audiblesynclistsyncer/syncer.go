@@ -1,8 +1,14 @@
-// Package audiblesynclistsyncer syncs an Audible wishlist, read through a
+// Package audiblesynclistsyncer syncs Audible lists, read through a
 // self-hosted Audible Sync instance, into Bindery's catalogue as wanted
 // audiobooks: the Audible Sync counterpart of hardcoverlistsyncer.
 //
-// Each wishlist item is an ASIN. It is resolved to the primary provider's work
+// A list reads one of two sources (models.ImportList.URL): the account's
+// wishlist, or the books in its library Audible no longer lets it download,
+// typically titles withdrawn from the Plus catalogue. Audible does bring such
+// titles back, and Audible Sync then downloads them, so an unavailable books
+// list stops searching for a book it added once that happens.
+//
+// Each item is an ASIN. It is resolved to the primary provider's work
 // where one matches (the same canonicalisation Add Book by ASIN uses), so a
 // wishlist book links to the work the rest of the library uses; an audiobook
 // the primary provider does not know is added as an Audible book under its
@@ -60,7 +66,11 @@ type SyncStats struct {
 	// Removed books were taken off the Audible wishlist after Bindery
 	// imported them.
 	Removed int `json:"removed"`
-	Failed  int `json:"failed"`
+	// Released books, added by an unavailable books list, are downloadable on
+	// Audible again: Audible Sync is fetching them, so they are no longer
+	// searched for.
+	Released int `json:"released"`
+	Failed   int `json:"failed"`
 }
 
 // SyncProgress is the polled shape for GET /importlist/sync/status?type=audiblesync.
@@ -79,23 +89,24 @@ type SyncProgress struct {
 // Sentinel errors, mapped to HTTP status codes by the API.
 var (
 	ErrNotFound           = errors.New("import list not found")
-	ErrWrongType          = errors.New("import list is not an Audible Sync wishlist")
+	ErrWrongType          = errors.New("import list is not an Audible Sync list")
 	ErrDisabled           = errors.New("import list is disabled")
 	ErrNotConfigured      = errors.New("the Audible Sync connection is not configured: enable it and save its URL and token in Settings, Audible Sync")
 	ErrSyncAlreadyRunning = errors.New("a wishlist sync from Audible Sync is already running")
 	ErrShuttingDown       = errors.New("server is shutting down")
 )
 
-// WishlistClient is what the syncer asks of Audible Sync.
-type WishlistClient interface {
+// Client is what the syncer asks of Audible Sync.
+type Client interface {
 	Wishlist(ctx context.Context, accountID int) ([]audiblesync.WishlistItem, []audiblesync.WishlistAccount, error)
 	RemoveFromWishlist(ctx context.Context, accountID int, asin string) error
+	Library(ctx context.Context, accountID int, status string) ([]audiblesync.LibraryBook, error)
 }
 
 // ClientSource builds a client from the current Audible Sync settings, or
 // returns ErrNotConfigured. Read on every pass, so a settings change applies
 // to the next sync without a restart.
-type ClientSource func(ctx context.Context) (WishlistClient, error)
+type ClientSource func(ctx context.Context) (Client, error)
 
 // Resolver maps Audible data onto the primary metadata provider. Satisfied by
 // *metadata.Aggregator.
@@ -300,7 +311,7 @@ func (s *ListSyncer) beginProgress(il models.ImportList, trigger string) {
 	defer s.progressMu.Unlock()
 	s.progress = SyncProgress{
 		Running: true, ListID: il.ID, ListName: il.Name, Trigger: trigger,
-		StartedAt: time.Now().UTC(), Message: "reading the Audible wishlist from Audible Sync…",
+		StartedAt: time.Now().UTC(), Message: "reading the list from Audible Sync…",
 	}
 }
 
@@ -331,6 +342,73 @@ func listAccount(il models.ImportList) int {
 	return max(n, 0)
 }
 
+// listSource is the source a list reads; an empty URL is the wishlist.
+func listSource(il models.ImportList) string {
+	if strings.TrimSpace(il.URL) == models.ImportListSourceUnavailable {
+		return models.ImportListSourceUnavailable
+	}
+	return models.ImportListSourceWishlist
+}
+
+// releaseReturned stops searching for the books an unavailable books list
+// created that Audible lets the account download again. Audible Sync fetches
+// those itself, so a search would only find a second copy. Only the list's own
+// books are touched (import_list_books), and only while they are still wanted
+// and monitored: an imported book, or one the operator has since changed by
+// hand, is left as it is. Each released book is forgotten, so a later sync
+// does not act on it again.
+func (s *ListSyncer) releaseReturned(ctx context.Context, client Client, il models.ImportList, accountID int, stillUnavailable map[string]bool) {
+	created, err := s.importLists.ListBooks(ctx, il.ID)
+	if err != nil {
+		slog.Warn("Audible Sync list: could not read the books it created", "list", il.Name, "error", err)
+		return
+	}
+	var gone []models.ImportListBook
+	for _, b := range created {
+		if !stillUnavailable[isbnutil.NormalizeASIN(b.ASIN)] {
+			gone = append(gone, b)
+		}
+	}
+	if len(gone) == 0 {
+		return
+	}
+	library, err := client.Library(ctx, accountID, "")
+	if err != nil {
+		slog.Warn("Audible Sync list: could not read the library to check returned books", "list", il.Name, "error", err)
+		return
+	}
+	status := make(map[string]string, len(library))
+	for _, lb := range library {
+		status[isbnutil.NormalizeASIN(lb.ASIN)] = lb.Status
+	}
+	for _, rec := range gone {
+		switch status[isbnutil.NormalizeASIN(rec.ASIN)] {
+		case audiblesync.LibraryStatusWaiting, audiblesync.LibraryStatusDownloading, audiblesync.LibraryStatusDownloaded:
+		default:
+			// Gone from the library, or failed in Audible Sync: it is not
+			// fetching the book, so keep searching.
+			continue
+		}
+		book, err := s.books.GetByID(ctx, rec.BookID)
+		if err != nil || book == nil {
+			continue
+		}
+		if book.Status == models.BookStatusWanted && book.Monitored {
+			book.Monitored = false
+			if err := s.books.Update(ctx, book); err != nil {
+				slog.Warn("Audible Sync list: could not stop searching for a returned book", "title", book.Title, "error", err)
+				continue
+			}
+			slog.Info("Audible Sync list: book is downloadable on Audible again; no longer searching for it",
+				"list", il.Name, "title", book.Title, "asin", rec.ASIN)
+			s.count(func(st *SyncStats) { st.Released++ })
+		}
+		if err := s.importLists.ForgetBook(ctx, il.ID, rec.BookID); err != nil {
+			slog.Warn("Audible Sync list: could not forget a released book", "title", book.Title, "error", err)
+		}
+	}
+}
+
 // scopeUserID is the identity the create-versus-skip reads run under: the list
 // owner while tenancy enforcement is on, 0 (unscoped) otherwise. Same rule as
 // the Hardcover list sync (#2766).
@@ -350,9 +428,26 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		return err
 	}
 	accountID := listAccount(il)
-	items, states, err := client.Wishlist(ctx, accountID)
-	if err != nil {
-		return fmt.Errorf("read the Audible wishlist: %w", err)
+	unavailableList := listSource(il) == models.ImportListSourceUnavailable
+	var (
+		items  []audiblesync.WishlistItem
+		states []audiblesync.WishlistAccount
+	)
+	if unavailableList {
+		books, err := client.Library(ctx, accountID, audiblesync.LibraryStatusUnavailable)
+		if err != nil {
+			return fmt.Errorf("read the unavailable Audible books: %w", err)
+		}
+		for _, b := range books {
+			items = append(items, audiblesync.WishlistItem{CatalogBook: b.CatalogBook(), AccountID: b.AccountID})
+		}
+		// Every one of these books is owned, and none is on a wishlist.
+		il.SkipOwned, il.RemoveOnImport = false, false
+	} else {
+		items, states, err = client.Wishlist(ctx, accountID)
+		if err != nil {
+			return fmt.Errorf("read the Audible wishlist: %w", err)
+		}
 	}
 	for _, st := range states {
 		if accountID > 0 && st.AccountID != accountID {
@@ -383,7 +478,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 	excluded := s.exclusionSet(ctx)
 	nameIndex := s.buildAuthorNameIndex(ctx, scope)
 
-	slog.Info("syncing Audible Sync wishlist", "list", il.Name, "account", accountID, "books", len(items))
+	slog.Info("syncing Audible Sync list", "list", il.Name, "source", listSource(il), "account", accountID, "books", len(items))
 	s.progressMu.Lock()
 	s.progress.Stats.Total = len(items)
 	s.progress.Message = fmt.Sprintf("importing %d books from %s…", len(items), il.Name)
@@ -446,6 +541,14 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		}
 	}
 
+	if unavailableList {
+		current := make(map[string]bool, len(items))
+		for _, it := range items {
+			current[isbnutil.NormalizeASIN(it.ASIN)] = true
+		}
+		s.releaseReturned(ctx, client, il, accountID, current)
+	}
+
 	if len(searchTargets) > 0 && s.searcher != nil {
 		go concurrency.RunBoundedPaced(ctx, searchTargets, searchConcurrency, searchPace, func(ctx context.Context, b models.Book) {
 			s.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(ctx, indexer.OriginListSync), b)
@@ -457,7 +560,7 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 // removeFromWishlist takes an imported book off the Audible wishlist. The
 // item's own account is used when the list reads Audible Sync's default, since
 // removal must name one.
-func (s *ListSyncer) removeFromWishlist(ctx context.Context, client WishlistClient, il models.ImportList, item audiblesync.WishlistItem, asin string) {
+func (s *ListSyncer) removeFromWishlist(ctx context.Context, client Client, il models.ImportList, item audiblesync.WishlistItem, asin string) {
 	account := listAccount(il)
 	if account == 0 {
 		account = item.AccountID
@@ -580,7 +683,10 @@ func (s *ListSyncer) addBook(ctx context.Context, il models.ImportList, book *mo
 		slog.Warn("Audible Sync wishlist: failed to create book", "title", book.Title, "error", err)
 		return nil, outcomeFailed
 	}
-	slog.Info("imported book from Audible Sync wishlist", "title", book.Title, "asin", book.ASIN, "author_id", authorID)
+	slog.Info("imported book from Audible Sync list", "list", il.Name, "title", book.Title, "asin", book.ASIN, "author_id", authorID)
+	if err := s.importLists.RecordBook(ctx, il.ID, book.ID, book.ASIN); err != nil {
+		slog.Warn("Audible Sync list: could not record the book it created", "title", book.Title, "error", err)
+	}
 	if book.BecameSearchable("", false) {
 		return book, outcomeImported
 	}

@@ -3,8 +3,12 @@
 [Audible Sync](https://github.com/AlexStansfield/audible-sync) is a separate,
 self-hosted service that signs in to your Audible account, downloads and decrypts
 your library, and serves your wishlist and library over an HTTP API. When you run
-it, Bindery can sync your **Audible wishlist** into your library as wanted
-audiobooks.
+it, Bindery can watch two lists of each Audible account and add their books to
+your library as wanted audiobooks:
+
+- the account's **wishlist**;
+- its **unavailable books**: titles in the account's library that Audible no
+  longer lets it download, usually ones withdrawn from the Plus catalogue.
 
 The integration is **off by default** and is a preview. Nothing changes until an
 admin turns it on.
@@ -20,18 +24,19 @@ admin turns it on.
    path if you serve it under one) and the **API token**, tick **Enable**, and
    **Save**.
 5. Press **Test Connection**. It reports the Audible Sync version and how many
-   Audible accounts it holds, and fills the account picker.
-6. Optionally pick the default **Audible account** wishlist lists read, and
-   **Save** again.
-7. Open **Settings, Import** and press **Add Audible wishlist**.
+   Audible accounts it holds.
+6. Open **Settings, Import**. Under **Audible (Audible Sync)** every Audible
+   account has its wishlist and its unavailable books listed, with how many books
+   each holds. Tick the ones to watch, as you would Hardcover lists. Unticking a
+   list pauses it; **Delete** removes it.
 
 The URL is checked like every other service URL: LAN and loopback addresses are
 fine, link-local and cloud metadata addresses are refused. **Test Connection**
 only ever probes the saved URL, never one typed into the form.
 
-## The Audible wishlist as an import list
+## What a sync does
 
-Each sync of a wishlist list:
+Each sync of a list:
 
 - adds every wishlist book as a **wanted audiobook** and searches for it, unless
   *Download books from this list* is off, in which case it is added unmonitored;
@@ -48,16 +53,25 @@ Each sync of a wishlist list:
 
 Per list options:
 
-| Option | Default | What it does |
-|---|---|---|
-| Audible account | Default account | Whose wishlist to read. The default is the account chosen in Settings, Audible Sync, or Audible Sync's oldest signed in account |
-| Skip owned books | On | A book the Audible account already owns is left alone: Audible Sync downloads it itself |
-| Remove from wishlist once imported | Off | Once Bindery has imported a wishlist book, the next sync takes it off the Audible wishlist. This writes to your Audible account |
-| Owner | Global | Who sees the books it adds, on a multi user install |
+| Option | Lists | Default | What it does |
+|---|---|---|---|
+| Download books from this list | Both | On | Off adds the books unmonitored, so nothing is searched for until you monitor one |
+| Skip owned books | Wishlist | On | A book the Audible account already owns is left alone: Audible Sync downloads it itself |
+| Remove from wishlist once imported | Wishlist | Off | Once Bindery has imported a wishlist book, the next sync takes it off the Audible wishlist. This writes to your Audible account |
+| Owner | Both | Global | Who sees the books it adds, on a multi user install |
+
+### Unavailable books that come back
+
+Audible does bring withdrawn titles back, and Audible Sync then downloads them
+itself. So when a book an unavailable books list added becomes downloadable
+again, the next sync **stops searching** for it (it is unmonitored, and stays in
+your library). Only books that list created are touched, and only while they
+are still wanted: a book you have imported, or wanted through another list,
+is left as it is. The sync result counts these as *downloadable again*.
 
 Lists sync every 6 hours, or every `audiblesync.sync_interval` (1h to 168h,
-read at startup). Reading the wishlist does not contact Audible: Audible Sync
-serves it as its own sync last read it. **Sync now** runs a list at once.
+read at startup). Reading a list does not contact Audible: Audible Sync serves
+the wishlist and library as its own sync last read them. **Sync now** runs a list at once.
 
 Series are not linked from the wishlist yet: Audible's series do not match the
 series the metadata provider files books under, and two rows for one series are
@@ -71,7 +85,8 @@ worse than none.
 | `rejected the API token` | The token is wrong or was regenerated in Audible Sync. |
 | `needs to be signed in again in Audible Sync` | Audible refused the account. Sign it in again in Audible Sync; Bindery cannot. |
 | `it has no Audible accounts yet` | The connection works, but there is nothing to read yet. |
-| A sync adds nothing and logs that the wishlist is *as last read* | Audible Sync's latest read of the wishlist failed; it serves the previous one until its next sync works. |
+| A wishlist sync adds nothing and logs that the wishlist is *as last read* | Audible Sync's latest read of the wishlist failed; it serves the previous one until its next sync works. |
+| A list shows *Needs signing in again in Audible Sync* | Audible refused that account. Its lists keep the books Audible Sync last read until it is signed in again. |
 
 ## API
 
@@ -80,19 +95,26 @@ The connection routes are admin only.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/v1/audiblesync/config` | The stored settings; the token is reported as `apiTokenConfigured`, never returned |
-| `PUT` | `/api/v1/audiblesync/config` | Save any of `enabled`, `baseUrl`, `apiToken`, `accountId`. An empty token keeps the stored one. Every value is validated before anything is written |
+| `PUT` | `/api/v1/audiblesync/config` | Save any of `enabled`, `baseUrl`, `apiToken`. An empty token keeps the stored one. Every value is validated before anything is written |
 | `POST` | `/api/v1/audiblesync/test` | Probe the saved URL; an `apiToken` in the body is tried in place of the stored one |
 | `POST` | `/api/v1/audiblesync/accounts` | The Audible accounts Audible Sync holds |
 
-Wishlist lists are ordinary import lists of type `audiblesync`
-(`POST /api/v1/importlist` with `account`, `skipOwned` and `removeOnImport`).
-`POST /api/v1/importlist/{id}/sync` starts one and answers 202, and
-`GET /api/v1/importlist/sync/status?type=audiblesync` reports the run, with the
-counts `owned`, `unresolved` and `removed` besides the usual ones.
+The lists are ordinary import lists of type `audiblesync`, also admin only:
+
+- `GET /api/v1/importlist/audiblesync/lists` returns what can be picked: per
+  account, `source` `wishlist` and `unavailable`, with `booksCount` (-1 when
+  Audible Sync could not count it).
+- `POST /api/v1/importlist` saves one with `url` set to the source, `account`
+  to the Audible Sync account id, and the options `skipOwned` and
+  `removeOnImport` (wishlist only).
+- `POST /api/v1/importlist/{id}/sync` starts one and answers 202, and
+  `GET /api/v1/importlist/sync/status?type=audiblesync` reports the run, with
+  the counts `owned`, `unresolved`, `removed` and `released` besides the usual
+  ones.
 
 The settings are `audiblesync.enabled`, `audiblesync.base_url`,
-`audiblesync.api_token` (secret, never returned by the settings API),
-`audiblesync.account_id` and `audiblesync.sync_interval`. Connection changes
+`audiblesync.api_token` (secret, never returned by the settings API) and
+`audiblesync.sync_interval`. Connection changes
 apply to the next sync without a restart.
 
 ## What Audible Sync is

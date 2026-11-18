@@ -51,11 +51,11 @@ func putAudibleSyncConfig(t *testing.T, h *AudibleSyncHandler, body string) (*ht
 func TestAudibleSyncConfigRoundTripRedactsToken(t *testing.T) {
 	h, settings := audibleSyncFixture(t)
 
-	rec, cfg := putAudibleSyncConfig(t, h, `{"enabled":true,"baseUrl":"http://10.0.0.5:8080/","apiToken":" secret ","accountId":2}`)
+	rec, cfg := putAudibleSyncConfig(t, h, `{"enabled":true,"baseUrl":"http://10.0.0.5:8080/","apiToken":" secret "}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("set: %d %s", rec.Code, rec.Body.String())
 	}
-	if !cfg.Enabled || cfg.BaseURL != "http://10.0.0.5:8080" || !cfg.APITokenConfigured || cfg.AccountID != 2 {
+	if !cfg.Enabled || cfg.BaseURL != "http://10.0.0.5:8080" || !cfg.APITokenConfigured {
 		t.Fatalf("cfg = %+v", cfg)
 	}
 	if strings.Contains(rec.Body.String(), "secret") {
@@ -65,9 +65,9 @@ func TestAudibleSyncConfigRoundTripRedactsToken(t *testing.T) {
 		t.Fatalf("stored token = %+v", got)
 	}
 
-	// An empty token keeps the stored one; accountId 0 clears the account.
-	_, cfg = putAudibleSyncConfig(t, h, `{"apiToken":"","accountId":0}`)
-	if !cfg.APITokenConfigured || cfg.AccountID != 0 {
+	// An empty token keeps the stored one.
+	_, cfg = putAudibleSyncConfig(t, h, `{"apiToken":"","enabled":false}`)
+	if !cfg.APITokenConfigured || cfg.Enabled {
 		t.Fatalf("after partial save cfg = %+v", cfg)
 	}
 }
@@ -77,7 +77,6 @@ func TestAudibleSyncSetConfigValidatesBeforeWriting(t *testing.T) {
 	for _, body := range []string{
 		`{"enabled":true,"baseUrl":"http://169.254.169.254/"}`,
 		`{"enabled":true,"baseUrl":"10.0.0.5:8080"}`,
-		`{"enabled":true,"accountId":-1}`,
 		`{"enabled":true,"apiToken":"a\nb"}`,
 	} {
 		rec, _ := putAudibleSyncConfig(t, h, body)

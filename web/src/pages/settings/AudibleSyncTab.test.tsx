@@ -20,34 +20,21 @@ const saved: AudibleSyncConfig = {
   enabled: true,
   baseUrl: 'http://audible-sync:8080',
   apiTokenConfigured: true,
-  accountId: 0,
 }
 
 beforeEach(() => {
   vi.resetAllMocks()
   mocked.audibleSyncConfig.mockResolvedValue(saved)
-  mocked.audibleSyncAccounts.mockResolvedValue([
-    { id: 1, name: 'Main', countryCode: 'uk', enabled: true, needsLogin: false },
-    { id: 2, name: 'Spare', countryCode: 'us', enabled: true, needsLogin: true },
-  ])
 })
 
 describe('AudibleSyncTab', () => {
-  it('fills the account picker from the saved connection', async () => {
+  it('leaves a blank token out of a save, so the stored one is kept', async () => {
+    mocked.audibleSyncSetConfig.mockResolvedValue(saved)
     render(<AudibleSyncTab />)
-    expect(await screen.findByRole('option', { name: 'Main (UK)' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Spare (US), needs signing in again' })).toBeInTheDocument()
-  })
-
-  it('saves the account and leaves a blank token out, so the stored one is kept', async () => {
-    mocked.audibleSyncSetConfig.mockResolvedValue({ ...saved, accountId: 1 })
-    render(<AudibleSyncTab />)
-    await screen.findByRole('option', { name: 'Main (UK)' })
-    fireEvent.change(screen.getByLabelText('Audible account'), { target: { value: '1' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
     await waitFor(() => expect(mocked.audibleSyncSetConfig).toHaveBeenCalled())
     const payload = mocked.audibleSyncSetConfig.mock.calls[0][0]
-    expect(payload).toEqual({ enabled: true, baseUrl: 'http://audible-sync:8080', accountId: 1 })
+    expect(payload).toEqual({ enabled: true, baseUrl: 'http://audible-sync:8080' })
     expect(payload).not.toHaveProperty('apiToken')
   })
 

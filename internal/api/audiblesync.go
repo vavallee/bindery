@@ -18,10 +18,9 @@ import (
 // library of the operator's own Audible account (internal/audiblesync). These
 // keys configure Bindery's connection to it.
 const (
-	SettingAudibleSyncEnabled   = "audiblesync.enabled"
-	SettingAudibleSyncBaseURL   = "audiblesync.base_url"
-	SettingAudibleSyncAPIToken  = "audiblesync.api_token" //nolint:gosec // #nosec G101 -- settings key name, not a credential value
-	SettingAudibleSyncAccountID = "audiblesync.account_id"
+	SettingAudibleSyncEnabled  = "audiblesync.enabled"
+	SettingAudibleSyncBaseURL  = "audiblesync.base_url"
+	SettingAudibleSyncAPIToken = "audiblesync.api_token" //nolint:gosec // #nosec G101 -- settings key name, not a credential value
 	// SettingAudibleSyncSyncInterval is how often the wishlist import lists
 	// sync. Read at startup.
 	SettingAudibleSyncSyncInterval = "audiblesync.sync_interval"
@@ -29,10 +28,9 @@ const (
 
 // AudibleSyncStoredConfig is the Audible Sync configuration as stored.
 type AudibleSyncStoredConfig struct {
-	Enabled   bool
-	BaseURL   string
-	APIToken  string
-	AccountID int
+	Enabled  bool
+	BaseURL  string
+	APIToken string
 }
 
 // Usable reports whether the configuration is complete enough to call
@@ -43,7 +41,8 @@ func (c AudibleSyncStoredConfig) Usable() bool {
 
 // Client builds a client for the stored configuration.
 func (c AudibleSyncStoredConfig) Client() (*audiblesync.Client, error) {
-	return audiblesync.NewClient(c.BaseURL, c.APIToken, c.AccountID)
+	// No default account: every list names the account it reads.
+	return audiblesync.NewClient(c.BaseURL, c.APIToken, 0)
 }
 
 // LoadAudibleSyncConfig reads the Audible Sync configuration from settings.
@@ -55,12 +54,10 @@ func LoadAudibleSyncConfig(ctx context.Context, settings *db.SettingsRepo) Audib
 		}
 		return strings.TrimSpace(s.Value)
 	}
-	account, _ := strconv.Atoi(get(SettingAudibleSyncAccountID))
 	return AudibleSyncStoredConfig{
-		Enabled:   strings.EqualFold(get(SettingAudibleSyncEnabled), "true"),
-		BaseURL:   get(SettingAudibleSyncBaseURL),
-		APIToken:  get(SettingAudibleSyncAPIToken),
-		AccountID: max(account, 0),
+		Enabled:  strings.EqualFold(get(SettingAudibleSyncEnabled), "true"),
+		BaseURL:  get(SettingAudibleSyncBaseURL),
+		APIToken: get(SettingAudibleSyncAPIToken),
 	}
 }
 
@@ -70,14 +67,12 @@ type AudibleSyncConfigResponse struct {
 	Enabled            bool   `json:"enabled"`
 	BaseURL            string `json:"baseUrl"`
 	APITokenConfigured bool   `json:"apiTokenConfigured"`
-	AccountID          int    `json:"accountId"`
 }
 
 type audibleSyncConfigRequest struct {
-	Enabled   *bool   `json:"enabled"`
-	BaseURL   *string `json:"baseUrl"`
-	APIToken  *string `json:"apiToken"`
-	AccountID *int    `json:"accountId"`
+	Enabled  *bool   `json:"enabled"`
+	BaseURL  *string `json:"baseUrl"`
+	APIToken *string `json:"apiToken"`
 }
 
 type audibleSyncTestResponse struct {
@@ -129,7 +124,6 @@ func audibleSyncConfigResponse(cfg AudibleSyncStoredConfig) AudibleSyncConfigRes
 		Enabled:            cfg.Enabled,
 		BaseURL:            cfg.BaseURL,
 		APITokenConfigured: cfg.APIToken != "",
-		AccountID:          cfg.AccountID,
 	}
 }
 
@@ -170,17 +164,6 @@ func (h *AudibleSyncHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		if tok != "" {
 			kvs = append(kvs, db.SettingKV{Key: SettingAudibleSyncAPIToken, Value: tok})
 		}
-	}
-	if req.AccountID != nil {
-		if *req.AccountID < 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "accountId must be zero (Audible Sync's default account) or an account id"})
-			return
-		}
-		value := ""
-		if *req.AccountID > 0 {
-			value = strconv.Itoa(*req.AccountID)
-		}
-		kvs = append(kvs, db.SettingKV{Key: SettingAudibleSyncAccountID, Value: value})
 	}
 
 	ctx := r.Context()

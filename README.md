@@ -263,7 +263,7 @@ The full reference, including path remapping, API key seeding, trusted proxies a
 | **Usenet clients** | SABnzbd, NZBGet |
 | **Torrent clients** | qBittorrent, Transmission, Deluge, rTorrent and ruTorrent (XML-RPC over HTTP or SCGI) |
 | **Indexers** | Newznab and Torznab, with per indexer categories; Prowlarr indexer sync |
-| **Lists and imports** | Hardcover lists (synced), the Audible wishlist through [Audible Sync](https://github.com/AlexStansfield/audible-sync) (synced, preview), Goodreads CSV, Readarr database, Calibre `metadata.db`, Audiobookshelf, BookOrbit |
+| **Lists and imports** | Hardcover lists (synced), the Audible wishlist and unavailable library books through [Audible Sync](https://github.com/AlexStansfield/audible-sync) (synced, preview), Goodreads CSV, Readarr database, Calibre `metadata.db`, Audiobookshelf, BookOrbit |
 | **Library tools** | Calibre (`calibredb` or the Bindery Bridge plugin), Calibre-Web Automated ingest, Grimmory (preview), a post import drop folder for anything that watches one ([guide](docs/Calibre-Integration-Wiki.md)) |
 | **Notifications** | Webhooks for Apprise, ntfy, Home Assistant, Slack and Discord |
 | **Authentication** | Local accounts, API keys, OIDC, forward auth proxy |
@@ -325,7 +325,7 @@ Endpoints, authentication and integration examples are in **[docs/API.md](docs/A
 | **BookOrbit import**: read only key, path remap, what comes across, known limits | [docs/BookOrbit-Import.md](docs/BookOrbit-Import.md) |
 | **BookOrbit integration**: Bindery files and BookOrbit reads, External mode with the Book Dock, converting audiobooks, Kubernetes | [docs/BookOrbit-Integration-Wiki.md](docs/BookOrbit-Integration-Wiki.md) |
 | **Hardcover series**: token setup, series linking, missing books | [docs/Hardcover-Series-Wiki.md](docs/Hardcover-Series-Wiki.md) |
-| **Audible Sync**: your Audible wishlist as an import list | [docs/AudibleSync-Wiki.md](docs/AudibleSync-Wiki.md) |
+| **Audible Sync**: your Audible wishlist and unavailable books as import lists | [docs/AudibleSync-Wiki.md](docs/AudibleSync-Wiki.md) |
 | **Metadata editing**: manual edits, field locks, genre overrides | [docs/Metadata-Editing-Wiki.md](docs/Metadata-Editing-Wiki.md) |
 | **Multi user and requests**: roles, isolation, requesters | [docs/multi-user.md](docs/multi-user.md) |
 | **OIDC** and **forward auth** setup | [docs/auth-oidc.md](docs/auth-oidc.md), [docs/auth-proxy.md](docs/auth-proxy.md) |
