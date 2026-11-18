@@ -1,11 +1,17 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import MyRequestsPage from './MyRequestsPage'
 import RequestsPage from './RequestsPage'
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
+// One t for the whole file, like the real react-i18next, which hands out the
+// same function on every render. A new t per render (#3606) gave
+// RequestsPage's load callback, which lists t, a new identity on rerender, so
+// the effect that runs it fetched the queue again: twice on mount instead of
+// once, and again after an approval, which could put the row the test had
+// just approved back on screen before waitFor looked.
+vi.mock('react-i18next', () => {
+  const translation = {
     t: (key: string, opts?: unknown) => {
       const vars = (opts && typeof opts === 'object' ? opts : {}) as Record<string, unknown>
       const strings: Record<string, string> = {
@@ -44,8 +50,9 @@ vi.mock('react-i18next', () => ({
       const s = strings[key] ?? key
       return s.replace(/\{\{(\w+)\}\}/g, (_m, name: string) => String(vars[name] ?? ''))
     },
-  }),
-}))
+  }
+  return { useTranslation: () => translation }
+})
 
 vi.mock('../../api/client', () => ({
   api: {
@@ -71,6 +78,23 @@ function req(overrides: Partial<LibraryRequest>): LibraryRequest {
   }
 }
 
+// #3606: these tests query by label and text rather than by role and
+// accessible name. getByRole walks the whole document and computes styles for
+// every candidate on each call, which on a loaded CI runner was enough to push
+// a test past its timeout. The controls all carry aria-label or a <label>, so
+// the label queries still find them by what a person or screen reader is told.
+
+// openApproveForm opens the inline approve form. For an author it also waits
+// until the instance defaults have loaded, which is what enables the submit
+// button, so no assertion runs against a half initialised form.
+async function openApproveForm(title: string, kind: 'book' | 'author' = 'book') {
+  fireEvent.click(await screen.findByLabelText(`Approve request for ${title}`))
+  const form = screen.getByLabelText(`Approve ${title}`)
+  const submit = within(form).getByText('Approve and add')
+  if (kind === 'author') await waitFor(() => expect(submit).toBeEnabled())
+  return { form, submit }
+}
+
 describe('MyRequestsPage', () => {
   beforeEach(() => vi.clearAllMocks())
 
@@ -87,16 +111,17 @@ describe('MyRequestsPage', () => {
     vi.mocked(api.withdrawRequest).mockResolvedValue(undefined)
     render(<MemoryRouter><MyRequestsPage /></MemoryRouter>)
 
-    const list = await screen.findByRole('list', { name: 'My requests' })
+    const list = await screen.findByLabelText('My requests')
+    expect(list.tagName).toBe('UL')
     expect(within(list).getByText('Waiting for an admin')).toBeInTheDocument()
     expect(within(list).getByText('Declined')).toBeInTheDocument()
     expect(within(list).getByText('Reason: Not this year')).toBeInTheDocument()
     expect(within(list).getByText('Available')).toBeInTheDocument()
     expect(within(list).getByText('2 of 5 books here')).toBeInTheDocument()
     // Only the pending request can be withdrawn.
-    expect(screen.queryByRole('button', { name: 'Withdraw request for Emma' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Withdraw request for Emma')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Withdraw request for Dune' }))
+    fireEvent.click(screen.getByLabelText('Withdraw request for Dune'))
     await waitFor(() => expect(screen.queryByText('Dune')).not.toBeInTheDocument())
     expect(api.withdrawRequest).toHaveBeenCalledWith(1)
   })
@@ -110,19 +135,23 @@ describe('RequestsPage', () => {
     vi.mocked(api.approveRequest).mockResolvedValue(req({ id: 9, status: 'approved' }))
     const changed = vi.fn()
     window.addEventListener('bindery:requests-changed', changed)
+    // Removed even when an assertion below fails, so a failure here cannot
+    // leave a listener behind for the tests after it.
+    onTestFinished(() => window.removeEventListener('bindery:requests-changed', changed))
     render(<RequestsPage />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve request for Dune' }))
-    const form = screen.getByRole('form', { name: 'Approve Dune' })
-    expect(within(form).getByRole('combobox', { name: 'Format' })).toHaveValue('audiobook')
-    expect(within(form).queryByRole('combobox', { name: 'Root folder' })).not.toBeInTheDocument()
-    fireEvent.click(within(form).getByRole('checkbox', { name: 'Search indexers after adding' }))
-    fireEvent.click(within(form).getByRole('button', { name: 'Approve and add' }))
+    const { form, submit } = await openApproveForm('Dune')
+    expect(within(form).getByLabelText('Format')).toHaveValue('audiobook')
+    expect(within(form).queryByLabelText('Root folder')).not.toBeInTheDocument()
+    fireEvent.click(within(form).getByLabelText('Search indexers after adding'))
+    fireEvent.click(submit)
 
     await waitFor(() => expect(api.approveRequest).toHaveBeenCalledWith(9, { searchOnAdd: false, mediaType: 'audiobook' }))
     await waitFor(() => expect(screen.queryByText('Dune')).not.toBeInTheDocument())
     expect(changed).toHaveBeenCalled()
-    window.removeEventListener('bindery:requests-changed', changed)
+    // A book approval has none of the author choices, so it fetches no defaults.
+    expect(api.listMetadataProfiles).not.toHaveBeenCalled()
+    expect(api.getSetting).not.toHaveBeenCalled()
   })
 
   // #3835: the book reached the library while the request waited.
@@ -142,12 +171,11 @@ describe('RequestsPage', () => {
     expect(within(await row('Covered')).getByText('Already in the library')).toBeInTheDocument()
     expect(within(await row('Standing')).queryByText('Already in the library')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Approve request for Covered' }))
-    fireEvent.click(within(screen.getByRole('form', { name: 'Approve Covered' })).getByRole('button', { name: 'Approve and add' }))
+    fireEvent.click((await openApproveForm('Covered')).submit)
 
     // The row leaves the pending list, and the server's sentence stays on screen.
     await waitFor(() => expect(screen.queryByText('Covered')).not.toBeInTheDocument())
-    expect(screen.getByRole('status')).toHaveTextContent(sentence)
+    expect(screen.getByText(sentence).closest('[role="status"]')).not.toBeNull()
   })
 
   it('says who made a request on its owner\'s behalf', async () => {
@@ -165,6 +193,8 @@ describe('RequestsPage', () => {
     expect(within(await row('By key')).getByText(/made for them with the API key/)).toBeInTheDocument()
     expect(within(await row('By admin')).getByText(/made for them by boss/)).toBeInTheDocument()
     expect(within(await row('Own')).queryByText(/made for them/)).not.toBeInTheDocument()
+    // The queue loads once, not again on every render (#3606).
+    expect(api.listRequestQueue).toHaveBeenCalledTimes(1)
   })
 
   it('offers the author choices prefilled from the instance defaults', async () => {
@@ -172,11 +202,10 @@ describe('RequestsPage', () => {
     vi.mocked(api.approveRequest).mockResolvedValue(req({ id: 5, kind: 'author', status: 'approved' }))
     render(<RequestsPage />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve request for Frank Herbert' }))
-    const form = screen.getByRole('form', { name: 'Approve Frank Herbert' })
-    await waitFor(() => expect(within(form).getByRole('combobox', { name: 'Metadata profile' })).toHaveValue('1'))
-    expect(within(form).getByRole('combobox', { name: 'Root folder' })).toHaveValue('4')
-    fireEvent.click(within(form).getByRole('button', { name: 'Approve and add' }))
+    const { form, submit } = await openApproveForm('Frank Herbert', 'author')
+    expect(within(form).getByLabelText('Metadata profile')).toHaveValue('1')
+    expect(within(form).getByLabelText('Root folder')).toHaveValue('4')
+    fireEvent.click(submit)
 
     await waitFor(() => expect(api.approveRequest).toHaveBeenCalledWith(5, expect.objectContaining({
       metadataProfileId: 1, rootFolderId: 4, monitorMode: 'all', mediaType: 'ebook', searchOnAdd: false,
@@ -194,9 +223,8 @@ describe('RequestsPage', () => {
       vi.mocked(api.listRequestQueue).mockResolvedValue({ items: [req({ id: 5, kind: 'author', title: 'Frank Herbert' })], total: 1, limit: 50, offset: 0 })
       vi.mocked(api.approveRequest).mockResolvedValue(req({ id: 5, kind: 'author', status: 'approved' }))
       render(<RequestsPage />)
-      fireEvent.click(await screen.findByRole('button', { name: 'Approve request for Frank Herbert' }))
-      const form = screen.getByRole('form', { name: 'Approve Frank Herbert' })
-      return { form, picker: await within(form).findByRole('combobox', { name: 'Quality profile' }) }
+      const { form, submit } = await openApproveForm('Frank Herbert', 'author')
+      return { submit, picker: within(form).getByLabelText('Quality profile') }
     }
 
     beforeEach(() => {
@@ -212,18 +240,18 @@ describe('RequestsPage', () => {
     })
 
     it('shows the default and leaves qualityProfileId out when untouched', async () => {
-      const { form, picker } = await approveAuthor()
-      await waitFor(() => expect(picker).toHaveValue('2'))
-      fireEvent.click(within(form).getByRole('button', { name: 'Approve and add' }))
+      const { submit, picker } = await approveAuthor()
+      expect(picker).toHaveValue('2')
+      fireEvent.click(submit)
       await waitFor(() => expect(api.approveRequest).toHaveBeenCalledTimes(1))
       expect('qualityProfileId' in vi.mocked(api.approveRequest).mock.calls[0][1]).toBe(false)
     })
 
     it('sends the profile, or null for None, once the admin changes it', async () => {
-      const { form, picker } = await approveAuthor()
-      await waitFor(() => expect(picker).toHaveValue('2'))
+      const { submit, picker } = await approveAuthor()
+      expect(picker).toHaveValue('2')
       fireEvent.change(picker, { target: { value: '' } })
-      fireEvent.click(within(form).getByRole('button', { name: 'Approve and add' }))
+      fireEvent.click(submit)
       await waitFor(() => expect(api.approveRequest).toHaveBeenCalledTimes(1))
       const choices = vi.mocked(api.approveRequest).mock.calls[0][1]
       expect('qualityProfileId' in choices).toBe(true)
@@ -236,10 +264,10 @@ describe('RequestsPage', () => {
     vi.mocked(api.declineRequest).mockResolvedValue(req({ id: 3, status: 'declined' }))
     render(<RequestsPage />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Decline request for Dune' }))
-    const form = screen.getByRole('form', { name: 'Decline Dune' })
-    fireEvent.change(within(form).getByRole('textbox', { name: 'Reason' }), { target: { value: '  Not in scope  ' } })
-    fireEvent.click(within(form).getByRole('button', { name: 'Decline' }))
+    fireEvent.click(await screen.findByLabelText('Decline request for Dune'))
+    const form = screen.getByLabelText('Decline Dune')
+    fireEvent.change(within(form).getByLabelText('Reason'), { target: { value: '  Not in scope  ' } })
+    fireEvent.click(within(form).getByText('Decline'))
 
     await waitFor(() => expect(api.declineRequest).toHaveBeenCalledWith(3, 'Not in scope'))
   })
