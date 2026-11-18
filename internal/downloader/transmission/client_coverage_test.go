@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"testing/iotest"
+
+	"github.com/vavallee/bindery/internal/downloader/rttest"
 )
 
 // rpcStub answers each Transmission RPC method with a fixed status and body
@@ -382,7 +384,7 @@ func TestReadRPCBody_ReaderError(t *testing.T) {
 }
 
 func TestDoRequest_BodyReadErrors(t *testing.T) {
-	failing := roundTripFunc(func(*http.Request) (*http.Response, error) {
+	failing := rttest.Func(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(iotest.ErrReader(errors.New("truncated"))), Header: http.Header{}}, nil
 	})
 	c := newTransportClient(failing)
@@ -393,7 +395,7 @@ func TestDoRequest_BodyReadErrors(t *testing.T) {
 
 	// The 409 retry reads its body under the same cap.
 	n := 0
-	retry := roundTripFunc(func(*http.Request) (*http.Response, error) {
+	retry := rttest.Func(func(*http.Request) (*http.Response, error) {
 		n++
 		if n == 1 {
 			h := http.Header{}
@@ -410,7 +412,7 @@ func TestDoRequest_BodyReadErrors(t *testing.T) {
 
 	// A transport failure on the retry is reported as such.
 	n = 0
-	retryFails := roundTripFunc(func(*http.Request) (*http.Response, error) {
+	retryFails := rttest.Func(func(*http.Request) (*http.Response, error) {
 		n++
 		if n == 1 {
 			h := http.Header{}

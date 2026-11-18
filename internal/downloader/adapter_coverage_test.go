@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
+
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -152,10 +154,8 @@ func TestSendDownload_RtorrentError(t *testing.T) {
 func TestSendDownload_QbittorrentShareLimitFailureIsNotFatal(t *testing.T) {
 	var shareCalls int
 	var mu sync.Mutex
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
@@ -168,9 +168,8 @@ func TestSendDownload_QbittorrentShareLimitFailureIsNotFatal(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
-	client := fakeClient(t, srv, "qbittorrent")
+	})
+	client := fakeClient(t, srv.Server, "qbittorrent")
 	ratio := 2.0
 	res, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{SeedRatio: &ratio})
 	if err != nil {
