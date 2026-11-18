@@ -1,6 +1,0 @@
-### Added
-- **Audible lists through Audible Sync (preview).** Connect a self-hosted [Audible Sync](https://github.com/AlexStansfield/audible-sync) instance in the new **Settings, Audible Sync** tab ([guide](docs/AudibleSync-Wiki.md)), then pick lists to watch under **Settings, Import**, the way Hardcover lists are picked: each Audible account offers its **wishlist** and its **unavailable books**, the library titles Audible no longer lets it download (usually ones withdrawn from Plus). Their books are added as wanted audiobooks and searched for, linked to the work your metadata provider knows when the ASIN matches one. A wishlist can skip books the account already owns (on by default, since Audible Sync downloads them) and take books off the wishlist once Bindery has imported them. When Audible makes an unavailable book downloadable again, Bindery stops searching for it, as Audible Sync fetches it. Lists sync every 6 hours (`audiblesync.sync_interval`) or on **Sync now**. Off by default.
-
-### Fixed
-- Books and authors with an `audible:` or `audnex:` id are no longer classified as OpenLibrary, so Bindery stops asking OpenLibrary for an id it cannot know.
-- An ASIN typed into a book's edit form is stored in the same case as every import stores it, so the importer and import lists match it.
