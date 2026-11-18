@@ -187,8 +187,14 @@ func (h *SeriesHandler) CheckSeries(ctx context.Context, series *models.Series) 
 	scoped := cur
 	if owner != 0 {
 		scoped, err = h.series.GetByIDForUser(ctx, cur.ID, owner)
-		if err != nil || scoped == nil {
+		if err != nil {
 			return res, fmt.Errorf("check series %d: re-read for owner %d: %w", cur.ID, owner, err)
+		}
+		if scoped == nil {
+			// The owner has no visible book left in it, so there is nothing
+			// of theirs to diff or add to. Skip like a gone series.
+			slog.Debug("series check skipped a series its owner can no longer see", "seriesId", cur.ID, "ownerUserId", owner)
+			return res, nil
 		}
 		scoped.HardcoverLink = link
 	}
