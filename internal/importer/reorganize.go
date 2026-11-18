@@ -41,7 +41,23 @@ type ReorganizeMove struct {
 	Proposed  string `json:"proposed"`
 	Status    string `json:"status"`
 	Message   string `json:"message,omitempty"`
+	// Sidecar is the metadata.opf action for this file when
+	// import.write_opf_sidecar is on (#4008). Preview: "write", "unchanged" or
+	// "foreign". Apply: "written", "unchanged", "foreign" or "failed". Empty
+	// when the setting is off, the format is in External import mode, or the
+	// row is not a file already in place.
+	Sidecar        string `json:"sidecar,omitempty"`
+	SidecarMessage string `json:"sidecarMessage,omitempty"`
 }
+
+// Sidecar actions on a ReorganizeMove.
+const (
+	ReorgSidecarWrite     = "write"     // preview: would be written
+	ReorgSidecarWritten   = "written"   // apply: written
+	ReorgSidecarUnchanged = "unchanged" // Bindery's own file already current
+	ReorgSidecarForeign   = "foreign"   // someone else's metadata.opf, left alone
+	ReorgSidecarFailed    = "failed"    // apply: the write failed
+)
 
 // PreviewReorganizeBook returns the proposed moves for one book's tracked
 // files. It never touches disk.
@@ -130,6 +146,9 @@ func (s *Scanner) previewBook(ctx context.Context, book *models.Book) ([]Reorgan
 		m.Proposed = proposed
 		m.Status = status
 		m.Message = msg
+		if status == ReorgStatusNoop {
+			m.Sidecar, m.SidecarMessage = s.sidecarForNoop(ctx, true, book, author, seriesTitle, seriesNum, f)
+		}
 		moves = append(moves, m)
 	}
 	return moves, nil
@@ -466,6 +485,12 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 	// Only a clean, still-valid move is carried out. Anything the recompute now
 	// classifies otherwise (a racing collision, a vanished source, a template
 	// that no longer resolves) is reported as-is and left on disk.
+	if status == ReorgStatusNoop {
+		// Already in place: nothing moves, but the sidecar is still refreshed
+		// when the feature is on (#4008).
+		m.Sidecar, m.SidecarMessage = s.sidecarForNoop(ctx, false, book, author, seriesTitle, seriesNum, file)
+		return m
+	}
 	if status != ReorgStatusMove {
 		return m
 	}
@@ -515,16 +540,57 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 	// a per-file editions query — is not paid on every reorganized file for a
 	// feature that is off by default.
 	if s.opfSidecarEnabled(ctx) {
-		sidecarDir := proposed
-		if singleFile {
-			sidecarDir = filepath.Dir(proposed)
-		}
-		edition := s.resolveCalibreEdition(ctx, nil, book)
-		s.writeOPFSidecar(ctx, sidecarDir, s.rootsForFormat(ctx, author, file.Format), book, author, edition, seriesTitle, seriesNum)
+		m.Sidecar, m.SidecarMessage = s.syncSidecar(ctx, false, book, author, seriesTitle, seriesNum, file.Format, proposed, singleFile)
 	}
 
 	m.Status = ReorgStatusMoved
 	return m
+}
+
+// sidecarForNoop is the metadata.opf action for a file that is already where
+// the template puts it. It is skipped when the setting is off, when the
+// format's import mode is External (another tool owns that folder, and the
+// import path writes no sidecar there either), or when the file is gone.
+func (s *Scanner) sidecarForNoop(ctx context.Context, dryRun bool, book *models.Book, author *models.Author, seriesTitle, seriesNum string, f models.BookFile) (string, string) {
+	if !s.opfSidecarEnabled(ctx) || s.configuredImportModeFor(ctx, f.Format) == "external" {
+		return "", ""
+	}
+	info, err := os.Stat(f.Path)
+	if err != nil {
+		return "", ""
+	}
+	return s.syncSidecar(ctx, dryRun, book, author, seriesTitle, seriesNum, f.Format, f.Path, !info.IsDir())
+}
+
+// syncSidecar writes or plans one book's metadata.opf in the folder the
+// importer uses: the file's folder for a single file, the folder itself for
+// an audiobook folder. It never overwrites a metadata.opf Bindery did not
+// write, and never rewrites an identical one. A failure is reported, not
+// fatal.
+func (s *Scanner) syncSidecar(ctx context.Context, dryRun bool, book *models.Book, author *models.Author, seriesTitle, seriesNum, format, path string, singleFile bool) (string, string) {
+	dir := path
+	if singleFile {
+		dir = filepath.Dir(path)
+	}
+	edition := s.resolveCalibreEdition(ctx, nil, book)
+	res, err := SyncOPFSidecarFile(dir, s.rootsForFormat(ctx, author, format), dryRun, book, author, edition, seriesTitle, seriesNum)
+	if err != nil {
+		slog.Warn("reorganize: opf sidecar failed, continuing", "bookID", book.ID, "dir", dir, "error", err)
+		if dryRun {
+			return "", ""
+		}
+		return ReorgSidecarFailed, err.Error()
+	}
+	switch res {
+	case SidecarUnchanged:
+		return ReorgSidecarUnchanged, ""
+	case SidecarForeign:
+		return ReorgSidecarForeign, "metadata.opf was not written by Bindery, left as it is"
+	}
+	if dryRun {
+		return ReorgSidecarWrite, ""
+	}
+	return ReorgSidecarWritten, ""
 }
 
 // moveTrackedFile moves an already-imported file (ebook) or folder (audiobook)

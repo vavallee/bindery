@@ -239,4 +239,24 @@ describe('RenameFilesModal', () => {
       expect(screen.queryByRole('alert')).toBeNull()
     })
   })
+
+  // #4008: a file already in place still gets its metadata.opf when the
+  // setting is on, so the dialog offers it and sends that file to apply.
+  it('offers and applies a metadata.opf for files already in place', async () => {
+    const noop = { ...sampleMoves[1], sidecar: 'write' as const }
+    previewMock.mockResolvedValue({
+      moves: [noop],
+      summary: { total: 1, toMove: 0, noop: 1, collision: 0, missing: 0, errored: 0, moved: 0, failed: 0, sidecarToWrite: 1 },
+    })
+    applyMock.mockResolvedValue({
+      moves: [{ ...noop, sidecar: 'written' as const }],
+      summary: { total: 1, toMove: 0, noop: 1, collision: 0, missing: 0, errored: 0, moved: 0, failed: 0, sidecarWritten: 1 },
+    })
+    render(<RenameFilesModal scope="book" id={1} label="My Book" onClose={() => {}} />)
+
+    const btn = await screen.findByRole('button', { name: /Write 1 metadata.opf/ })
+    fireEvent.click(btn)
+    await waitFor(() => expect(applyMock).toHaveBeenCalledWith([11]))
+    await waitFor(() => expect(screen.getByText(/1 metadata.opf written, 0 skipped, 0 failed/)).toBeInTheDocument())
+  })
 })

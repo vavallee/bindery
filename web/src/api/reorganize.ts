@@ -19,6 +19,9 @@ export interface ReorganizeMove {
   proposed: string
   status: ReorganizeStatus
   message?: string
+  // metadata.opf action when the sidecar setting is on (#4008).
+  sidecar?: 'write' | 'written' | 'unchanged' | 'foreign' | 'failed'
+  sidecarMessage?: string
 }
 
 export interface ReorganizeSummary {
@@ -30,6 +33,11 @@ export interface ReorganizeSummary {
   errored: number
   moved: number
   failed: number
+  sidecarToWrite?: number
+  sidecarWritten?: number
+  sidecarUnchanged?: number
+  sidecarForeign?: number
+  sidecarFailed?: number
 }
 
 export interface ReorganizeResponse {
