@@ -989,6 +989,11 @@ jobs:
     # the job limit sits above the merge wait and never cuts it short.
     timeout-minutes: 130
     runs-on: ubuntu-latest
+    # The app private key lives in this environment, limited by deployment
+    # protection to v* tags. GitHub creates the environment on first use with
+    # no required reviewers, so it never blocks a release. The variable and the
+    # secret must exist in the environment before the next tag.
+    environment: release-deploy
     permissions:
       contents: write
       pull-requests: write
@@ -1010,27 +1015,31 @@ jobs:
       # before touching anything, and never fall back to GITHUB_TOKEN.
       - name: Require the deploy app credentials
         env:
-          DEPLOY_APP_ID: ${{ vars.DEPLOY_APP_ID }}
+          DEPLOY_APP_CLIENT_ID: ${{ vars.DEPLOY_APP_CLIENT_ID }}
           DEPLOY_APP_PRIVATE_KEY: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
         run: |
           missing=""
-          [ -n "${DEPLOY_APP_ID}" ] || missing="${missing} repository variable DEPLOY_APP_ID"
-          [ -n "${DEPLOY_APP_PRIVATE_KEY}" ] || missing="${missing} repository secret DEPLOY_APP_PRIVATE_KEY"
+          [ -n "${DEPLOY_APP_CLIENT_ID}" ] || missing="${missing} variable DEPLOY_APP_CLIENT_ID"
+          [ -n "${DEPLOY_APP_PRIVATE_KEY}" ] || missing="${missing} secret DEPLOY_APP_PRIVATE_KEY"
           if [ -n "${missing}" ]; then
-            echo "::error::deploy-prod needs${missing}. Create the deploy GitHub App and set them (see the merge queue rollout notes). Nothing was changed."
+            echo "::error::deploy-prod needs${missing} in the release-deploy environment. Create the deploy GitHub App and set them (see the merge queue rollout notes). Nothing was changed."
             exit 1
           fi
 
-      - name: Create the deploy app token
-        id: app
+      # Proves the key and client id work before anything is changed. This
+      # token is not used: installation tokens last one hour, and the branch
+      # work and check wait below can take a good part of that, so the token
+      # that merges is minted right before the merge.
+      - name: Check the deploy app token can be created
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: ${{ vars.DEPLOY_APP_ID }}
+          client-id: ${{ vars.DEPLOY_APP_CLIENT_ID }}
           private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
 
       - name: Update values.yaml on main
+        id: promote
         env:
           # Branch, commits, PR and the required status stamps stay on
           # GITHUB_TOKEN exactly as before: its commits start no workflows (a
@@ -1038,8 +1047,6 @@ jobs:
           # stamps must come from the GitHub Actions app to satisfy the
           # app_id 15368 contexts in classic protection.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Only the merge and the wait use the app token.
-          APP_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           set -euo pipefail
           IMAGE_TAG="${GITHUB_REF_NAME#v}"
@@ -1180,35 +1187,64 @@ jobs:
             echo "::error::required checks on ${DEPLOY_BRANCH} did not go green in 10 minutes"; exit 1
           fi
 
-          # Merge with the app token, no --admin. Under classic protection the
-          # stamped contexts above make a normal squash merge pass. Under the
-          # merge queue ruleset the app is a bypass actor, so the same call is
-          # meant to merge past the queue and the required checks. If it is
-          # added to the queue instead, the wait below covers the queue run.
+          {
+            echo "pr_url=${PR_URL}"
+            echo "values_commit=${VALUES_COMMIT}"
+            echo "image_tag=${IMAGE_TAG}"
+            echo "deploy_branch=${DEPLOY_BRANCH}"
+          } >> "$GITHUB_OUTPUT"
+
+      # A fresh installation token (one hour life) minted right before the
+      # merge. Only this merge call uses it.
+      - name: Create the deploy app token for the merge
+        id: merge-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.DEPLOY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Merge the promote PR and wait for MERGED
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_TOKEN: ${{ steps.merge-token.outputs.token }}
+          PR_URL: ${{ steps.promote.outputs.pr_url }}
+          VALUES_COMMIT: ${{ steps.promote.outputs.values_commit }}
+          IMAGE_TAG: ${{ steps.promote.outputs.image_tag }}
+          DEPLOY_BRANCH: ${{ steps.promote.outputs.deploy_branch }}
+        run: |
+          set -euo pipefail
+          # --admin is required, not decoration. Without it gh (pr merge,
+          # shouldAddToMergeQueue is mergeQueueRequired and not UseAdmin)
+          # enables auto merge and the PR waits for a merge_group run, about 40
+          # minutes. With --admin gh calls the plain merge API, which a ruleset
+          # bypass actor (the deploy app) may use past the queue and the
+          # required checks. Under classic protection it is harmless: the
+          # stamped contexts already pass and --admin overrides nothing.
           # --match-head-commit refuses the merge if the branch moved after the
           # guard ran. The [skip ci] subject keeps the push to main from
           # rebuilding the image for a values only change. The branch is not
-          # deleted with the merge (a queued PR must keep its head branch); it
-          # is removed after the PR is MERGED.
-          GH_TOKEN="${APP_TOKEN}" gh pr merge "${PR_URL}" --repo "${GITHUB_REPOSITORY}" --squash \
+          # deleted with the merge; it is removed after the PR is MERGED.
+          GH_TOKEN="${APP_TOKEN}" gh pr merge "${PR_URL}" --repo "${GITHUB_REPOSITORY}" --squash --admin \
             --match-head-commit "${VALUES_COMMIT}" \
             --subject "chore(deploy): promote bindery to ${IMAGE_TAG} [skip ci]"
 
-          # gh pr merge may only have enabled auto merge or queued the PR, so
-          # wait for the real outcome: MERGED, or fail. 75 minutes covers one
-          # queue run (CI is about 40 minutes); the job timeout is above it.
+          # Wait for the real outcome. Reading the PR needs no app token, and
+          # GITHUB_TOKEN does not expire during the wait. A failed read is
+          # retried; only a definite CLOSED or the timeout fails the job.
           MERGED=""
           for i in $(seq 1 150); do
-            STATE=$(GH_TOKEN="${APP_TOKEN}" gh pr view "${PR_URL}" --repo "${GITHUB_REPOSITORY}" \
-              --json state,mergedAt --jq '.state + " " + (.mergedAt // "")')
-            case "${STATE%% *}" in
+            STATE=$(gh pr view "${PR_URL}" --repo "${GITHUB_REPOSITORY}" \
+              --json state --jq .state) || STATE=""
+            case "${STATE}" in
               MERGED) MERGED=1; break ;;
               CLOSED) echo "::error::${PR_URL} was closed without merging"; exit 1 ;;
             esac
             sleep 30
           done
           if [ -z "${MERGED}" ]; then
-            echo "::error::${PR_URL} was not merged within 75 minutes (still queued or blocked). Merge it by hand and rerun nothing else."; exit 1
+            echo "::error::${PR_URL} was not merged within 75 minutes (still queued or blocked). Merge it by hand with gh pr merge --admin."; exit 1
           fi
           gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${DEPLOY_BRANCH}" --silent || true
           echo "bindery (prod) image tag updated to ${IMAGE_TAG}"
