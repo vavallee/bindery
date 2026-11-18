@@ -248,3 +248,25 @@ func TestReorganizeOPF_WriteFailureIsPerBook(t *testing.T) {
 		t.Fatalf("second = %+v, want written", res[1])
 	}
 }
+
+func TestSyncOPFSidecarFile_DryRunAndRoots(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "A", "B")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	book := &models.Book{ID: 1, Title: "T"}
+	res, err := SyncOPFSidecarFile(dir, []string{root}, true, book, nil, nil, "", "")
+	if err != nil || res != SidecarWritten {
+		t.Fatalf("dry run = %v, %v", res, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "metadata.opf")); err == nil {
+		t.Fatal("dry run wrote the file")
+	}
+	if _, err := SyncOPFSidecarFile(dir, []string{t.TempDir()}, false, book, nil, nil, "", ""); err == nil {
+		t.Fatal("expected a refusal outside the roots")
+	}
+	if _, err := SyncOPFSidecarFile(dir, []string{root}, false, nil, nil, nil, "", ""); err == nil {
+		t.Fatal("expected an error for a nil book")
+	}
+}
