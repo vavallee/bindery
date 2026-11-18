@@ -2074,6 +2074,8 @@
       "audibleLabel": "Audible-katalogen",
       "audibleHint": "Legger lydbøker til i forfatterens katalog. Bruker et upublisert Amazon-endepunkt, ikke et dokumentert API.",
       "audnexHint": "Innleser, spilletid og omslag for lydbøker. En proxy drevet av fellesskapet, som henter de samme Audible-dataene.",
+      "audnexRegionLabel": "audnex-markedsplass",
+      "audnexRegionHint": "Audible-markedsplassen der audnex slår opp en ASIN. En ASIN som bare selges på en annen markedsplass, for eksempel en tysk lydbok, finnes ikke i den amerikanske, så velg den lydbøkene dine kommer fra. Bare denne markedsplassen spørres. Gjelder fra neste oppslag, uten omstart.",
       "sourcesSaveFailed": "Endringen kunne ikke lagres og ble tilbakestilt. Prøv igjen.",
       "hardcoverTokenRejected": "Hardcover avviste API-tokenet, så forespørsler til Hardcover er satt på pause. Lagre et token som virker, nedenfor, eller bruk Test tilkobling når det er rettet hos Hardcover.",
       "hardcoverPausedUntil": "Hardcover er satt på pause til {{time}} fordi den daglige kvoten er nådd. Prøv avbrutte importer på nytt etter dette tidspunktet.",

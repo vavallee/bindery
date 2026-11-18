@@ -64,6 +64,7 @@ export const FIELDS: FieldEntry[] = [
   { key: 'autoGrab.enabled', tab: 'metadata', label: G + 'autoGrabLabel', help: G + 'autoGrabHint' },
   { key: 'recommendations.enabled', tab: 'metadata', label: G + 'recommendationsLabel', help: G + 'recommendationsHint' },
   { key: 'metadata.author_enrichment.wikidata', tab: 'metadata', label: G + 'authorWikidataLabel', help: G + 'authorWikidataHint' },
+  { key: 'metadata.audnex_region', tab: 'metadata', label: G + 'audnexRegionLabel', help: G + 'audnexRegionHint' },
   { key: 'metadata.enrichers_disabled', tab: 'metadata', label: G + 'enrichersHeading' },
 
   // Quality

@@ -1034,12 +1034,13 @@ describe('SettingsPage', () => {
 
     const authorDefaults = sectionForHeading('Library Defaults')
     const selects = authorDefaults.getAllByRole('combobox')
-    // [0] metadata provider, [1] default media type, [2] default monitor mode.
-    fireEvent.change(selects[1], { target: { value: 'audiobook' } })
+    // [0] metadata provider, [1] audnex marketplace, [2] default media type,
+    // [3] default monitor mode.
+    fireEvent.change(selects[2], { target: { value: 'audiobook' } })
     await waitFor(() => {
     expect(api.setSetting).toHaveBeenCalledWith('default.media_type', 'audiobook')
     })
-    fireEvent.change(selects[2], { target: { value: 'latest' } })
+    fireEvent.change(selects[3], { target: { value: 'latest' } })
     await waitFor(() => {
     expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_mode', 'latest')
     })
