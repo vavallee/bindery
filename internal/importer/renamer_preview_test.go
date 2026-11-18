@@ -33,7 +33,7 @@ func TestRenamerPreviewSampleDriftGuard(t *testing.T) {
 	const series = "Demo Series"
 	const seriesNumber = "2"
 
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 
 	cases := []struct {
 		name     string
@@ -117,7 +117,7 @@ func TestRenamerConditionalGroupCollapse(t *testing.T) {
 	author := &models.Author{Name: "Jane Doe"}
 	book := &models.Book{Title: "Sample Book"} // no series, no year, no genre
 
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 
 	cases := []struct {
 		name     string
@@ -157,7 +157,7 @@ func TestRenamerConditionalGroupCollapse(t *testing.T) {
 func TestRenamerWidthThenLiteral(t *testing.T) {
 	author := &models.Author{Name: "Jane Doe"}
 	book := &models.Book{Title: "Sample Book"}
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 
 	cases := []struct {
 		name                 string
@@ -189,7 +189,7 @@ func TestRenamerWidthThenLiteral(t *testing.T) {
 // not cross: an all-digit modifier keeps its historical default-text meaning,
 // so "{Year:2024}" is not re-read as width 20 plus the literal "24".
 func TestRenamerWidthThenLiteralKeepsDefaultText(t *testing.T) {
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	author := &models.Author{Name: "Jane Doe"}
 	for _, tc := range []struct{ template, want string }{
 		{"{Year:2024}", "2024"},          // empty year → 4-digit modifier is default text

@@ -1,0 +1,2 @@
+### Fixed
+- **Audiobookshelf re-imports no longer record the wrong edition id** (#3978). Re-importing an item whose edition already existed could save another edition's id in the import history, so provenance pointed at the wrong row and a rollback could aim at the wrong edition. Thanks to akouwenberg for the report and the reproduction. The upgrade also repoints existing Audiobookshelf edition provenance at the edition it names.

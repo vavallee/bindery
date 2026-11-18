@@ -69,7 +69,7 @@ func writeHostileAudiobookDownload(t *testing.T) (job, secret string) {
 
 // TestImport_MoveModeAudiobookDropsSymlinks drives a real move mode audiobook
 // import (the SABnzbd/NZBGet default) of a job folder holding symlinks. The
-// download and the library share a filesystem, so placement takes MoveDir's
+// download and the library share a filesystem, so placement takes MoveDirCtx's
 // rename fast path, which moves the folder wholesale.
 func TestImport_MoveModeAudiobookDropsSymlinks(t *testing.T) {
 	f := newRoutingFixture(t, models.MediaTypeAudiobook, map[string]string{
@@ -117,7 +117,7 @@ func TestMoveDownloadDir_LinksNeverLand(t *testing.T) {
 	}
 }
 
-// TestCopyDirContext_SkipsSymlinks covers MoveDir's slow (cross filesystem)
+// TestCopyDirContext_SkipsSymlinks covers MoveDirCtx's slow (cross filesystem)
 // path, which copies with copyDirContext. It already skipped links; this
 // keeps it that way.
 func TestCopyDirContext_SkipsSymlinks(t *testing.T) {
@@ -212,7 +212,7 @@ func TestMoveDownloadDir_CleanTreeStillRenames(t *testing.T) {
 	}
 }
 
-// TestMoveDir_LibraryMoveKeepsUserLinks: MoveDir is also how reorganize moves
+// TestMoveDir_LibraryMoveKeepsUserLinks: MoveDirCtx is also how reorganize moves
 // a folder already in the library. Links there are the operator's own and
 // must move with the folder unchanged.
 func TestMoveDir_LibraryMoveKeepsUserLinks(t *testing.T) {
