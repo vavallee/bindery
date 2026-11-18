@@ -1,2 +1,0 @@
-### Fixed
-- **Reorganize now asks before touching files in External import mode** (#3946). If ebooks or audiobooks are set to External, another tool owns that layout, and Reorganize used to plan moves for those files anyway. The preview now shows a warning, the Rename files dialog keeps its button off until you tick a confirmation, and the apply call answers 409 unless it is confirmed. Formats in a managed mode, like audiobooks in Copy mode, reorganize as before.
