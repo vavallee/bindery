@@ -1,0 +1,2 @@
+### Security
+- **Grab and bulk search now respect who owns what.** With multi user tenancy on, a regular user can no longer take over a failed download that belongs to someone else or to nobody, grab a release into a shared book they cannot edit, or queue a bulk search on a shared book. Those requests now get the same refusal the rest of the app gives, and admins and single user installs are unchanged.

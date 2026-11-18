@@ -462,26 +462,20 @@ func TestQueueGrab_SendsTheRecordedCredentials(t *testing.T) {
 	}
 }
 
-// TestQueueGrab_ClaimsAnotherUsersLongDeadRow: a foreign row is claimed on the
-// scheduler's terms. A failed row dead for longer than the scheduler's
-// cooldown is claimed with a full reset, owner and book included; an
-// importBlocked row is not, whatever its age, since the scheduler never
-// claims one either.
-func TestQueueGrab_ClaimsAnotherUsersLongDeadRow(t *testing.T) {
-	for _, tc := range []struct {
-		status  models.DownloadState
-		claimed bool
-	}{
-		{models.StateFailed, true},
-		{models.StateImportBlocked, false},
-	} {
-		t.Run(string(tc.status), func(t *testing.T) {
+// TestQueueGrab_NeverClaimsAnotherUsersLongDeadRow: a non-admin grab does not
+// take over a row that is not theirs to change, however long it has been dead.
+// The scheduler's own re-grab still claims such rows after its cooldown; a
+// caller's request does not (the GUID column is UNIQUE, so the refusal is what
+// keeps the row with its owner, and an admin clears a stale one).
+func TestQueueGrab_NeverClaimsAnotherUsersLongDeadRow(t *testing.T) {
+	for _, status := range []models.DownloadState{models.StateFailed, models.StateImportBlocked} {
+		t.Run(string(status), func(t *testing.T) {
 			auth.SetEnforceTenancyForTests(t, true)
 			f := newGrabSecFixture(t)
 			aliceBook := regrabOwnedBook(t, f.database, f.books, "alice-old", f.alice)
 			row := &models.Download{
 				GUID: f.guid, BookID: &aliceBook.ID, OwnerUserID: f.alice, Title: "Alice Release",
-				NZBURL: f.downloadURL, Status: tc.status, Protocol: "usenet", IndexerFlags: "freeleech",
+				NZBURL: f.downloadURL, Status: status, Protocol: "usenet", IndexerFlags: "freeleech",
 			}
 			if err := f.downloads.Create(f.ctx, row); err != nil {
 				t.Fatal(err)
@@ -495,30 +489,22 @@ func TestQueueGrab_ClaimsAnotherUsersLongDeadRow(t *testing.T) {
 			rec := f.grabAs(f.bob, auth.RoleUser, map[string]any{
 				"guid": f.guid, "title": "Lee Child - One Shot (epub)", "nzbUrl": f.downloadURL, "indexerId": f.indexerID,
 			})
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "alice") || strings.Contains(rec.Body.String(), string(status)) {
+				t.Errorf("the refusal must not describe the row: %s", rec.Body.String())
+			}
 			got, err := f.downloads.GetByID(f.ctx, row.ID)
 			if err != nil || got == nil {
 				t.Fatalf("reload row: %v", err)
 			}
-			if !tc.claimed {
-				if rec.Code != http.StatusConflict {
-					t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body.String())
-				}
-				if got.OwnerUserID != f.alice || got.Status != tc.status {
-					t.Errorf("alice's row must be untouched; owner=%d status=%s", got.OwnerUserID, got.Status)
-				}
-				return
+			if got.OwnerUserID != f.alice || got.Status != status || got.Title != "Alice Release" ||
+				got.BookID == nil || *got.BookID != aliceBook.ID || got.IndexerFlags != "freeleech" {
+				t.Errorf("alice's row must be untouched: %+v", got)
 			}
-			if rec.Code != http.StatusAccepted {
-				t.Fatalf("bob claiming alice's long dead row: got %d: %s", rec.Code, rec.Body.String())
-			}
-			if got.OwnerUserID != f.bob {
-				t.Errorf("the claimed row must belong to bob, owner is %d", got.OwnerUserID)
-			}
-			if got.BookID != nil {
-				t.Errorf("the claimed row must not keep alice's book, has %d", *got.BookID)
-			}
-			if got.IndexerFlags != "" || got.Title != "Lee Child - One Shot (epub)" || got.Status != models.StateDownloading {
-				t.Errorf("the claimed row must be fully reset: flags=%q title=%q status=%s", got.IndexerFlags, got.Title, got.Status)
+			if n := f.adds.Load(); n != 0 {
+				t.Errorf("nothing may reach the download client; got %d add(s)", n)
 			}
 		})
 	}
