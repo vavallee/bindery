@@ -82,6 +82,15 @@ func (c *Client) WithRegion(region string) *Client {
 	return &next
 }
 
+// WithBaseURL returns a client that talks to another server, sharing this
+// one's HTTP client and gate. Tests in other packages use it to stand in for
+// api.audnex.us. The receiver is not modified.
+func (c *Client) WithBaseURL(baseURL string) *Client {
+	next := *c
+	next.baseURL = baseURL
+	return &next
+}
+
 // Book is the subset of fields we currently use. audnex returns more
 // structure (chapters, series, etc.) — add here as needed.
 type Book struct {
