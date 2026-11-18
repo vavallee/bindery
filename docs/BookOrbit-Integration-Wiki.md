@@ -183,19 +183,20 @@ Since #3948, External mode with a drop folder runs the same language check and c
 
 - With the content check on `warn` (the default for `import.ebook.content_check`), a file that looks like a different book is still dropped, and the finding is logged and shown on the drop's History row.
 - With `block`, or when the file's language is not allowed by the author's metadata profile, nothing is dropped. The download is parked as blocked, the release is blocklisted and the book stays Wanted.
+- A manual import, such as Match to book or **Import, From a folder**, is never refused by these checks.
 - With no drop folder (hand off in place) nothing is placed, so the checks do not run.
 
 The lab saw the older behaviour on 1.51.1: a wrong book was dropped under the wanted book's name with no warning, because the checks did not run in External mode.
 
 ### Reorganize
 
-Since #3947, Reorganize shows a warning in External mode that names the affected formats (ebook files, audiobook files, or both, as set by Import Mode and the audiobook import mode), and the Rename button stays off until you tick a confirmation. Without the confirmation the apply route answers 409 and moves nothing. Do not confirm it for a BookOrbit library. On 1.51.1 the Reorganize preview offered to move all eight BookOrbit filed books to Bindery's own names. Library scans and metadata refreshes changed nothing on disk. Reorganize does not write `metadata.opf` sidecars for a format in External mode unless it also moves that file after you confirm.
+Since #3947, Reorganize shows a warning in External mode that names the affected formats (ebook files, audiobook files, or both, as set by Import Mode and the audiobook import mode), and the Rename button stays off until you tick a confirmation. Without the confirmation the apply route answers 409 and moves nothing. Do not confirm it for a BookOrbit library. On 1.51.1 the Reorganize preview offered to move all eight BookOrbit filed books to Bindery's own names. Library scans and metadata refreshes changed nothing on disk. With `import.write_opf_sidecar` on, Reorganize skips the `metadata.opf` refresh for a format in External mode, so a BookOrbit library gets none from it. The one exception is a file you confirm and Reorganize moves: it gets a sidecar after the move, like any file it moves.
 
 ### Known limits
 
 - **Upgrades do not replace the BookOrbit copy.** A second delivery of a book BookOrbit already has is parked with a message that a file with that name already exists at the target. Nothing is overwritten or duplicated.
 - **The library scan needs the author as the top level folder.** It reads `Author/Title/...` and takes the author from the first folder, even when the file's own metadata names the author. BookOrbit's default naming fits. A pattern like `Genre/Author/Series/NN - Title` does not: every file under that shape came back unmatched, with the genre read as the author.
-- **No `.opf` reaches the dock.** `import.write_opf_sidecar` applies to books Bindery files itself, so it does nothing on this path, flat or templated. Reorganize leaves External mode formats out of its sidecar refresh too.
+- **No `.opf` reaches the dock.** `import.write_opf_sidecar` applies to books Bindery files itself, so it does nothing on this path, flat or templated. Reorganize leaves External mode formats out of its sidecar refresh too, except for a file you confirm and it moves.
 - **Empty folders stay behind in the dock** after an audiobook or a templated drop is filed. They are harmless. A later drop of the same audiobook goes to `Title - Author (2)`.
 - **The handed off download stays in Bindery's queue** after the book is imported, and no Book imported history event is written for a book the scan reconciles. That is how External mode works with every tool.
 - **A new book can take up to one scan interval to leave Wanted.** Lower `library.scan_interval` or run a scan by hand.

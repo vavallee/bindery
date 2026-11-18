@@ -1,2 +1,0 @@
-### Added
-- **Pick your audnex marketplace** (#3982). audnex always looked ASINs up in the US Audible store, so audiobooks sold only elsewhere, like German ones, came back as not found. Settings, Metadata now has an audnex marketplace dropdown (US, Canada, UK, Australia, France, Germany, Japan, Italy, India, Spain), US by default so nothing changes unless you pick one. It takes effect on the next lookup without a restart. Thanks Kyraira for the report.
