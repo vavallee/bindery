@@ -48,6 +48,7 @@ Base template: `.github/pull_request_template.md`. For non-trivial PRs expand it
 - **Self-review the diff** in the PR UI before requesting review — you'll catch things `git diff` won't (missed renames, debug prints, accidental file additions).
 - **Don't `git merge main` into a feature branch.** Rebase: `git fetch origin && git rebase origin/main`. Keeps history linear and the diff readable.
 - **Resolve review comments.** Either fix them, or reply with reasoning. Don't silently resolve threads.
+- **Merging with the merge queue on:** `main` no longer needs the branch to be up to date, so do not update-branch or rebase just to merge. Run `gh pr merge <n>` with no strategy flag. It adds the PR to the queue once required checks have passed, or turns on auto merge until they do. The queue squashes on its own temporary branch and reruns the required checks there. `--admin` skips the queue for an emergency.
 - **Squash at merge** for single-purpose PRs (the default expectation here). Keep history (rebase merge) only when commits are individually atomic, each compiles, and each adds reviewable value.
 - **Tag link discipline:** Use `Closes #NN` in the PR body to auto-close the issue on merge. Use `Refs #NN` for related-but-not-closing.
 

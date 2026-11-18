@@ -22,6 +22,12 @@ on:
       - 'LICENSE*'
       - 'CODE_OF_CONDUCT*'
       - '.github/ISSUE_TEMPLATE/**'
+  # Merge queue entries. merge_group has no paths filter, so paths-ignore above
+  # cannot apply: every queue entry, docs only ones included, runs the full
+  # workflow and reports the real "Security Summary". Do not also add
+  # merge_group to security-docs-noop.yml or the check would report twice.
+  merge_group:
+    types: [checks_requested]
   schedule:
     # Weekly Monday 06:00 UTC
     - cron: '0 6 * * 1'
@@ -32,7 +38,8 @@ permissions:
 
 concurrency:
   group: security-${{ github.ref }}
-  cancel-in-progress: true
+  # A merge queue run is never superseded by another run on its ref.
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
   # ── Go SAST: gosec only — golangci-lint and govulncheck run in ci.yml lint ──
@@ -122,7 +129,7 @@ jobs:
 
       - name: Upload ESLint SARIF
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        if: always() && hashFiles('web/eslint-security.sarif') != ''
+        if: always() && github.event_name != 'merge_group' && hashFiles('web/eslint-security.sarif') != ''
         with:
           sarif_file: web/eslint-security.sarif
           category: eslint-security
@@ -144,7 +151,7 @@ jobs:
 
       - name: Upload Semgrep SARIF
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        if: always() && hashFiles('semgrep.sarif') != ''
+        if: always() && github.event_name != 'merge_group' && hashFiles('semgrep.sarif') != ''
         with:
           sarif_file: semgrep.sarif
           category: semgrep-frontend
@@ -152,6 +159,11 @@ jobs:
   # ── Secrets scan: Gitleaks ─────────────────────────────────────────────────
   secrets-scan:
     name: Secrets Scan
+    # gitleaks-action exits 1 on any event other than push, pull_request,
+    # workflow_dispatch and schedule ("The [merge_group] event is not yet
+    # supported"), so it is skipped on queue entries. Every commit in an entry
+    # was already scanned on its pull request.
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -233,7 +245,7 @@ jobs:
 
       - name: Upload Hadolint SARIF
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        if: always()
+        if: always() && github.event_name != 'merge_group'
         with:
           sarif_file: hadolint.sarif
           category: hadolint
@@ -258,7 +270,7 @@ jobs:
 
       - name: Upload Checkov SARIF
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        if: always()
+        if: always() && github.event_name != 'merge_group'
         with:
           sarif_file: checkov.sarif
           category: checkov
@@ -328,7 +340,7 @@ jobs:
 
       - name: Upload Grype SARIF
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        if: always() && hashFiles('grype.sarif') != ''
+        if: always() && github.event_name != 'merge_group' && hashFiles('grype.sarif') != ''
         with:
           sarif_file: grype.sarif
           category: grype

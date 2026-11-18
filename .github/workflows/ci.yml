@@ -5,6 +5,15 @@ on:
     branches: [main, development]
     tags: ['v*']
   pull_request:
+  # The merge queue builds each entry on a temporary gh-readonly-queue/main/...
+  # branch and waits for the required checks to report on that commit. Only
+  # jobs whose `if` admits merge_group run there: lint, licenses, smoke,
+  # abs-contract, chart-probes-vs-image, validate (Go) and validate (frontend).
+  # The race shards, the post-merge `test`/`race` gate and every image, deploy
+  # and release job stay off it. Any check added to the main ruleset must run
+  # here too, or the queue waits on it until check_response_timeout.
+  merge_group:
+    types: [checks_requested]
   # Lets the "Assemble dev preview" workflow rebuild + redeploy bindery-dev by
   # dispatching this pipeline against the freshly-assembled `development` ref.
   # A GITHUB_TOKEN push does not trigger CI, but a workflow_dispatch does, so
@@ -196,7 +205,7 @@ jobs:
   # and the prod pod never became Ready. This boots the pinned image and
   # requests every httpGet probe path the rendered chart declares.
   chart-probes-vs-image:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref == 'refs/heads/main'
     timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
@@ -252,7 +261,7 @@ jobs:
     name: validate (Go)
     timeout-minutes: 45
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     steps:
       - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -380,7 +389,7 @@ jobs:
     name: validate (frontend)
     timeout-minutes: 45
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     steps:
       - name: Harden the runner (block non-allowlisted egress)
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -539,7 +548,10 @@ jobs:
     needs: test
     # Publishes vavallee/bindery images; forks have no credentials for it and
     # skipping it here also skips the deploy/notify jobs that need it.
-    if: github.repository == 'vavallee/bindery'
+    # Never on a merge queue run: `test` is already skipped there, which would
+    # skip this job through `needs`, but a registry push is not something to
+    # leave to an implicit chain.
+    if: github.repository == 'vavallee/bindery' && github.event_name != 'merge_group'
     timeout-minutes: 45
     runs-on: ubuntu-latest
     permissions:

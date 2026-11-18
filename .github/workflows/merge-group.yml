@@ -1,0 +1,33 @@
+# Merge queue stand-in for the `codecov/patch` required check.
+#
+# `codecov/patch` is a commit status posted by the Codecov app against a pull
+# request. The merge queue tests a temporary gh-readonly-queue/main/... commit
+# that belongs to no pull request, so Codecov never posts it there and a
+# required `codecov/patch` would leave the queue waiting until it times out.
+#
+# This workflow runs ONLY for merge_group, and reports a job named exactly
+# `codecov/patch` that succeeds. Because it never runs on pull_request, no
+# second `codecov/patch` appears on a PR head, so it cannot mask a real failing
+# Codecov status: an entry could only enter the queue after the real one passed
+# on the PR head. Same approach as go-gitea/gitea's merge-group.yml.
+#
+# What it loses: patch coverage is not recomputed on the combined queue commit.
+# The queue's own run of ci.yml (lint, validate (Go), smoke) replaces the old
+# "strict, branch must be up to date" rule for everything else.
+name: Merge queue
+
+on:
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  codecov-patch:
+    name: codecov/patch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Patch coverage was checked on the pull request
+        run: echo "codecov/patch passed on the PR head before queue entry; it is not recomputed on the combined commit."
