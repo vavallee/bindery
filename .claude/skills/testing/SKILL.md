@@ -30,7 +30,7 @@ Make wrappers for convenience:
 What CI enforces (`.github/workflows/ci.yml`):
 
 - Required to merge: `lint`, `validate (Go)`, `Security Summary`, `codecov/patch`. `validate (Go)` runs the `go test` line above, without `-race`.
-- Once the merge queue is on, the same four contexts must also report on the queue's `gh-readonly-queue/main/...` commit. `ci.yml` and `security.yml` declare `merge_group` for that, and `.github/workflows/merge-group.yml` reports a `codecov/patch` job that simply succeeds there (Codecov never posts a status on a queue commit). A job added to a ruleset as required must run on `merge_group` too, or the queue waits on it until the response timeout.
+- Once the merge queue ruleset is on, the same four contexts must also report on the queue's `gh-readonly-queue/main/...` commit. `ci.yml` and `security.yml` declare `merge_group` for that, and `.github/workflows/merge-group.yml` reports a `codecov/patch` job that simply succeeds there (Codecov never posts a status on a queue commit). A job added to a ruleset as required must run on `merge_group` too, or the queue waits on it until the response timeout.
 - `validate (Go race)` runs on every PR in six shards but is not a required check. A red race shard won't block the merge, but treat it as a real failure; `make test-race` reproduces it locally.
 - Named suites run as their own jobs, not as part of `go test ./...`: `tests/smoke` (`make smoke`) and `tests/abscontract` (`make abs-contract`) on every CI run, `tests/predeploy` (`make predeploy-smoke`) on `v*` tags against dev, and `tests/canary` nightly from `.github/workflows/canary.yml`.
 

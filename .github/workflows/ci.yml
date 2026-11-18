@@ -985,7 +985,9 @@ jobs:
     name: Deploy to prod
     needs: [image, goreleaser, predeploy-smoke]
     if: startsWith(github.ref, 'refs/tags/v') && needs.goreleaser.result == 'success'
-    timeout-minutes: 45
+    # 45 minutes of work plus up to 75 minutes waiting for the merge below, so
+    # the job limit sits above the merge wait and never cuts it short.
+    timeout-minutes: 130
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1003,9 +1005,41 @@ jobs:
           persist-credentials: false
           sparse-checkout: scripts/ci
 
+      # The final merge is made by a GitHub App that is a bypass actor on the
+      # main ruleset (merge queue). GITHUB_TOKEN cannot be a bypass actor. Fail
+      # before touching anything, and never fall back to GITHUB_TOKEN.
+      - name: Require the deploy app credentials
+        env:
+          DEPLOY_APP_ID: ${{ vars.DEPLOY_APP_ID }}
+          DEPLOY_APP_PRIVATE_KEY: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+        run: |
+          missing=""
+          [ -n "${DEPLOY_APP_ID}" ] || missing="${missing} repository variable DEPLOY_APP_ID"
+          [ -n "${DEPLOY_APP_PRIVATE_KEY}" ] || missing="${missing} repository secret DEPLOY_APP_PRIVATE_KEY"
+          if [ -n "${missing}" ]; then
+            echo "::error::deploy-prod needs${missing}. Create the deploy GitHub App and set them (see the merge queue rollout notes). Nothing was changed."
+            exit 1
+          fi
+
+      - name: Create the deploy app token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Update values.yaml on main
         env:
+          # Branch, commits, PR and the required status stamps stay on
+          # GITHUB_TOKEN exactly as before: its commits start no workflows (a
+          # 40 minute CI run on a values only promote would be wasted) and the
+          # stamps must come from the GitHub Actions app to satisfy the
+          # app_id 15368 contexts in classic protection.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only the merge and the wait use the app token.
+          APP_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           set -euo pipefail
           IMAGE_TAG="${GITHUB_REF_NAME#v}"
@@ -1146,13 +1180,37 @@ jobs:
             echo "::error::required checks on ${DEPLOY_BRANCH} did not go green in 10 minutes"; exit 1
           fi
 
-          # No --admin: required checks are green, so a normal squash merge works
-          # with the default token. --match-head-commit refuses the merge if the
-          # branch moved after the guard ran. The [skip ci] subject keeps main
-          # from rebuilding the image for a values only change.
-          gh pr merge "${PR_URL}" --repo "${GITHUB_REPOSITORY}" --squash --delete-branch \
+          # Merge with the app token, no --admin. Under classic protection the
+          # stamped contexts above make a normal squash merge pass. Under the
+          # merge queue ruleset the app is a bypass actor, so the same call is
+          # meant to merge past the queue and the required checks. If it is
+          # added to the queue instead, the wait below covers the queue run.
+          # --match-head-commit refuses the merge if the branch moved after the
+          # guard ran. The [skip ci] subject keeps the push to main from
+          # rebuilding the image for a values only change. The branch is not
+          # deleted with the merge (a queued PR must keep its head branch); it
+          # is removed after the PR is MERGED.
+          GH_TOKEN="${APP_TOKEN}" gh pr merge "${PR_URL}" --repo "${GITHUB_REPOSITORY}" --squash \
             --match-head-commit "${VALUES_COMMIT}" \
             --subject "chore(deploy): promote bindery to ${IMAGE_TAG} [skip ci]"
+
+          # gh pr merge may only have enabled auto merge or queued the PR, so
+          # wait for the real outcome: MERGED, or fail. 75 minutes covers one
+          # queue run (CI is about 40 minutes); the job timeout is above it.
+          MERGED=""
+          for i in $(seq 1 150); do
+            STATE=$(GH_TOKEN="${APP_TOKEN}" gh pr view "${PR_URL}" --repo "${GITHUB_REPOSITORY}" \
+              --json state,mergedAt --jq '.state + " " + (.mergedAt // "")')
+            case "${STATE%% *}" in
+              MERGED) MERGED=1; break ;;
+              CLOSED) echo "::error::${PR_URL} was closed without merging"; exit 1 ;;
+            esac
+            sleep 30
+          done
+          if [ -z "${MERGED}" ]; then
+            echo "::error::${PR_URL} was not merged within 75 minutes (still queued or blocked). Merge it by hand and rerun nothing else."; exit 1
+          fi
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${DEPLOY_BRANCH}" --silent || true
           echo "bindery (prod) image tag updated to ${IMAGE_TAG}"
 
       - name: Trigger ArgoCD prod refresh
