@@ -229,15 +229,6 @@ func (r *DownloadRepo) GetByNzoID(ctx context.Context, nzoID string) (*models.Do
 	return &dl[0], nil
 }
 
-func (r *DownloadRepo) GetByTorrentID(ctx context.Context, torrentID string) (*models.Download, error) {
-	torrentID = strings.ToLower(torrentID)
-	dl, err := r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads WHERE torrent_id=?", torrentID)
-	if err != nil || len(dl) == 0 {
-		return nil, err
-	}
-	return &dl[0], nil
-}
-
 // ListByClientTorrentID returns every download whose torrent_id is torrentID
 // on client or on any other client entry that talks to the same daemon,
 // across all owners. A torrent client adopts a torrent it already holds when a
@@ -637,12 +628,6 @@ func (r *DownloadRepo) SetGrabbedAt(ctx context.Context, id int64, t time.Time) 
 
 func (r *DownloadRepo) SetNzoID(ctx context.Context, id int64, nzoID string) error {
 	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET sabnzbd_nzo_id=? WHERE id=?", nzoID, id)
-	return err
-}
-
-// SetDownloadClientID records the download client selected for a download.
-func (r *DownloadRepo) SetDownloadClientID(ctx context.Context, id, clientID int64) error {
-	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET download_client_id=? WHERE id=?", clientID, id)
 	return err
 }
 

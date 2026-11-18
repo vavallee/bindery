@@ -53,7 +53,7 @@ func rejectingQbit(t *testing.T) (*Client, *int) {
 func TestLoginFailureStopsEveryCall(t *testing.T) {
 	ctx := context.Background()
 	calls := map[string]func(*Client) error{
-		"SetShareLimits":    func(c *Client) error { return c.SetShareLimits(ctx, "h", 1.5) },
+		"SetShareLimits":    func(c *Client) error { return c.SetShareLimitsDetailed(ctx, "h", ratioLimit(1.5)) },
 		"AddTorrent":        func(c *Client) error { _, err := c.AddTorrent(ctx, "magnet:?xt=urn:btih:abc", "", ""); return err },
 		"DeleteTorrent":     func(c *Client) error { return c.DeleteTorrent(ctx, "h", false) },
 		"setCategory":       func(c *Client) error { return c.setCategory(ctx, "h", "books") },
@@ -93,7 +93,7 @@ func TestTransportErrorsAreWrapped(t *testing.T) {
 		call func(*Client) error
 		want string
 	}{
-		{"setShareLimits", func(c *Client) error { return c.SetShareLimits(ctx, "h", 2) }, "setShareLimits: "},
+		{"setShareLimits", func(c *Client) error { return c.SetShareLimitsDetailed(ctx, "h", ratioLimit(2)) }, "setShareLimits: "},
 		{"add", func(c *Client) error { _, err := c.AddTorrent(ctx, "magnet:?xt=urn:btih:abc", "", ""); return err }, "add torrent: "},
 		{"delete", func(c *Client) error { return c.DeleteTorrent(ctx, "h", true) }, "delete torrent: "},
 		{"setCategory", func(c *Client) error { return c.setCategory(ctx, "h", "b") }, "setCategory: "},
@@ -121,7 +121,7 @@ func TestBuildRequestErrors(t *testing.T) {
 
 	c.loggedIn = true
 	cases := map[string]func() error{
-		"build setShareLimits request":    func() error { return c.SetShareLimits(ctx, "h", 1) },
+		"build setShareLimits request":    func() error { return c.SetShareLimitsDetailed(ctx, "h", ratioLimit(1)) },
 		"build add request":               func() error { _, err := c.AddTorrent(ctx, "magnet:?xt=urn:btih:abc", "", ""); return err },
 		"build delete request":            func() error { return c.DeleteTorrent(ctx, "h", false) },
 		"build setCategory request":       func() error { return c.setCategory(ctx, "h", "b") },

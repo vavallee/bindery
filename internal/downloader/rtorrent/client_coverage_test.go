@@ -199,9 +199,6 @@ func TestPerTorrentCalls_TransportErrors(t *testing.T) {
 	if _, err := c.Files(ctx, magnetHash); err == nil || !strings.Contains(err.Error(), "f.multicall") {
 		t.Errorf("Files err = %v", err)
 	}
-	if err := c.SetLabel(ctx, magnetHash, "books"); err == nil || !strings.Contains(err.Error(), "d.custom1.set") {
-		t.Errorf("SetLabel err = %v", err)
-	}
 }
 
 func TestFiles_SkipsUnusableRows(t *testing.T) {

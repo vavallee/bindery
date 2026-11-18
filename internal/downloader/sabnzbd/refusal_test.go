@@ -25,8 +25,6 @@ func TestMutationRefusalIsAnError(t *testing.T) {
 		name string
 		call func(*Client) error
 	}{
-		{"pause", func(c *Client) error { return c.Pause(context.Background(), "nzo_1") }},
-		{"resume", func(c *Client) error { return c.Resume(context.Background(), "nzo_1") }},
 		{"queue delete", func(c *Client) error { return c.Delete(context.Background(), "nzo_1", false) }},
 		{"history delete", func(c *Client) error { return c.DeleteHistory(context.Background(), "nzo_1", false) }},
 	}
@@ -94,12 +92,6 @@ func TestMutationSuccessIsNil(t *testing.T) {
 	c := New("127.0.0.1", 0, "testkey", "", false)
 	c.baseURL = srv.URL
 
-	if err := c.Pause(context.Background(), "nzo_1"); err != nil {
-		t.Errorf("Pause: %v", err)
-	}
-	if err := c.Resume(context.Background(), "nzo_1"); err != nil {
-		t.Errorf("Resume: %v", err)
-	}
 	if err := c.Delete(context.Background(), "nzo_1", true); err != nil {
 		t.Errorf("Delete: %v", err)
 	}

@@ -293,7 +293,6 @@ func TestBookQueries_EquivalentToCTEShape(t *testing.T) {
 	}
 	for _, st := range []string{"wanted", "imported", "skipped"} {
 		check("ListByStatus "+st, func(r *BookRepo) (any, error) { return r.ListByStatus(ctx, st) })
-		check("ListByStatusIncludingExcluded "+st, func(r *BookRepo) (any, error) { return r.ListByStatusIncludingExcluded(ctx, st) })
 	}
 	check("ListWithFilesWithoutCover", func(r *BookRepo) (any, error) { return r.ListWithFilesWithoutCover(ctx) })
 	check("ListWithLocalImagePath", func(r *BookRepo) (any, error) { return r.ListWithLocalImagePath(ctx) })
@@ -316,7 +315,6 @@ func TestBookQueries_EquivalentToCTEShape(t *testing.T) {
 	check("GetByForeignID missing", func(r *BookRepo) (any, error) { return r.GetByForeignID(ctx, "nope") })
 	check("GetByAnyForeignID missing", func(r *BookRepo) (any, error) { return r.GetByAnyForeignID(ctx, "nope") })
 	check("GetByForeignID EMPTYFIRST", func(r *BookRepo) (any, error) { return r.GetByForeignID(ctx, "EMPTYFIRST") })
-	check("FindByAuthorAndTitle", func(r *BookRepo) (any, error) { return r.FindByAuthorAndTitle(ctx, 1, "The Hobbit 3") })
 
 	// The filtered pager: every sort x status x media type x search x monitored x user.
 	sorts := []string{"", "title-az", "title-za", "date-new", "date-old", "author-az", "author-za", "type-az", "type-za",

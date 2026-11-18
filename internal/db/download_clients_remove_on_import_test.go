@@ -75,16 +75,6 @@ func TestDownloadClientRepo_RemoveOnImportRoundTrip(t *testing.T) {
 	readRemoveOnImport(t, repo, on.ID, true)
 	readRemoveOnImport(t, repo, off.ID, false)
 
-	// The single-row getters that pick the first enabled client.
-	first, err := repo.GetFirstEnabled(ctx)
-	if err != nil || first == nil || first.ID != on.ID || !first.RemoveOnImport {
-		t.Errorf("GetFirstEnabled = %+v, %v; want client %d with RemoveOnImport true", first, err, on.ID)
-	}
-	firstTorrent, err := repo.GetFirstEnabledByProtocol(ctx, "torrent")
-	if err != nil || firstTorrent == nil || firstTorrent.ID != on.ID || !firstTorrent.RemoveOnImport {
-		t.Errorf("GetFirstEnabledByProtocol = %+v, %v; want client %d with RemoveOnImport true", firstTorrent, err, on.ID)
-	}
-
 	// Flip both and save: the toggle must be writable in each direction.
 	on.RemoveOnImport = false
 	off.RemoveOnImport = true

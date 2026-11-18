@@ -269,34 +269,6 @@ func (c *Client) GetCategories(ctx context.Context) ([]string, error) {
 	return resp.Categories, nil
 }
 
-// Pause pauses a download by NZO ID.
-func (c *Client) Pause(ctx context.Context, nzoID string) error {
-	params := url.Values{
-		"mode":  {"queue"},
-		"name":  {"pause"},
-		"value": {nzoID},
-	}
-	var resp SimpleResponse
-	if err := c.apiCall(ctx, params, &resp); err != nil {
-		return err
-	}
-	return checkSimpleResponse("pause", resp)
-}
-
-// Resume resumes a paused download.
-func (c *Client) Resume(ctx context.Context, nzoID string) error {
-	params := url.Values{
-		"mode":  {"queue"},
-		"name":  {"resume"},
-		"value": {nzoID},
-	}
-	var resp SimpleResponse
-	if err := c.apiCall(ctx, params, &resp); err != nil {
-		return err
-	}
-	return checkSimpleResponse("resume", resp)
-}
-
 // Delete removes a download from the queue.
 func (c *Client) Delete(ctx context.Context, nzoID string, deleteFiles bool) error {
 	params := url.Values{

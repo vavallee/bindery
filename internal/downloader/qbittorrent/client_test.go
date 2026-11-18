@@ -2357,7 +2357,7 @@ func TestSetShareLimits_Positive(t *testing.T) {
 
 	c := newTestClient(srv.URL, "u", "p")
 	c.loggedIn = true
-	if err := c.SetShareLimits(context.Background(), "abc", 1.5); err != nil {
+	if err := c.SetShareLimitsDetailed(context.Background(), "abc", ratioLimit(1.5)); err != nil {
 		t.Fatalf("SetShareLimits: %v", err)
 	}
 	if got := gotForm.Get("hashes"); got != "abc" {
@@ -2397,7 +2397,7 @@ func TestSetShareLimits_Unlimited(t *testing.T) {
 
 	c := newTestClient(srv.URL, "u", "p")
 	c.loggedIn = true
-	if err := c.SetShareLimits(context.Background(), "abc", -1); err != nil {
+	if err := c.SetShareLimitsDetailed(context.Background(), "abc", ratioLimit(-1)); err != nil {
 		t.Fatalf("SetShareLimits: %v", err)
 	}
 	if gotRatio != "-1" {
@@ -2419,7 +2419,7 @@ func TestSetShareLimits_HTTPError(t *testing.T) {
 
 	c := newTestClient(srv.URL, "u", "p")
 	c.loggedIn = true
-	if err := c.SetShareLimits(context.Background(), "abc", 2); err == nil {
+	if err := c.SetShareLimitsDetailed(context.Background(), "abc", ratioLimit(2)); err == nil {
 		t.Fatal("expected error on HTTP 500")
 	}
 }
@@ -2463,3 +2463,6 @@ func TestAddTorrent_TruncatedBodyIsNotSuccess(t *testing.T) {
 		t.Errorf("error = %q, want it to name the read failure", err)
 	}
 }
+
+// ratioLimit is a ShareLimits that sets only the seed ratio.
+func ratioLimit(v float64) ShareLimits { return ShareLimits{Ratio: &v} }

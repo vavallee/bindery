@@ -914,7 +914,8 @@ func (r *UserRepo) SetRequestsAutoApprove(ctx context.Context, id int64, enabled
 }
 
 // PromoteFirstUser sets role='admin' on the user with the lowest id, if any.
-// Called during first-run setup after the first user is created.
+// First-run setup creates the admin with CreateFirstAdmin instead; this is a
+// fixture for tests that create a plain user first and need it promoted.
 func (r *UserRepo) PromoteFirstUser(ctx context.Context) error {
 	_, err := r.db.ExecContext(ctx,
 		"UPDATE users SET role='admin' WHERE id = (SELECT MIN(id) FROM users)")
@@ -953,39 +954,4 @@ func (r *UserRepo) GetSessionEpoch(ctx context.Context, id int64) (int64, error)
 		return 0, fmt.Errorf("get session epoch: %w", err)
 	}
 	return epoch, nil
-}
-
-// BumpSessionEpoch increments the user's session_epoch by one. Intended for
-// callers that need to invalidate every outstanding session for a user
-// without changing the password itself (a hook for future "log out all
-// devices" UI). The password-change paths inline the bump into UpdatePassword
-// so the two cannot drift apart.
-func (r *UserRepo) BumpSessionEpoch(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx,
-		"UPDATE users SET session_epoch=session_epoch+1, updated_at=? WHERE id=?",
-		time.Now().UTC(), id,
-	)
-	return err
-}
-
-func (r *UserRepo) UpdateUsername(ctx context.Context, id int64, username string) error {
-	_, err := r.db.ExecContext(ctx,
-		"UPDATE users SET username=?, updated_at=? WHERE id=?",
-		username, time.Now().UTC(), id,
-	)
-	return err
-}
-
-// GetOrCreateByUsername returns the existing user with the given username, or
-// creates one (with an empty password hash — proxy-auth users never log in
-// with a local password). Used by the proxy-auth auto-provisioning path.
-func (r *UserRepo) GetOrCreateByUsername(ctx context.Context, username string) (*User, error) {
-	u, err := r.GetByUsername(ctx, username)
-	if err != nil {
-		return nil, err
-	}
-	if u != nil {
-		return u, nil
-	}
-	return r.Create(ctx, username, "")
 }

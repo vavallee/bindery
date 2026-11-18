@@ -104,14 +104,6 @@ func (c *ClientCache) Evict(id int64) {
 	delete(c.entries, id)
 }
 
-// EvictAll clears every cached entry. Useful in tests; not currently
-// called from production code.
-func (c *ClientCache) EvictAll() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.entries = make(map[int64]*cachedEntry)
-}
-
 // ConstructorCount returns how many downloader clients have been
 // constructed via this cache (i.e. cache-miss count). Tests assert this
 // stays at 1 across N polls against the same config; production callers
