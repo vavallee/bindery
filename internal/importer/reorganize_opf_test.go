@@ -565,3 +565,72 @@ func TestReorganizeOPF_PreviewScalesLinearly(t *testing.T) {
 		t.Fatalf("preview of %d books took %v against %v without sidecars", n, elapsed, base)
 	}
 }
+
+// Applying one of two books headed for the same folder must decide like the
+// preview does: neither ends up with a sidecar.
+func TestReorganizeOPF_SubsetApplyAgreesWithPreview(t *testing.T) {
+	env, libraryDir, _, ctx := reorgFixture(t)
+	setOPF(t, env, "true")
+	a := env.seedAuthor(t, ctx, "Jane Doe")
+	if err := env.s.settings.Set(ctx, "naming.bookTemplate", "{Author}/{Title}.{ext}"); err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	var bookIDs []int64
+	for _, title := range []string{"Alpha", "Beta"} {
+		b := env.seedBook(t, ctx, a, title)
+		p := filepath.Join(libraryDir, "misc", title, "x.epub")
+		writeFileAt(t, p)
+		if err := env.books.AddBookFile(ctx, b.ID, models.MediaTypeEbook, p); err != nil {
+			t.Fatal(err)
+		}
+		fs, _ := env.books.ListBookFiles(ctx, b.ID)
+		ids = append(ids, fs[0].ID)
+		bookIDs = append(bookIDs, b.ID)
+	}
+	// A preview scoped to one book already says shared.
+	one, _ := env.s.PreviewReorganizeBook(ctx, bookIDs[0])
+	if one[0].Sidecar != ReorgSidecarShared {
+		t.Fatalf("single book preview = %+v, want shared", one[0])
+	}
+	for i, id := range ids {
+		r := env.s.ApplyReorganize(ctx, []int64{id})
+		if r[0].Status != ReorgStatusMoved || r[0].Sidecar != ReorgSidecarShared {
+			t.Fatalf("apply %d = %+v, want moved and shared", i, r[0])
+		}
+		if _, err := os.Stat(filepath.Join(libraryDir, "Jane Doe", "metadata.opf")); err == nil {
+			t.Fatalf("sidecar present after apply %d", i)
+		}
+	}
+}
+
+func TestReorganizeOPF_SharedFolderRemovesOnlyBinderyFile(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+		removed bool
+	}{
+		{"bindery marker", "<package>" + opfGeneratorMeta + "</package>", true},
+		{"foreign", "<package>calibre</package>", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, libraryDir, _, ctx := reorgFixture(t)
+			setOPF(t, env, "true")
+			dir, ids := flatBooks(t, env, libraryDir)
+			opf := filepath.Join(dir, "metadata.opf")
+			if err := os.WriteFile(opf, []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			env.s.ApplyReorganize(ctx, ids)
+			_, err := os.Stat(opf)
+			if tc.removed && err == nil {
+				t.Fatal("stale Bindery sidecar was left in a shared folder")
+			}
+			if !tc.removed {
+				if b, _ := os.ReadFile(opf); string(b) != tc.content {
+					t.Fatal("foreign sidecar was touched")
+				}
+			}
+		})
+	}
+}

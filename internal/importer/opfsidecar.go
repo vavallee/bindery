@@ -155,6 +155,40 @@ func (s *Scanner) writeOPFSidecar(ctx context.Context, dir string, roots []strin
 	slog.Info("opf sidecar: metadata.opf written", "bookID", book.ID, "dir", dir)
 }
 
+// RemoveBinderySidecar deletes dir's metadata.opf only when it carries the
+// Bindery generator marker, is a regular file and the folder is not linked.
+// Anything else, including a Calibre or hand written file, is left alone.
+func RemoveBinderySidecar(dir string, roots []string) (bool, error) {
+	var target string
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rel, relErr := filepath.Rel(filepath.Clean(root), filepath.Clean(dir))
+		if relErr != nil || !filepath.IsLocal(rel) {
+			continue
+		}
+		target = filepath.Join(filepath.Clean(root), rel)
+		break
+	}
+	if target == "" || folderIsLinked(roots, target) {
+		return false, nil
+	}
+	file := filepath.Join(target, opfSidecarFileName)
+	fi, err := os.Lstat(file)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false, nil
+	}
+	data, err := os.ReadFile(file)
+	if err != nil || !bytes.Contains(data, []byte(opfGeneratorMeta)) {
+		return false, nil
+	}
+	if err := os.Remove(file); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // folderIsLinked reports whether target reaches its library root through a
 // symlink, so a book folder that is a link (or sits under one inside the
 // library) is never written through. The root itself may be a link: it is

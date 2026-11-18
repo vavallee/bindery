@@ -71,7 +71,7 @@ func (s *Scanner) PreviewReorganizeBook(ctx context.Context, bookID int64) ([]Re
 		return nil, fmt.Errorf("book %d not found", bookID)
 	}
 	moves, err := s.previewBook(ctx, book)
-	s.annotateSidecars(ctx, moves)
+	s.annotateSidecars(ctx, moves, false)
 	return moves, err
 }
 
@@ -82,7 +82,9 @@ func (s *Scanner) PreviewReorganizeAuthor(ctx context.Context, authorID int64) (
 	if err != nil {
 		return nil, err
 	}
-	return s.previewBooks(ctx, books)
+	moves, err := s.planBooks(ctx, books)
+	s.annotateSidecars(ctx, moves, false)
+	return moves, err
 }
 
 // PreviewReorganizeLibrary returns the proposed moves for the whole library. It
@@ -93,10 +95,13 @@ func (s *Scanner) PreviewReorganizeLibrary(ctx context.Context) ([]ReorganizeMov
 	if err != nil {
 		return nil, err
 	}
-	return s.previewBooks(ctx, books)
+	moves, err := s.planBooks(ctx, books)
+	s.annotateSidecars(ctx, moves, true)
+	return moves, err
 }
 
-func (s *Scanner) previewBooks(ctx context.Context, books []models.Book) ([]ReorganizeMove, error) {
+// planBooks computes the moves for books without the sidecar annotation.
+func (s *Scanner) planBooks(ctx context.Context, books []models.Book) ([]ReorganizeMove, error) {
 	var moves []ReorganizeMove
 	for i := range books {
 		if err := ctx.Err(); err != nil {
@@ -109,7 +114,6 @@ func (s *Scanner) previewBooks(ctx context.Context, books []models.Book) ([]Reor
 		}
 		moves = append(moves, bm...)
 	}
-	s.annotateSidecars(ctx, moves)
 	return moves, nil
 }
 
@@ -504,6 +508,7 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64, idx *folderIndex) 
 		return m
 	}
 
+	idx.replan(s, file.ID, book.ID, file.Format, file.Path, proposed)
 	if err := s.books.UpdateBookFilePath(ctx, file.ID, book.ID, proposed); err != nil {
 		// The file is already at the new path on disk; failing to record it
 		// leaves the index pointing at a now-missing location. This is the one
@@ -569,6 +574,13 @@ func (s *Scanner) sidecarForNoop(ctx context.Context, dryRun bool, idx *folderIn
 // an audiobook folder. It never overwrites a metadata.opf Bindery did not
 // write, and never rewrites an identical one. A failure is reported, not
 // fatal.
+func dirOfSidecar(path string, singleFile bool) string {
+	if singleFile {
+		return filepath.Dir(path)
+	}
+	return path
+}
+
 func (s *Scanner) syncSidecar(ctx context.Context, dryRun bool, idx *folderIndex, book *models.Book, author *models.Author, seriesTitle, seriesNum, format, path string, singleFile bool) (string, string) {
 	dir := path
 	if singleFile {
@@ -581,7 +593,15 @@ func (s *Scanner) syncSidecar(ctx context.Context, dryRun bool, idx *folderIndex
 	if idx == nil || idx.sharedBy(s, dir, book.ID) {
 		// No index means the shared check could not be made, so nothing is
 		// written rather than risk two books rewriting one file.
-		return ReorgSidecarShared, "folder holds files of more than one book, no metadata.opf written"
+		msg := "folder holds files of more than one book, no metadata.opf written"
+		if !dryRun && idx != nil {
+			// An earlier run, when the folder held one book, may have left a
+			// Bindery sidecar here that now describes only one of them.
+			if removed, _ := RemoveBinderySidecar(dirOfSidecar(path, singleFile), s.rootsForFormat(ctx, author, format)); removed {
+				msg += "; removed a stale Bindery sidecar"
+			}
+		}
+		return ReorgSidecarShared, msg
 	}
 	edition := s.resolveCalibreEdition(ctx, nil, book)
 	res, err := SyncOPFSidecarFile(dir, s.rootsForFormat(ctx, author, format), dryRun, book, author, edition, seriesTitle, seriesNum)

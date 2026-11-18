@@ -15,6 +15,24 @@ import (
 // library.
 type folderIndex struct {
 	byFolder map[string]map[int64]int
+	// planned is the destination each pending move was indexed under, so a
+	// move that lands somewhere else at apply time (the destination is
+	// recomputed then) can be re-accounted.
+	planned map[int64]string
+}
+
+// replan moves fileID's indexed destination to where it actually landed.
+func (x *folderIndex) replan(s *Scanner, fileID, bookID int64, format, current, actual string) {
+	if x == nil {
+		return
+	}
+	was, ok := x.planned[fileID]
+	if !ok || s.pathKey(folderOf(was, format)) == s.pathKey(folderOf(actual, format)) {
+		return
+	}
+	x.add(s, folderOf(was, format), bookID, -1)
+	x.add(s, folderOf(actual, format), bookID, 1)
+	x.planned[fileID] = actual
 }
 
 // folderOf is the folder a tracked path occupies: the path itself for an
@@ -57,7 +75,7 @@ func (s *Scanner) buildFolderIndex(ctx context.Context, planned []ReorganizeMove
 		slog.Warn("reorganize: could not index tracked folders, skipping sidecars", "error", err)
 		return nil
 	}
-	x := &folderIndex{byFolder: make(map[string]map[int64]int, len(owners))}
+	x := &folderIndex{byFolder: make(map[string]map[int64]int, len(owners)), planned: map[int64]string{}}
 	for _, o := range owners {
 		x.add(s, folderOf(o.Path, o.Format), o.BookID, 1)
 	}
@@ -67,6 +85,7 @@ func (s *Scanner) buildFolderIndex(ctx context.Context, planned []ReorganizeMove
 		}
 		x.add(s, folderOf(m.Current, m.Format), m.BookID, -1)
 		x.add(s, folderOf(m.Proposed, m.Format), m.BookID, 1)
+		x.planned[m.FileID] = m.Proposed
 	}
 	return x
 }
@@ -75,11 +94,17 @@ func (s *Scanner) buildFolderIndex(ctx context.Context, planned []ReorganizeMove
 // after the whole plan is known. Already-correct rows get write, unchanged,
 // foreign or shared; rows that will move only get shared when their final
 // folder is shared, which is what apply will report.
-func (s *Scanner) annotateSidecars(ctx context.Context, moves []ReorganizeMove) {
+// The index always holds the plan for the whole library, so a preview of one
+// book or author makes the same decision as the apply that follows it.
+func (s *Scanner) annotateSidecars(ctx context.Context, moves []ReorganizeMove, wholeLibrary bool) {
 	if len(moves) == 0 || !s.opfSidecarEnabled(ctx) {
 		return
 	}
-	idx := s.buildFolderIndex(ctx, moves)
+	planned := moves
+	if !wholeLibrary {
+		planned = s.planLibrary(ctx)
+	}
+	idx := s.buildFolderIndex(ctx, planned)
 	type ctxBook struct {
 		book   *models.Book
 		author *models.Author
@@ -125,25 +150,23 @@ func (s *Scanner) annotateSidecars(ctx context.Context, moves []ReorganizeMove) 
 	dedupeSidecarPreview(moves)
 }
 
-// sidecarIndexForApply plans the run's own moves, so the first of two books
-// moving into one folder does not write a sidecar the second then makes stale.
-func (s *Scanner) sidecarIndexForApply(ctx context.Context, fileIDs []int64) *folderIndex {
+// planLibrary is the plan for every book, the set a library preview uses.
+func (s *Scanner) planLibrary(ctx context.Context) []ReorganizeMove {
+	books, err := s.books.List(ctx)
+	if err != nil {
+		return nil
+	}
+	moves, _ := s.planBooks(ctx, books)
+	return moves
+}
+
+// sidecarIndexForApply indexes the destinations of every planned move in the
+// library, not only the selected files. A subset apply therefore decides the
+// same as the preview: with Alpha applied first and Beta later, neither gets a
+// sidecar in the folder they will share.
+func (s *Scanner) sidecarIndexForApply(ctx context.Context, _ []int64) *folderIndex {
 	if !s.opfSidecarEnabled(ctx) {
 		return nil
 	}
-	var planned []ReorganizeMove
-	for _, id := range fileIDs {
-		book, file, err := s.bookFileByID(ctx, id)
-		if err != nil {
-			continue
-		}
-		var author *models.Author
-		if a, aerr := s.authors.GetByID(ctx, book.AuthorID); aerr == nil {
-			author = a
-		}
-		seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
-		proposed, status, _ := s.reorganizePathFor(ctx, book, author, seriesTitle, seriesNum, file)
-		planned = append(planned, ReorganizeMove{BookID: book.ID, FileID: id, Format: file.Format, Current: file.Path, Proposed: proposed, Status: status})
-	}
-	return s.buildFolderIndex(ctx, planned)
+	return s.buildFolderIndex(ctx, s.planLibrary(ctx))
 }
