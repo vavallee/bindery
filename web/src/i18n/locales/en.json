@@ -2392,6 +2392,8 @@
       "audibleHint": "Adds audiobooks to an author's catalogue. It uses an unpublished Amazon endpoint, not a documented API.",
       "audnexLabel": "audnex",
       "audnexHint": "Narrator, runtime and cover for audiobooks. A community proxy over the same Audible data.",
+      "audnexRegionLabel": "audnex marketplace",
+      "audnexRegionHint": "The Audible marketplace audnex looks an ASIN up in. An ASIN sold only on another marketplace, such as a German audiobook, is not found in the US one, so pick the one your audiobooks come from. Only this one marketplace is asked. Takes effect from the next lookup, with no restart.",
       "sourcesSaveFailed": "Could not save that change, so it was put back. Try again.",
       "enhancedHardcoverStatusEnabled": "Enabled",
       "enhancedHardcoverStatusEnvDisabled": "Disabled by BINDERY_ENHANCED_HARDCOVER_API=false.",

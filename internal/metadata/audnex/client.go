@@ -29,18 +29,57 @@ type Client struct {
 	gate *providerhttp.Gate
 }
 
-// New returns an audnex client. Region defaults to "us" — other supported
-// regions include uk, de, fr, jp, it, es, au, in, ca.
-func New(region string) *Client {
-	if region == "" {
-		region = "us"
+// DefaultRegion is the Audible marketplace asked when none is configured.
+const DefaultRegion = "us"
+
+// Regions are the marketplaces api.audnex.us accepts. The list is the one the
+// service itself returns for an unsupported region ("Valid regions are: au,
+// ca, de, es, fr, in, it, jp, us, uk"), checked 2026-11-17. A region outside
+// it is a 400 from audnex, so Bindery refuses to store one.
+var Regions = []string{"us", "ca", "uk", "au", "fr", "de", "jp", "it", "in", "es"}
+
+// ValidRegion reports whether region is one audnex supports.
+func ValidRegion(region string) bool {
+	for _, r := range Regions {
+		if r == region {
+			return true
+		}
 	}
+	return false
+}
+
+// NormalizeRegion lowercases and trims region and maps an empty or
+// unsupported value to DefaultRegion, so a hand edited setting cannot make
+// every lookup a 400.
+func NormalizeRegion(region string) string {
+	region = strings.ToLower(strings.TrimSpace(region))
+	if !ValidRegion(region) {
+		return DefaultRegion
+	}
+	return region
+}
+
+// New returns an audnex client. An empty or unsupported region means "us".
+func New(region string) *Client {
+	region = NormalizeRegion(region)
 	return &Client{
 		baseURL: defaultBaseURL,
 		http:    &http.Client{Timeout: 15 * time.Second, Transport: httpsec.MetadataTransport()},
 		region:  region,
 		gate:    providerhttp.NewGate(),
 	}
+}
+
+// Region is the marketplace this client asks.
+func (c *Client) Region() string { return c.region }
+
+// WithRegion returns a client for another marketplace that shares this one's
+// HTTP client and refusal gate, so a region change does not reset a hold
+// audnex has put on Bindery. The receiver is not modified.
+func (c *Client) WithRegion(region string) *Client {
+	next := *c
+	next.region = NormalizeRegion(region)
+	return &next
 }
 
 // Book is the subset of fields we currently use. audnex returns more

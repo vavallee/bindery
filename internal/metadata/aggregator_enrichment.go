@@ -100,6 +100,18 @@ func (a *aggregatorCore) GetCanonicalBookByASIN(ctx context.Context, asin string
 // caller can say why an ASIN lookup found nothing.
 func (a *aggregatorCore) AudnexDisabled() bool { return a != nil && a.audnexOff }
 
+// AudnexRegion is the marketplace the built in audnex client asks, or "" when
+// the audnex client is a test double (#3982).
+func (a *aggregatorCore) AudnexRegion() string {
+	if a == nil {
+		return ""
+	}
+	if cl, ok := a.audnex.(*audnex.Client); ok && cl != nil {
+		return cl.Region()
+	}
+	return ""
+}
+
 func (a *aggregatorCore) getAudnexBookByASIN(ctx context.Context, asin string) (*audnex.Book, error) {
 	asin = normalizeASIN(asin)
 	if a == nil || a.audnex == nil || a.audnexOff || asin == "" {
