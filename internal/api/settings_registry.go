@@ -154,7 +154,7 @@ var settingDescriptors = []SettingDescriptor{
 	},
 	{
 		Key: SettingRequestsAutoApproveDefault, Type: SettingTypeBool, Default: "false",
-		Description: "Approve requests without an admin for every requester account that has no auto approve setting of its own. Admin and user accounts are not covered, and an account set to Always or Never ignores this. A request for a book already in the catalogue still waits for a person, and requests.max_pending_per_user still caps how many auto approve each day.",
+		Description: "Approve requests without an admin for every requester account that has no auto approve setting of its own. Admin and user accounts are not covered, and an account set to Always or Never ignores this. Requests for books already in the catalogue auto approve too, except books an admin excluded or skipped, which wait for a person. requests.max_pending_per_user still caps how many auto approve each day.",
 		State:       SettingStateActive,
 	},
 	{
