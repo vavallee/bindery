@@ -71,7 +71,7 @@ func (s *Scanner) PreviewReorganizeBook(ctx context.Context, bookID int64) ([]Re
 		return nil, fmt.Errorf("book %d not found", bookID)
 	}
 	moves, err := s.previewBook(ctx, book)
-	dedupeSidecarPreview(moves)
+	s.annotateSidecars(ctx, moves)
 	return moves, err
 }
 
@@ -109,7 +109,7 @@ func (s *Scanner) previewBooks(ctx context.Context, books []models.Book) ([]Reor
 		}
 		moves = append(moves, bm...)
 	}
-	dedupeSidecarPreview(moves)
+	s.annotateSidecars(ctx, moves)
 	return moves, nil
 }
 
@@ -150,9 +150,6 @@ func (s *Scanner) previewBook(ctx context.Context, book *models.Book) ([]Reorgan
 		m.Proposed = proposed
 		m.Status = status
 		m.Message = msg
-		if status == ReorgStatusNoop {
-			m.Sidecar, m.SidecarMessage = s.sidecarForNoop(ctx, true, book, author, seriesTitle, seriesNum, f)
-		}
 		moves = append(moves, m)
 	}
 	return moves, nil
@@ -455,16 +452,17 @@ func uniqueDirExcluding(base, keep string, windows bool) string {
 // hard-linked file keeps its link and a file is never duplicated.
 func (s *Scanner) ApplyReorganize(ctx context.Context, fileIDs []int64) []ReorganizeMove {
 	results := make([]ReorganizeMove, 0, len(fileIDs))
+	idx := s.sidecarIndexForApply(ctx, fileIDs)
 	for _, fileID := range fileIDs {
 		if err := ctx.Err(); err != nil {
 			break
 		}
-		results = append(results, s.applyOne(ctx, fileID))
+		results = append(results, s.applyOne(ctx, fileID, idx))
 	}
 	return results
 }
 
-func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
+func (s *Scanner) applyOne(ctx context.Context, fileID int64, idx *folderIndex) ReorganizeMove {
 	book, file, err := s.bookFileByID(ctx, fileID)
 	if err != nil {
 		return ReorganizeMove{FileID: fileID, Status: ReorgStatusFailed, Message: err.Error()}
@@ -492,7 +490,7 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 	if status == ReorgStatusNoop {
 		// Already in place: nothing moves, but the sidecar is still refreshed
 		// when the feature is on (#4008).
-		m.Sidecar, m.SidecarMessage = s.sidecarForNoop(ctx, false, book, author, seriesTitle, seriesNum, file)
+		m.Sidecar, m.SidecarMessage = s.sidecarForNoop(ctx, false, idx, book, author, seriesTitle, seriesNum, file)
 		return m
 	}
 	if status != ReorgStatusMove {
@@ -544,7 +542,7 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 	// a per-file editions query — is not paid on every reorganized file for a
 	// feature that is off by default.
 	if s.opfSidecarEnabled(ctx) {
-		m.Sidecar, m.SidecarMessage = s.syncSidecar(ctx, false, book, author, seriesTitle, seriesNum, file.Format, proposed, singleFile)
+		m.Sidecar, m.SidecarMessage = s.syncSidecar(ctx, false, idx, book, author, seriesTitle, seriesNum, file.Format, proposed, singleFile)
 	}
 
 	m.Status = ReorgStatusMoved
@@ -555,7 +553,7 @@ func (s *Scanner) applyOne(ctx context.Context, fileID int64) ReorganizeMove {
 // the template puts it. It is skipped when the setting is off, when the
 // format's import mode is External (another tool owns that folder, and the
 // import path writes no sidecar there either), or when the file is gone.
-func (s *Scanner) sidecarForNoop(ctx context.Context, dryRun bool, book *models.Book, author *models.Author, seriesTitle, seriesNum string, f models.BookFile) (string, string) {
+func (s *Scanner) sidecarForNoop(ctx context.Context, dryRun bool, idx *folderIndex, book *models.Book, author *models.Author, seriesTitle, seriesNum string, f models.BookFile) (string, string) {
 	if !s.opfSidecarEnabled(ctx) || s.configuredImportModeFor(ctx, f.Format) == "external" {
 		return "", ""
 	}
@@ -563,7 +561,7 @@ func (s *Scanner) sidecarForNoop(ctx context.Context, dryRun bool, book *models.
 	if err != nil {
 		return "", ""
 	}
-	return s.syncSidecar(ctx, dryRun, book, author, seriesTitle, seriesNum, f.Format, f.Path, !info.IsDir())
+	return s.syncSidecar(ctx, dryRun, idx, book, author, seriesTitle, seriesNum, f.Format, f.Path, !info.IsDir())
 }
 
 // syncSidecar writes or plans one book's metadata.opf in the folder the
@@ -571,7 +569,7 @@ func (s *Scanner) sidecarForNoop(ctx context.Context, dryRun bool, book *models.
 // an audiobook folder. It never overwrites a metadata.opf Bindery did not
 // write, and never rewrites an identical one. A failure is reported, not
 // fatal.
-func (s *Scanner) syncSidecar(ctx context.Context, dryRun bool, book *models.Book, author *models.Author, seriesTitle, seriesNum, format, path string, singleFile bool) (string, string) {
+func (s *Scanner) syncSidecar(ctx context.Context, dryRun bool, idx *folderIndex, book *models.Book, author *models.Author, seriesTitle, seriesNum, format, path string, singleFile bool) (string, string) {
 	dir := path
 	if singleFile {
 		dir = filepath.Dir(path)
@@ -580,13 +578,9 @@ func (s *Scanner) syncSidecar(ctx context.Context, dryRun bool, book *models.Boo
 	// book's files (a flat template such as {Author}/{Title}.{ext}) gets none:
 	// two books would rewrite each other's file on every run. Formats of the
 	// same book share a folder freely.
-	if shared, err := s.folderHoldsOtherBook(ctx, book.ID, dir); err != nil {
-		slog.Warn("reorganize: opf sidecar shared folder check failed", "bookID", book.ID, "dir", dir, "error", err)
-		if dryRun {
-			return "", ""
-		}
-		return ReorgSidecarFailed, err.Error()
-	} else if shared {
+	if idx == nil || idx.sharedBy(s, dir, book.ID) {
+		// No index means the shared check could not be made, so nothing is
+		// written rather than risk two books rewriting one file.
 		return ReorgSidecarShared, "folder holds files of more than one book, no metadata.opf written"
 	}
 	edition := s.resolveCalibreEdition(ctx, nil, book)
@@ -603,35 +597,13 @@ func (s *Scanner) syncSidecar(ctx context.Context, dryRun bool, book *models.Boo
 		return ReorgSidecarUnchanged, ""
 	case SidecarForeign:
 		return ReorgSidecarForeign, "metadata.opf was not written by Bindery, left as it is"
+	case SidecarSymlink:
+		return ReorgSidecarForeign, "metadata.opf or its folder is a symlink, left as it is"
 	}
 	if dryRun {
 		return ReorgSidecarWrite, ""
 	}
 	return ReorgSidecarWritten, ""
-}
-
-// folderHoldsOtherBook reports whether another live book tracks a file that
-// sits directly in dir, or tracks dir itself. A tracked folder (an audiobook)
-// below dir is a folder of its own, not a sharer.
-func (s *Scanner) folderHoldsOtherBook(ctx context.Context, bookID int64, dir string) (bool, error) {
-	paths, err := s.books.LivePathsUnderForOtherBooks(ctx, dir, bookID)
-	if err != nil {
-		return false, err
-	}
-	key := s.pathKey(dir)
-	for _, p := range paths {
-		if s.pathKey(p) == key {
-			return true, nil
-		}
-		if s.pathKey(filepath.Dir(p)) == key && isSingleFile(p) {
-			return true, nil
-		}
-	}
-	other, err := s.books.PathOwnedByLiveOtherBook(ctx, dir, bookID)
-	if err != nil {
-		return false, err
-	}
-	return other, nil
 }
 
 // dedupeSidecarPreview keeps one "write" per folder so the preview counts

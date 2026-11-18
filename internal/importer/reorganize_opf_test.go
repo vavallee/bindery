@@ -3,6 +3,7 @@ package importer
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -382,5 +383,185 @@ func TestReorganizeOPF_SymlinkIsNeverReplaced(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(elsewhere); string(b) != "mine" {
 		t.Fatal("the link target was written through")
+	}
+}
+
+func TestReorganizeOPF_SymlinkVariantsAreNeverReplaced(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target func(t *testing.T, env reorgEnv, book *models.Book) string
+	}{
+		{"dangling", func(t *testing.T, _ reorgEnv, _ *models.Book) string {
+			return filepath.Join(t.TempDir(), "gone.opf")
+		}},
+		{"to a Bindery file", func(t *testing.T, _ reorgEnv, book *models.Book) string {
+			b, err := BuildOPFXML(book, nil, nil, "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := filepath.Join(t.TempDir(), "theirs.opf")
+			if err := os.WriteFile(p, append(b, "<!-- stale -->\n"...), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, libraryDir, _, ctx := reorgFixture(t)
+			setOPF(t, env, "true")
+			book, p, fileID := placedBook(t, env, libraryDir)
+			target := tc.target(t, env, book)
+			before, _ := os.ReadFile(target)
+			link := filepath.Join(filepath.Dir(p), "metadata.opf")
+			if err := os.Symlink(target, link); err != nil {
+				t.Skip("symlinks unavailable")
+			}
+			r := env.s.ApplyReorganize(ctx, []int64{fileID})
+			if r[0].Sidecar != ReorgSidecarForeign {
+				t.Fatalf("sidecar = %q, want foreign", r[0].Sidecar)
+			}
+			if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("the symlink was replaced: %v", err)
+			}
+			after, _ := os.ReadFile(target)
+			if string(after) != string(before) {
+				t.Fatal("the link target was written through")
+			}
+		})
+	}
+}
+
+func TestReorganizeOPF_SymlinkedBookFolderIsNotWrittenThrough(t *testing.T) {
+	env, libraryDir, _, ctx := reorgFixture(t)
+	setOPF(t, env, "true")
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+	real := t.TempDir()
+	linkDir := filepath.Join(libraryDir, "Jane Doe", "My Book (2020)")
+	if err := os.MkdirAll(filepath.Dir(linkDir), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, linkDir); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	p := filepath.Join(linkDir, "My Book - Jane Doe.epub")
+	writeFileAt(t, p)
+	if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, p); err != nil {
+		t.Fatal(err)
+	}
+	fs, _ := env.books.ListBookFiles(ctx, book.ID)
+	moves, _ := env.s.PreviewReorganizeBook(ctx, book.ID)
+	if moves[0].Status != ReorgStatusNoop || moves[0].Sidecar != ReorgSidecarForeign {
+		t.Fatalf("preview = %+v, want noop and skipped", moves[0])
+	}
+	r := env.s.ApplyReorganize(ctx, []int64{fs[0].ID})
+	if r[0].Sidecar != ReorgSidecarForeign {
+		t.Fatalf("apply = %+v", r[0])
+	}
+	if _, err := os.Stat(filepath.Join(real, "metadata.opf")); err == nil {
+		t.Fatal("sidecar written through a symlinked folder")
+	}
+}
+
+func TestReorganizeOPF_SymlinkedLibraryRootStillWorks(t *testing.T) {
+	env, libraryDir, _, ctx := reorgFixture(t)
+	setOPF(t, env, "true")
+	// The library root itself being a link is normal and must not block.
+	linked := filepath.Join(t.TempDir(), "lib")
+	if err := os.Symlink(libraryDir, linked); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	env.s.libraryDir = linked
+	book := env.seed(t, ctx, "Jane Doe", "My Book")
+	p := filepath.Join(linked, "Jane Doe", "My Book (2020)", "My Book - Jane Doe.epub")
+	writeFileAt(t, p)
+	if err := env.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, p); err != nil {
+		t.Fatal(err)
+	}
+	fs, _ := env.books.ListBookFiles(ctx, book.ID)
+	r := env.s.ApplyReorganize(ctx, []int64{fs[0].ID})
+	if r[0].Status != ReorgStatusNoop || r[0].Sidecar != ReorgSidecarWritten {
+		t.Fatalf("apply = %+v", r[0])
+	}
+}
+
+// Two books moving into one flat folder: neither gets a sidecar, and the
+// preview says so before anything is applied.
+func TestReorganizeOPF_PlannedMovesIntoOneFolderAreShared(t *testing.T) {
+	env, libraryDir, _, ctx := reorgFixture(t)
+	setOPF(t, env, "true")
+	a := env.seedAuthor(t, ctx, "Jane Doe")
+	if err := env.s.settings.Set(ctx, "naming.bookTemplate", "{Author}/{Title}.{ext}"); err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	for _, title := range []string{"Alpha", "Beta"} {
+		b := env.seedBook(t, ctx, a, title)
+		p := filepath.Join(libraryDir, "misc", title, "x.epub")
+		writeFileAt(t, p)
+		if err := env.books.AddBookFile(ctx, b.ID, models.MediaTypeEbook, p); err != nil {
+			t.Fatal(err)
+		}
+		fs, _ := env.books.ListBookFiles(ctx, b.ID)
+		ids = append(ids, fs[0].ID)
+	}
+	moves, err := env.s.PreviewReorganizeLibrary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range moves {
+		if m.Status != ReorgStatusMove || m.Sidecar != ReorgSidecarShared {
+			t.Fatalf("preview = %+v, want move and shared", m)
+		}
+	}
+	for _, r := range env.s.ApplyReorganize(ctx, ids) {
+		if r.Status != ReorgStatusMoved || r.Sidecar != ReorgSidecarShared {
+			t.Fatalf("apply = %+v, want moved and shared", r)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(libraryDir, "Jane Doe", "metadata.opf")); err == nil {
+		t.Fatal("a sidecar was written into the shared folder")
+	}
+}
+
+// The folder check must be one query per run, not one per file: a per-file
+// scan of book_files was quadratic (4.5 s at 3,000 books, 16 s at 6,000).
+func TestReorganizeOPF_PreviewScalesLinearly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("seeds thousands of books")
+	}
+	n := 3000
+	if v, err := strconv.Atoi(os.Getenv("BINDERY_OPF_PERF_N")); err == nil && v > 0 {
+		n = v
+	}
+	env, libraryDir, _, ctx := reorgFixture(t)
+	setOPF(t, env, "true")
+	a := env.seedAuthor(t, ctx, "Jane Doe")
+	for i := 0; i < n; i++ {
+		title := "Book " + strconv.Itoa(i)
+		b := env.seedBook(t, ctx, a, title)
+		p := filepath.Join(libraryDir, "Jane Doe", title+" (2020)", title+" - Jane Doe.epub")
+		writeFileAt(t, p)
+		if err := env.books.AddBookFile(ctx, b.ID, models.MediaTypeEbook, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The same preview with the setting off is the baseline: the sidecar
+	// work may cost a constant factor, not a factor that grows with the library.
+	setOPF(t, env, "false")
+	start := time.Now()
+	if _, err := env.s.PreviewReorganizeLibrary(ctx); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Since(start)
+	setOPF(t, env, "true")
+	start = time.Now()
+	moves, err := env.s.PreviewReorganizeLibrary(ctx)
+	elapsed := time.Since(start)
+	if err != nil || len(moves) != n {
+		t.Fatalf("moves = %d, err %v", len(moves), err)
+	}
+	t.Logf("preview of %d books: %v with sidecars, %v without", n, elapsed, base)
+	if elapsed > 3*base+time.Second {
+		t.Fatalf("preview of %d books took %v against %v without sidecars", n, elapsed, base)
 	}
 }

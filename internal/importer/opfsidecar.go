@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -54,6 +55,9 @@ const (
 	// SidecarForeign means a metadata.opf Bindery did not write is there, so
 	// it is left alone.
 	SidecarForeign SidecarResult = "foreign"
+	// SidecarSymlink means the folder or the metadata.opf in it is a symlink,
+	// which is never written through or replaced.
+	SidecarSymlink SidecarResult = "symlink"
 )
 
 // SyncOPFSidecarFile is the safe, idempotent counterpart of
@@ -82,10 +86,13 @@ func SyncOPFSidecarFile(dir string, roots []string, dryRun bool, book *models.Bo
 	if err != nil {
 		return "", fmt.Errorf("opfsidecar: build xml: %w", err)
 	}
+	if folderIsLinked(roots, target) {
+		return SidecarSymlink, nil
+	}
 	// A symlink named metadata.opf was put there on purpose; never read
 	// through it or replace it.
 	if fi, lerr := os.Lstat(filepath.Join(target, opfSidecarFileName)); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return SidecarForeign, nil
+		return SidecarSymlink, nil
 	}
 	existing, err := os.ReadFile(filepath.Join(target, opfSidecarFileName))
 	switch {
@@ -146,6 +153,37 @@ func (s *Scanner) writeOPFSidecar(ctx context.Context, dir string, roots []strin
 		return
 	}
 	slog.Info("opf sidecar: metadata.opf written", "bookID", book.ID, "dir", dir)
+}
+
+// folderIsLinked reports whether target reaches its library root through a
+// symlink, so a book folder that is a link (or sits under one inside the
+// library) is never written through. The root itself may be a link: it is
+// resolved first and the rest must match it step for step. A folder that does
+// not exist yet cannot be a link and is not reported.
+func folderIsLinked(roots []string, target string) bool {
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return false
+	}
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rel, relErr := filepath.Rel(filepath.Clean(root), target)
+		if relErr != nil || !filepath.IsLocal(rel) {
+			continue
+		}
+		realRoot, rerr := filepath.EvalSymlinks(root)
+		if rerr != nil {
+			return true
+		}
+		want := filepath.Join(realRoot, rel)
+		if runtime.GOOS == "windows" {
+			return !strings.EqualFold(realTarget, want)
+		}
+		return realTarget != want
+	}
+	return false
 }
 
 // WriteOPFSidecarFile renders book/author/edition metadata as a
