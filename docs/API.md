@@ -1941,7 +1941,7 @@ say the rest):
 | `log.retention_days` | `14` | Days of log entries the daily trim keeps. `BINDERY_LOG_RETENTION_DAYS` is the environment equivalent. |
 | `prowlarr.search_timeout_seconds` | `60` | HTTP timeout for Prowlarr searches and syncs. |
 | `import.audiobook.flatten_multi_disc` | `false` | Flatten a multi disc audiobook download into one Part sequence on import. Only runs in copy or hardlink mode. |
-| `hardcover.enhanced_series_enabled` | `false` | Use the enhanced Hardcover series API. Also needs a stored token. |
+| `hardcover.enhanced_series_enabled` | `false` | Use the enhanced Hardcover series API. Also needs a stored token and the enhanced Hardcover build flag (`BINDERY_ENHANCED_HARDCOVER_API`, on by default). |
 | `calibre.library_path` | empty | Calibre library directory as the Bindery container sees it. Must exist. |
 | `calibre.sync_on_startup` | `false` | Run a Calibre library sync at start. Needs a restart to change. |
 | `calibre.library_import_enabled` | `false` | Allow importing an existing Calibre library. |
@@ -2190,7 +2190,7 @@ update.
 Routes that have no section above. "Admin" means `RequireAdmin`; the rest need a signed in user or the API key.
 
 ```
-GET    /api/v1/auth/config                        current auth mode, API key and username
+GET    /api/v1/auth/config                        current auth mode and username, plus the API key for admins only (a user or requester never gets it)
 POST   /api/v1/auth/session-secret/rotate         rotate the session signing secret (admin); sessions signed with the previous secret stay valid until the next rotation
 GET    /api/v1/auth/oidc/redirect-base            the redirect base URL Bindery resolved for OIDC, and whether `BINDERY_OIDC_REDIRECT_BASE_URL` is set (admin)
 GET    /api/v1/author/{id}/series                 series the author's books belong to
@@ -2221,7 +2221,7 @@ POST   /api/v1/hardcover/test                     probe the saved Hardcover toke
 GET    /api/v1/abs/config                         Audiobookshelf connection (admin); PUT saves it
 POST   /api/v1/abs/test                           probe the connection (admin)
 POST   /api/v1/abs/libraries                      list its libraries (admin)
-POST   /api/v1/abs/import/runs/{runID}/rollback   roll an import run back (admin); .../rollback/preview shows what would change
+POST   /api/v1/abs/import/runs/{runID}/rollback   roll an import run back (admin); POST .../rollback/preview shows what would change first
 GET    /api/v1/abs/review                         items waiting for review (admin); see abs_import.md for the approve, dismiss and resolve routes
 GET    /api/v1/abs/conflicts                      import conflicts (admin); POST /abs/conflicts/{id}/resolve settles one
 GET    /api/v1/grimmory/config                    Grimmory connection (admin); PUT saves it, POST /grimmory/test probes it
