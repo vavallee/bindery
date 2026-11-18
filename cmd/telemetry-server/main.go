@@ -236,18 +236,7 @@ func main() {
 	// out — the cluster API isn't reachable from GitHub Actions).
 	go s.runLatestVersionLoop(context.Background(), releaseRepo)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", s.handleHome)
-	mux.HandleFunc("GET /stats", s.handleStatsPage)
-	mux.HandleFunc("GET /stats.json", s.handleStatsJSON)
-	mux.HandleFunc("GET /stats/preview", s.handlePreviewPage)
-	mux.HandleFunc("GET /telemetry-fields", s.handleTelemetryFields)
-	mux.HandleFunc("POST /api/ping", s.handlePing)
-	mux.HandleFunc("GET /api/stats", s.handleStats)
-	mux.HandleFunc("GET /api/backup", s.handleBackup)
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	mux := s.routes()
 
 	srv := &http.Server{
 		Addr:         addr,
@@ -261,6 +250,23 @@ func main() {
 		slog.Error("listen", "error", err)
 		os.Exit(1)
 	}
+}
+
+// routes builds the HTTP route table. Split out of main so tests can drive
+// the mux directly.
+func (s *server) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", s.handleHome)
+	mux.HandleFunc("GET /stats", s.handleStatsPage)
+	mux.HandleFunc("GET /stats.json", s.handleStatsJSON)
+	mux.HandleFunc("GET /telemetry-fields", s.handleTelemetryFields)
+	mux.HandleFunc("POST /api/ping", s.handlePing)
+	mux.HandleFunc("GET /api/stats", s.handleStats)
+	mux.HandleFunc("GET /api/backup", s.handleBackup)
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	return mux
 }
 
 // secureHeaders adds security response headers and rejects non-HTTPS requests
