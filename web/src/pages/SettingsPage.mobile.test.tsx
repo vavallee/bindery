@@ -113,7 +113,8 @@ describe('SettingsPage navigation on a phone', () => {
     for (const key of ['sources', 'library', 'integrations', 'system']) {
       expect(screen.getByText(`settings.groups.${key}`)).toBeInTheDocument()
     }
-    expect(screen.getByText('settings.previewBadge')).toBeInTheDocument()
+    // One chip per preview tab (Grimmory, Audible Sync).
+    expect(screen.getAllByText('settings.previewBadge').length).toBeGreaterThan(0)
     expect(screen.queryByText('Sources')).not.toBeInTheDocument()
     expect(screen.queryByText('Preview')).not.toBeInTheDocument()
   })

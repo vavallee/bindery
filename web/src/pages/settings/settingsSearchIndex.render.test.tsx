@@ -42,6 +42,7 @@ vi.mock('../../api/client', async importOriginal => {
     absConflicts: { items: [], total: 0 },
     absImportRuns: [],
     absReviewItems: { items: [], total: 0 },
+    audibleSyncAccounts: [],
   }
   const api = new Proxy({}, {
     get: (_t, name: string) => vi.fn(() => Promise.resolve(name in shaped ? shaped[name] : /^list/.test(name) ? [] : {})),
@@ -62,6 +63,7 @@ const TABS: Record<SettingsTabId, () => Promise<{ default: ComponentType<Record<
   abs: () => import('./ABSTab'),
   bookorbit: () => import('./BookOrbitTab'),
   grimmory: () => import('./GrimmoryTab'),
+  audiblesync: () => import('./AudibleSyncTab'),
   'api-keys': () => import('./ApiKeysTab'),
   import: () => import('./ImportTab'),
   blocklist: () => import('./BlocklistTab'),

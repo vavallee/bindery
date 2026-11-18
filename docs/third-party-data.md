@@ -256,3 +256,21 @@ is off Bindery sends api.audible.com no request, and an author's catalogue just
 carries no Audible only audiobooks. The same list can switch off `audnex`, the
 community proxy over the same data, which stops the per book narrator, runtime
 and cover lookups at api.audnex.us.
+
+## Audible Sync
+
+[Audible Sync](https://github.com/AlexStansfield/audible-sync) is a self-hosted
+service an operator can run beside Bindery. It signs in to the operator's own
+Audible account and serves that account's wishlist over its own API. It is opt
+in: Bindery sends it nothing until an admin enables it in **Settings, Audible
+Sync** ([guide](AudibleSync-Wiki.md)).
+
+Bindery asks Audible Sync for the wishlist and, when a list is set to, asks it
+to take an imported book off the wishlist. That is all it sends there. Bindery
+never contacts Audible through it otherwise, and reading the wishlist does not
+reach Audible at all: Audible Sync serves it as its own sync last read it.
+
+To file a wishlist book under the right work, the sync looks its ASIN up the way
+**Add Book** by ASIN does, through audnex and the primary provider, so the
+[Audible](#audible) notes above, and the `audnex` switch, apply to those
+lookups unchanged.

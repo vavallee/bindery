@@ -36,6 +36,7 @@ const CalibreTab = lazyWithReload(() => import('./settings/CalibreTab'), './sett
 const ABSTab = lazyWithReload(() => import('./settings/ABSTab'), './settings/ABSTab')
 const GrimmoryTab = lazyWithReload(() => import('./settings/GrimmoryTab'), './settings/GrimmoryTab')
 const BookOrbitTab = lazyWithReload(() => import('./settings/BookOrbitTab'), './settings/BookOrbitTab')
+const AudibleSyncTab = lazyWithReload(() => import('./settings/AudibleSyncTab'), './settings/AudibleSyncTab')
 const ApiKeysTab = lazyWithReload(() => import('./settings/ApiKeysTab'), './settings/ApiKeysTab')
 const ImportTab = lazyWithReload(() => import('./settings/ImportTab'), './settings/ImportTab')
 const BlocklistTab = lazyWithReload(() => import('./settings/BlocklistTab'), './settings/BlocklistTab')
@@ -43,13 +44,13 @@ const LogsTab = lazyWithReload(() => import('./settings/LogsTab'), './settings/L
 const AdvancedTab = lazyWithReload(() => import('./settings/AdvancedTab'), './settings/AdvancedTab')
 const AboutTab = lazyWithReload(() => import('./settings/AboutTab'), './settings/AboutTab')
 
-type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'bookorbit' | 'grimmory' | 'api-keys' | 'advanced' | 'about'
+type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'bookorbit' | 'grimmory' | 'audiblesync' | 'api-keys' | 'advanced' | 'about'
 
 // Classes added to a field for a moment after search or a deep link lands on it.
 const HIGHLIGHT_CLASSES = ['ring-2', 'ring-emerald-500', 'ring-offset-2', 'dark:ring-offset-zinc-950', 'rounded-md']
 const FOCUSABLE = 'input:not([type=hidden]):not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)'
 
-const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'bookorbit', 'grimmory', 'api-keys', 'advanced']
+const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'bookorbit', 'grimmory', 'audiblesync', 'api-keys', 'advanced']
 
 // 'general' and 'about' are visible to every authenticated user — About is where
 // the in-app update message and bug_report.yml ("check Settings → About") point
@@ -73,7 +74,7 @@ const ADMIN_GROUPS: TabGroup[] = [
   // Clients, which it is not: nothing comes in from it. A webhook, Discord or
   // Apprise target is an outbound connection to another service, so it
   // belongs here.
-  { key: 'integrations', tabs: ['notifications', 'calibre', 'abs', 'bookorbit', 'grimmory', 'api-keys'] },
+  { key: 'integrations', tabs: ['notifications', 'calibre', 'abs', 'bookorbit', 'grimmory', 'audiblesync', 'api-keys'] },
   // Advanced is last on purpose: it is the escape hatch for the rare keys,
   // not a place to start (#2311).
   { key: 'system', tabs: ['import', 'blocklist', 'logs', 'advanced'] },
@@ -81,7 +82,7 @@ const ADMIN_GROUPS: TabGroup[] = [
 
 // Tabs still marked as a preview carry a chip in the sidebar and a suffix in
 // the phone select.
-const PREVIEW_TABS: Tab[] = ['grimmory']
+const PREVIEW_TABS: Tab[] = ['grimmory', 'audiblesync']
 
 function SettingsNavLink({ tab, active, onSelect, label, badge }: { tab: Tab; active: Tab; onSelect: (t: Tab) => void; label: string; badge?: string }) {
   return (
@@ -351,6 +352,7 @@ export default function SettingsPage() {
       case 'abs': return <ABSTab />
       case 'bookorbit': return <BookOrbitTab />
       case 'grimmory': return <GrimmoryTab />
+      case 'audiblesync': return <AudibleSyncTab />
       case 'import': return <ImportTab onNavigate={navigateToTab} />
       case 'blocklist': return <BlocklistTab />
       case 'logs': return <LogsTab />

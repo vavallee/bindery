@@ -364,6 +364,11 @@ func BookProviderFromForeignID(foreignID string) string {
 		return "calibre"
 	case strings.HasPrefix(foreignID, "abs:"):
 		return "audiobookshelf"
+	case strings.HasPrefix(foreignID, "audible:"):
+		// Audible catalogue rows, from the direct client or Audible Sync.
+		return "audible"
+	case strings.HasPrefix(foreignID, "audnex:"):
+		return "audnex"
 	default:
 		return "openlibrary"
 	}

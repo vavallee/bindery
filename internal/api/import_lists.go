@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/vavallee/bindery/internal/audiblesynclistsyncer"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/hardcoverlistsyncer"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
@@ -24,6 +26,13 @@ import (
 type HardcoverListSyncer interface {
 	StartOne(ctx context.Context, id int64) error
 	Progress() hardcoverlistsyncer.SyncProgress
+}
+
+// AudibleSyncListSyncer is the same surface for Audible Sync wishlist lists.
+// Implemented by *audiblesynclistsyncer.ListSyncer.
+type AudibleSyncListSyncer interface {
+	StartOne(ctx context.Context, id int64) error
+	Progress() audiblesynclistsyncer.SyncProgress
 }
 
 type hardcoverUserListClient interface {
@@ -42,6 +51,7 @@ type ImportListHandler struct {
 	repo         *db.ImportListRepo
 	settings     *db.SettingsRepo
 	hcSync       HardcoverListSyncer
+	asSync       AudibleSyncListSyncer
 	users        userLookup
 	hcListClient func(token string) hardcoverUserListClient
 }
@@ -56,6 +66,13 @@ func NewImportListHandler(repo *db.ImportListRepo, settings *db.SettingsRepo, hc
 			return hardcover.NewAuthenticated(token)
 		},
 	}
+}
+
+// WithAudibleSyncSyncer wires the Audible Sync wishlist syncer, which Sync
+// dispatches lists of type audiblesync to.
+func (h *ImportListHandler) WithAudibleSyncSyncer(s AudibleSyncListSyncer) *ImportListHandler {
+	h.asSync = s
+	return h
 }
 
 // WithDailyQuota shares exhaustion holds with list browsing.
@@ -137,7 +154,7 @@ func (h *ImportListHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// silently turn "field absent" into monitorNew=false — which matters now
 	// that the syncer reads MonitorNew (#2124): an API client that never sends
 	// the flag must keep the historical download-everything behaviour.
-	il := models.ImportList{MonitorNew: true, AutoAdd: true}
+	il := models.ImportList{MonitorNew: true, AutoAdd: true, SkipOwned: true}
 	if !decodeJSON(w, r, &il) {
 		return
 	}
@@ -152,11 +169,19 @@ func (h *ImportListHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "mediaType must be one of: ebook, audiobook, both (or empty)"})
 		return
 	}
+	if err := normalizeAudibleSyncList(&il); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if err := h.validateOwner(r.Context(), il.OwnerUserID); err != nil {
 		writeOwnerError(w, r, err)
 		return
 	}
 	il.APIKey = hardcover.NormalizeAPIToken(il.APIKey)
+	if il.Type == models.ImportListTypeAudibleSync {
+		// The connection, token included, is the global Audible Sync one.
+		il.APIKey = ""
+	}
 	if err := h.repo.Create(r.Context(), &il); err != nil {
 		writeServerError(w, r, err)
 		return
@@ -186,6 +211,10 @@ func (h *ImportListHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := applyImportListPatch(&il, raw); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if err := normalizeAudibleSyncList(&il); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if err := h.validateOwner(r.Context(), il.OwnerUserID); err != nil {
@@ -310,6 +339,12 @@ func (h *ImportListHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
+	// Audible Sync wishlists have their own syncer. Every other type goes to
+	// the Hardcover syncer, which refuses what it cannot sync (ErrWrongType).
+	if il, lerr := h.repo.GetByID(r.Context(), id); lerr == nil && il != nil && il.Type == models.ImportListTypeAudibleSync {
+		h.syncAudibleSync(w, r, id)
+		return
+	}
 	if h.hcSync == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "hardcover syncer not configured"})
 		return
@@ -344,12 +379,66 @@ func (h *ImportListHandler) Sync(w http.ResponseWriter, r *http.Request) {
 // Import tab can show that a sync is running and when it finished, whether it
 // was started from "Sync now" or by the scheduler.
 // GET /api/v1/importlist/sync/status
-func (h *ImportListHandler) SyncStatus(w http.ResponseWriter, _ *http.Request) {
+//
+// ?type=audiblesync reports the Audible Sync wishlist syncer instead.
+func (h *ImportListHandler) SyncStatus(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("type") == models.ImportListTypeAudibleSync {
+		if h.asSync == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Audible Sync wishlist syncer not configured"})
+			return
+		}
+		writeJSON(w, http.StatusOK, h.asSync.Progress())
+		return
+	}
 	if h.hcSync == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "hardcover syncer not configured"})
 		return
 	}
 	writeJSON(w, http.StatusOK, h.hcSync.Progress())
+}
+
+// syncAudibleSync starts an Audible Sync wishlist list, with the same status
+// codes as the Hardcover path.
+func (h *ImportListHandler) syncAudibleSync(w http.ResponseWriter, r *http.Request, id int64) {
+	if h.asSync == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Audible Sync wishlist syncer not configured"})
+		return
+	}
+	switch err := h.asSync.StartOne(context.WithoutCancel(r.Context()), id); {
+	case err == nil:
+		writeJSON(w, http.StatusAccepted, h.asSync.Progress())
+	case errors.Is(err, audiblesynclistsyncer.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+	case errors.Is(err, audiblesynclistsyncer.ErrWrongType),
+		errors.Is(err, audiblesynclistsyncer.ErrDisabled),
+		errors.Is(err, audiblesynclistsyncer.ErrNotConfigured):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	case errors.Is(err, audiblesynclistsyncer.ErrSyncAlreadyRunning):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+	case errors.Is(err, audiblesynclistsyncer.ErrShuttingDown):
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	default:
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+	}
+}
+
+// normalizeAudibleSyncList applies the rules of an Audible Sync wishlist list:
+// its books are audiobooks, it has no URL or token of its own (the connection
+// is the global one), and its account is an Audible Sync account id or empty
+// for Audible Sync's default. Other list types pass unchanged.
+func normalizeAudibleSyncList(il *models.ImportList) error {
+	if il.Type != models.ImportListTypeAudibleSync {
+		return nil
+	}
+	il.MediaType = models.MediaTypeAudiobook
+	il.URL = ""
+	il.Account = strings.TrimSpace(il.Account)
+	if il.Account != "" {
+		if n, err := strconv.Atoi(il.Account); err != nil || n < 1 {
+			return errors.New("account must be an Audible Sync account id, or empty for its default account")
+		}
+	}
+	return nil
 }
 
 func importListResponses(lists []models.ImportList) []models.ImportList {
@@ -410,6 +499,15 @@ func applyImportListPatch(il *models.ImportList, raw map[string]json.RawMessage)
 		return err
 	}
 	if err := apply("mediaType", &il.MediaType); err != nil {
+		return err
+	}
+	if err := apply("account", &il.Account); err != nil {
+		return err
+	}
+	if err := apply("skipOwned", &il.SkipOwned); err != nil {
+		return err
+	}
+	if err := apply("removeOnImport", &il.RemoveOnImport); err != nil {
 		return err
 	}
 	// ownerUserId patch semantics: an explicit null clears the owner (back to

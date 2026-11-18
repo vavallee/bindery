@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api, BINDERY_BASE, Book, HardcoverList, ImportList, ImportListSyncProgress, ManagedUser, ManualImportLookup, MigrateResult, ReadarrImportProgress } from '../../api/client'
 import { inputCls } from './formStyles'
 import GoodreadsImportSection from './GoodreadsImportSection'
+import AudibleSyncWishlistSection from './AudibleSyncWishlistSection'
 import { secretInputAttrs } from '../../util/inputAttrs'
 import { primaryFill } from '../../components/buttons'
 import { errorText } from '../../util/errorText'
@@ -171,6 +172,7 @@ export default function ImportTab({ onNavigate }: ImportTabProps = {}) {
       <FolderImportLink />
       <GoodreadsImportSection />
       <HardcoverListsSection onNavigate={onNavigate} />
+      <AudibleSyncWishlistSection onNavigate={onNavigate} />
 
       {err && (
         <div className="px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">

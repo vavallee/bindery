@@ -35,7 +35,10 @@ func (h *stubIntegrationHandler) GetConfig(w http.ResponseWriter, _ *http.Reques
 func (h *stubIntegrationHandler) SetConfig(w http.ResponseWriter, _ *http.Request) {
 	h.record("set-config", w)
 }
-func (h *stubIntegrationHandler) Test(w http.ResponseWriter, _ *http.Request)  { h.record("test", w) }
+func (h *stubIntegrationHandler) Test(w http.ResponseWriter, _ *http.Request) { h.record("test", w) }
+func (h *stubIntegrationHandler) Accounts(w http.ResponseWriter, _ *http.Request) {
+	h.record("accounts", w)
+}
 func (h *stubIntegrationHandler) Start(w http.ResponseWriter, _ *http.Request) { h.record("start", w) }
 func (h *stubIntegrationHandler) Status(w http.ResponseWriter, _ *http.Request) {
 	h.record("status", w)
@@ -56,6 +59,7 @@ func newIntegrationRouter(h *stubIntegrationHandler) chi.Router {
 	router := chi.NewRouter()
 	registerRootFolderRoutes(router, h)
 	registerGrimmoryRoutes(router, h)
+	registerAudibleSyncRoutes(router, h)
 	registerCalibreIntegrationRoutes(router, h, h, h, h)
 	return router
 }
@@ -76,6 +80,10 @@ func TestIntegrationRoutesRequireAdmin(t *testing.T) {
 		{"get grimmory config", http.MethodGet, "/grimmory/config"},
 		{"set grimmory config", http.MethodPut, "/grimmory/config"},
 		{"test grimmory", http.MethodPost, "/grimmory/test"},
+		{"get Audible Sync config", http.MethodGet, "/audiblesync/config"},
+		{"set Audible Sync config", http.MethodPut, "/audiblesync/config"},
+		{"test Audible Sync", http.MethodPost, "/audiblesync/test"},
+		{"list Audible Sync accounts", http.MethodPost, "/audiblesync/accounts"},
 		{"test calibre", http.MethodPost, "/calibre/test"},
 		{"start calibre import", http.MethodPost, "/calibre/import"},
 		{"calibre import status", http.MethodGet, "/calibre/import/status"},
@@ -119,6 +127,10 @@ func TestIntegrationRoutesAllowAdmin(t *testing.T) {
 		{http.MethodGet, "/grimmory/config", "get-config"},
 		{http.MethodPut, "/grimmory/config", "set-config"},
 		{http.MethodPost, "/grimmory/test", "test"},
+		{http.MethodGet, "/audiblesync/config", "get-config"},
+		{http.MethodPut, "/audiblesync/config", "set-config"},
+		{http.MethodPost, "/audiblesync/test", "test"},
+		{http.MethodPost, "/audiblesync/accounts", "accounts"},
 		{http.MethodPost, "/calibre/test", "test"},
 		{http.MethodPost, "/calibre/import", "start"},
 		{http.MethodGet, "/calibre/import/status", "status"},

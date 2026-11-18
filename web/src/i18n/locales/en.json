@@ -1339,6 +1339,7 @@
       "abs": "Audiobookshelf",
       "grimmory": "Grimmory",
       "bookorbit": "BookOrbit",
+      "audiblesync": "Audible Sync",
       "blocklist": "Blocklist",
       "apiKeys": "API Keys",
       "about": "About",
@@ -2497,6 +2498,27 @@
       "resultSkipped": "skipped (already exist)",
       "resultFailed": "failed",
       "showFailures": "Show {{count}} failures",
+      "audibleSync": {
+        "loadFailed": "Failed to load Audible Sync wishlist lists",
+        "updateFailed": "Failed to update the list",
+        "defaultName": "Audible wishlist",
+        "addFailed": "Failed to add the list",
+        "deleteFailed": "Failed to delete the list",
+        "syncFailed": "Sync failed",
+        "heading": "Audible wishlist (Audible Sync)",
+        "description": "Books on your Audible wishlist are added as wanted audiobooks and searched for. Books your Audible account already owns can be skipped, since Audible Sync downloads those itself.",
+        "notConfigured": "Connect Audible Sync first.",
+        "configure": "Open Audible Sync settings →",
+        "account": "Audible account",
+        "accountDefault": "Default account",
+        "skipOwnedHint": "Leave books the Audible account owns alone: Audible Sync downloads them.",
+        "skipOwned": "Skip owned books",
+        "removeOnImportHint": "Once Bindery has imported a wishlist book, take it off the Audible wishlist. This changes your Audible account.",
+        "removeOnImport": "Remove from wishlist once imported",
+        "add": "Add Audible wishlist",
+        "enableList": "Sync {{name}}",
+        "syncDone": "Sync finished: {{imported}} added, {{skipped}} already tracked, {{owned}} owned on Audible, {{unresolved}} with an unknown author, {{removed}} removed from the wishlist, {{failed}} failed"
+      },
       "hardcoverHeading": "Hardcover reading lists",
       "hardcoverDescription": "Sync books from your Hardcover reading lists. The saved Hardcover API token is used by default; newly selected global-token lists are saved disabled until you enable them.",
       "hardcoverAddButton": "+ Add Hardcover List",
@@ -2660,6 +2682,29 @@
       "sectionInternal": "Bindery's own bookkeeping",
       "sectionInert": "No longer used",
       "sectionUnknown": "Unrecognised keys"
+    },
+    "audiblesync": {
+      "heading": "Audible Sync",
+      "intro": "Connect a self-hosted <site>Audible Sync</site> instance to bring your Audible wishlist into Bindery. Once it is connected, add the wishlist under Settings, Import.",
+      "enable": "Enable Audible Sync integration",
+      "testConnection": "Test Connection",
+      "saveBeforeTest": "Save the URL to test it.",
+      "errors": {
+        "save": "Save failed",
+        "test": "Test failed"
+      },
+      "fields": {
+        "serverUrl": "Server URL",
+        "apiToken": "API token",
+        "configured": "(configured — leave blank to keep)",
+        "apiTokenHint": "Audible Sync logs a token on its first start, or uses AUDIBLE_SYNC_API_TOKEN when that is set. Its last four characters are shown in its own settings.",
+        "account": "Audible account",
+        "accountDefault": "Audible Sync default (oldest signed in account)",
+        "accountOption": "{{name}} ({{country}})",
+        "accountNeedsLogin": "{{name}} ({{country}}), needs signing in again",
+        "accountUnknown": "Account {{id}}",
+        "accountHint": "The account whose wishlist a list reads unless the list picks another."
+      }
     },
     "grimmory": {
       "errors": {

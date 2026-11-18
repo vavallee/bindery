@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -799,6 +800,48 @@ func (r *BookRepo) LibraryIDsByForeignIDsForUser(ctx context.Context, foreignIDs
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("library ids by foreign id: %w", err)
+	}
+	return out, nil
+}
+
+// ListByASINsVisibleTo returns the books userID can see whose ASIN is one of
+// asins, keyed by the normalised ASIN. Scoping matches GetByForeignIDVisibleTo:
+// owner equal to userID or NULL when userID > 0, every row otherwise. When
+// several visible books share an ASIN, the oldest wins, the row the first
+// import made.
+//
+// The Audible Sync wishlist sync reads a whole wishlist at once with this, to
+// tell which items are already in the library and which have been imported.
+func (r *BookRepo) ListByASINsVisibleTo(ctx context.Context, asins []string, userID int64) (map[string]models.Book, error) {
+	out := make(map[string]models.Book, len(asins))
+	seen := make(map[string]bool, len(asins))
+	var ids []any
+	for _, a := range asins {
+		a = isbnutil.NormalizeASIN(a)
+		if a == "" || seen[a] {
+			continue
+		}
+		seen[a] = true
+		ids = append(ids, a)
+	}
+	// SQLite's default limit on bound parameters is far above any wishlist,
+	// but chunking keeps one enormous list from hitting it.
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		part := ids[start:min(start+chunk, len(ids))]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(part)), ",")
+		where, args := QueryScopeForIncludingNull("books.owner_user_id",
+			"WHERE books.asin IN ("+placeholders+")", userID, part...)
+		books, err := r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.id", args)
+		if err != nil {
+			return nil, fmt.Errorf("books by asin: %w", err)
+		}
+		for _, b := range books {
+			key := isbnutil.NormalizeASIN(b.ASIN)
+			if _, dup := out[key]; !dup {
+				out[key] = b
+			}
+		}
 	}
 	return out, nil
 }

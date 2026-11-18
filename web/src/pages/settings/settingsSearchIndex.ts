@@ -14,7 +14,7 @@ import { FIELDS } from './settingsFieldIndex'
 export type SettingsTabId =
   | 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general'
   | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'bookorbit' | 'grimmory'
-  | 'api-keys' | 'advanced' | 'about'
+  | 'audiblesync' | 'api-keys' | 'advanced' | 'about'
 
 export interface HeadingEntry {
   tab: SettingsTabId
@@ -60,6 +60,7 @@ export const HEADINGS: HeadingEntry[] = [
   { tab: 'import', key: 'settings.import.manualImportHeading' },
   { tab: 'import', key: 'settings.import.folderMovedHeading', fallback: 'Import from a folder' },
   { tab: 'import', key: 'settings.import.hardcoverHeading' },
+  { tab: 'import', key: 'settings.import.audibleSync.heading' },
   { tab: 'import', key: 'settings.import.goodreadsHeading' },
   { tab: 'calibre', literal: 'Calibre-Web-Automated (CWA)' },
   { tab: 'abs', key: 'settings.abs.libraries.heading' },
@@ -67,6 +68,7 @@ export const HEADINGS: HeadingEntry[] = [
   { tab: 'bookorbit', key: 'settings.bookorbit.import.heading' },
   { tab: 'bookorbit', key: 'settings.bookorbit.runs.heading' },
   { tab: 'grimmory', key: 'settings.grimmory.push.heading' },
+  { tab: 'audiblesync', key: 'settings.audiblesync.heading' },
   { tab: 'api-keys', key: 'settings.general.apiKeys' },
   { tab: 'api-keys', key: 'settings.general.opds' },
   { tab: 'blocklist', key: 'blocklist.title' },

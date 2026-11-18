@@ -36,7 +36,7 @@ const codeSpans = (text: string) => [...text.matchAll(/`[^`]*`/g)].map(m => m[0]
 const SHARED_WORDS = new Set(
   `Bindery Hardcover OpenLibrary Open Library Google Books Audible Audnexus audnex OPDS OPF EPUB MOBI AZW3 PDF M4B MP3
    Prowlarr Jackett Readarr Sonarr Radarr Lidarr SABnzbd NZBGet qBittorrent Transmission Deluge rTorrent Torznab
-   Newznab Calibre Audiobookshelf Grimmory Kavita Komga OIDC OAuth SSO Discord Slack Telegram ntfy Apprise Gotify
+   Newznab Calibre Audiobookshelf Grimmory Audible Sync Kavita Komga OIDC OAuth SSO Discord Slack Telegram ntfy Apprise Gotify
    Pushover Home Assistant Webhook Usenet ISBN ISBN10 ISBN13 ASIN URL API JSON CSV ID UUID HTTP HTTPS DNS IP
    OK Torrent Goodreads Amazon Docker Prometheus Grafana Teams Matrix Email SMTP Kobo Kindle KOReader Bearer
    Token Client Secret Issuer Debug Info Warn Error Trace Auto Commit Global`.split(/\s+/).filter(Boolean).map(w => w.toLowerCase()),

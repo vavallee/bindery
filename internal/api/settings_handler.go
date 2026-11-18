@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/vavallee/bindery/internal/abs"
+	"github.com/vavallee/bindery/internal/audiblesync"
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/db"
@@ -572,6 +573,7 @@ func isSecretSetting(key string) bool {
 		SettingHardcoverAPIToken,
 		SettingCalibrePluginAPIKey,
 		SettingGrimmoryAPIKey,
+		SettingAudibleSyncAPIToken,
 		SettingGoogleBooksAPIKey,
 		LegacySettingGoogleBooksAPIKey:
 		return true
@@ -1299,6 +1301,31 @@ func validateSettingValue(key, value string) error {
 		}
 		if _, err := abs.ValidateBaseURLSecure(value); err != nil {
 			return err
+		}
+	case SettingAudibleSyncBaseURL:
+		if value == "" {
+			return nil
+		}
+		if _, err := audiblesync.ValidateBaseURLSecure(value); err != nil {
+			return err
+		}
+	case SettingAudibleSyncSyncInterval:
+		if value == "" {
+			return nil
+		}
+		d, err := time.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("audiblesync.sync_interval %q is not a valid duration (e.g. 1h, 6h, 24h)", value)
+		}
+		if d < time.Hour || d > 168*time.Hour {
+			return fmt.Errorf("audiblesync.sync_interval %q must be between 1h and 168h", value)
+		}
+	case SettingAudibleSyncAccountID:
+		if value == "" {
+			return nil
+		}
+		if n, err := strconv.Atoi(value); err != nil || n < 1 {
+			return fmt.Errorf("audiblesync.account_id %q is not an Audible Sync account id", value)
 		}
 	case SettingABSEnabled:
 		if value == "" {

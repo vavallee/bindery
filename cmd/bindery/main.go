@@ -21,6 +21,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/abs"
 	"github.com/vavallee/bindery/internal/api"
+	"github.com/vavallee/bindery/internal/audiblesynclistsyncer"
 	"github.com/vavallee/bindery/internal/auth"
 	oidcauth "github.com/vavallee/bindery/internal/auth/oidc"
 	"github.com/vavallee/bindery/internal/bookhydrate"
@@ -624,6 +625,20 @@ func main() {
 		WithSearcher(sched). // immediate search for books a sync makes wanted (#2722)
 		WithJobs(bgJobs)     // drain a manual "Sync now" on shutdown (#1854)
 	sched.WithHardcoverSyncer(hcSyncer)
+
+	// Audible Sync wishlist lists. The connection is read from settings on
+	// every pass, so configuring Audible Sync needs no restart.
+	asListSyncer := audiblesynclistsyncer.New(importListRepo, authorRepo, bookRepo,
+		func(ctx context.Context) (audiblesynclistsyncer.WishlistClient, error) {
+			cfg := api.LoadAudibleSyncConfig(ctx, settingsRepo)
+			if !cfg.Usable() {
+				return nil, audiblesynclistsyncer.ErrNotConfigured
+			}
+			return cfg.Client()
+		}, metaAgg).
+		WithSearcher(sched).
+		WithJobs(bgJobs)
+	sched.WithAudibleSyncListSyncer(asListSyncer)
 	sched.WithLogRepo(logRepo, cfg.LogRetentionDays)
 	sched.WithDownloadRetention(cfg.DownloadRetentionDays)
 
@@ -822,7 +837,8 @@ func main() {
 		WithMetadataProfiles(metadataProfileRepo).
 		WithSeriesCheckMediaType(func(ctx context.Context) string { return authorHandler.ResolveDefaultMediaType(ctx) }).
 		WithLifetimeCtx(appCtx)
-	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer, userRepo).WithDailyQuota(dailyQuota)
+	importListHandler := api.NewImportListHandler(importListRepo, settingsRepo, hcSyncer, userRepo).WithDailyQuota(dailyQuota).
+		WithAudibleSyncSyncer(asListSyncer)
 	metadataProfileHandler := api.NewMetadataProfileHandler(metadataProfileRepo)
 	delayProfileHandler := api.NewDelayProfileHandler(delayProfileRepo)
 	bulkHandler := api.NewBulkHandler(authorRepo, bookRepo, blocklistRepo, sched).
@@ -862,6 +878,7 @@ func main() {
 		WithLibraryRoot(cfg.LibraryDir).
 		WithBookFiles(db.NewBookFileRepo(database))
 	grimmoryHandler := api.NewGrimmoryHandler(settingsRepo).WithVersion(version)
+	audibleSyncHandler := api.NewAudibleSyncHandler(settingsRepo)
 	grimmorySyncer := grimmory.NewSyncer(bookRepo, grimmoryPusher).WithJobs(bgJobs) // drain mid-upload syncs on shutdown (#1458)
 	grimmorySyncHandler := api.NewGrimmorySyncHandler(grimmorySyncer, grimmoryLoadPushCfg).
 		WithLastPush(grimmoryPushRepo.LastPush)
@@ -1298,6 +1315,7 @@ func main() {
 		// BookOrbit import (#1927): admin only. See registerBookOrbitRoutes.
 		registerBookOrbitRoutes(r, bookOrbitHandler)
 		registerGrimmorySyncRoutes(r, grimmorySyncHandler)
+		registerAudibleSyncRoutes(r, audibleSyncHandler)
 
 		// Calibre integration (probe + library import + bulk push) — all
 		// admin-only. See registerCalibreIntegrationRoutes.

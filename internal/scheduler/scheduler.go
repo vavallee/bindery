@@ -104,6 +104,12 @@ type HCListSyncer interface {
 	Sync(ctx context.Context) error
 }
 
+// AudibleSyncListSyncer is the interface the scheduler calls to sync Audible
+// Sync wishlist import lists. Implemented by *audiblesynclistsyncer.ListSyncer.
+type AudibleSyncListSyncer interface {
+	Sync(ctx context.Context) error
+}
+
 // TelemetryPinger is the interface the scheduler calls to send the daily
 // anonymous install ping. Implemented by *telemetry.Client.
 type TelemetryPinger interface {
@@ -158,6 +164,19 @@ const defaultHardcoverSyncInterval = 24 * time.Hour
 const (
 	minHardcoverSyncInterval = time.Hour
 	maxHardcoverSyncInterval = 168 * time.Hour
+)
+
+// defaultAudibleSyncListInterval is the Audible Sync wishlist sync cadence
+// when "audiblesync.sync_interval" is unset. Reading the wishlist does not
+// reach Audible: Audible Sync serves it as its own sync last read it, every 6
+// hours by default, so polling at that rate costs nothing upstream.
+const defaultAudibleSyncListInterval = 6 * time.Hour
+
+// minAudibleSyncListInterval and maxAudibleSyncListInterval mirror the API
+// validator's bounds for "audiblesync.sync_interval".
+const (
+	minAudibleSyncListInterval = time.Hour
+	maxAudibleSyncListInterval = 168 * time.Hour
 )
 
 // defaultLibraryScanInterval is the fallback library scan cadence used when the
@@ -267,13 +286,14 @@ type Scheduler struct {
 	// operatorUserID resolves the user the recommendation job writes under.
 	// Optional; nil falls back to the historical hardcoded admin id (#1725).
 	operatorUserID       func(context.Context) int64
-	users                UserLister      // optional; the nightly recommendation job refreshes each account
-	hcSyncer             HCListSyncer    // optional; syncs Hardcover import lists
-	telemetry            TelemetryPinger // optional; sends daily anonymous install ping
-	logs                 *db.LogRepo     // optional; enables periodic log retention trim
-	notif                eventNotifier   // optional; fires EventGrabbed on auto-grab success (#849)
-	logRetainDays        int             // 0 = use default (14)
-	downloadRetainDays   int             // 0 = never trim finished download rows
+	users                UserLister            // optional; the nightly recommendation job refreshes each account
+	hcSyncer             HCListSyncer          // optional; syncs Hardcover import lists
+	asListSyncer         AudibleSyncListSyncer // optional; syncs Audible Sync wishlist lists
+	telemetry            TelemetryPinger       // optional; sends daily anonymous install ping
+	logs                 *db.LogRepo           // optional; enables periodic log retention trim
+	notif                eventNotifier         // optional; fires EventGrabbed on auto-grab success (#849)
+	logRetainDays        int                   // 0 = use default (14)
+	downloadRetainDays   int                   // 0 = never trim finished download rows
 	downloadDir          string
 	audiobookDownloadDir string
 	// downloadHealth and downloadPathRemap back the periodic client-health
@@ -535,6 +555,12 @@ func (s *Scheduler) WithHardcoverSyncer(syncer HCListSyncer) {
 	s.hcSyncer = syncer
 }
 
+// WithAudibleSyncListSyncer registers the Audible Sync wishlist syncer, run on
+// "audiblesync.sync_interval" (default 6h). Must be called before Start.
+func (s *Scheduler) WithAudibleSyncListSyncer(syncer AudibleSyncListSyncer) {
+	s.asListSyncer = syncer
+}
+
 // WithTelemetry registers the telemetry client for the daily anonymous ping.
 // Must be called before Start.
 func (s *Scheduler) WithTelemetry(p TelemetryPinger) {
@@ -724,6 +750,18 @@ func (s *Scheduler) Start() {
 			slog.Info("job: sync hardcover lists")
 			if err := s.hcSyncer.Sync(s.ctx()); err != nil {
 				slog.Error("hardcover list sync failed", "error", err)
+			}
+		})
+	}
+
+	// Sync Audible Sync wishlist lists. Read once at Start(), like the
+	// Hardcover interval; a list with nothing enabled costs one local query.
+	if s.asListSyncer != nil {
+		interval := s.resolveInterval("audiblesync.sync_interval", defaultAudibleSyncListInterval, minAudibleSyncListInterval, maxAudibleSyncListInterval)
+		s.addJob(fmt.Sprintf("@every %s", interval), "audiblesync-list-sync", func() {
+			slog.Info("job: sync Audible Sync wishlists")
+			if err := s.asListSyncer.Sync(s.ctx()); err != nil {
+				slog.Error("Audible Sync wishlist sync failed", "error", err)
 			}
 		})
 	}

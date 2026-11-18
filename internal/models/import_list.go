@@ -2,6 +2,13 @@ package models
 
 import "time"
 
+// Import list types the syncers understand.
+const (
+	ImportListTypeHardcover   = "hardcover"
+	ImportListTypeCSV         = "csv"
+	ImportListTypeAudibleSync = "audiblesync"
+)
+
 type ImportList struct {
 	ID               int64  `json:"id"`
 	Name             string `json:"name"`
@@ -28,10 +35,17 @@ type ImportList struct {
 	// which is what legacy rows carry and what an admin picks for a shared
 	// shelf. A user id scopes every synced book+author to that user, closing
 	// the leak where scheduler-synced content was always NULL-owned/global.
-	OwnerUserID *int64     `json:"ownerUserId"`
-	LastSyncAt  *time.Time `json:"lastSyncAt"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+	OwnerUserID *int64 `json:"ownerUserId"`
+	// SkipOwned and RemoveOnImport are options of the Audible Sync wishlist
+	// list (Type ImportListTypeAudibleSync); other types ignore them.
+	// SkipOwned leaves a wishlist book the Audible account already owns alone,
+	// since Audible Sync downloads it. RemoveOnImport takes a book off the
+	// Audible wishlist once Bindery has imported it.
+	SkipOwned      bool       `json:"skipOwned"`
+	RemoveOnImport bool       `json:"removeOnImport"`
+	LastSyncAt     *time.Time `json:"lastSyncAt"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 type ImportListExclusion struct {

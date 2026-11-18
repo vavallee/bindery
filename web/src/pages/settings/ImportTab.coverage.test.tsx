@@ -24,6 +24,9 @@ vi.mock('../../api/client', () => ({
     addImportList: vi.fn(),
     syncImportList: vi.fn(),
     importListSyncStatus: vi.fn(),
+    audibleSyncConfig: vi.fn(),
+    audibleSyncAccounts: vi.fn(),
+    audibleSyncListSyncStatus: vi.fn(),
     goodreadsPreview: vi.fn(),
   },
 }))
@@ -86,6 +89,10 @@ describe('ImportTab coverage', () => {
     mocked.listUsers.mockResolvedValue([{ id: 2, username: 'alice', role: 'user' }])
     mocked.importListSyncStatus.mockResolvedValue(progress())
     mocked.readarrImportStatus.mockResolvedValue({ running: false })
+    // The Audible Sync wishlist section renders idle: not configured.
+    mocked.audibleSyncConfig.mockResolvedValue({ enabled: false, baseUrl: '', apiTokenConfigured: false, accountId: 0 })
+    mocked.audibleSyncAccounts.mockResolvedValue([])
+    mocked.audibleSyncListSyncStatus.mockResolvedValue({ ...progress(), stats: { ...progress().stats, owned: 0, unresolved: 0, removed: 0 } })
   })
 
 

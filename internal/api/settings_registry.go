@@ -620,6 +620,34 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 
+	// Audible Sync, the opt in self-hosted Audible relay (internal/audiblesync).
+	{
+		Key: SettingAudibleSyncEnabled, Type: SettingTypeBool, Default: "false",
+		Description: "Whether Bindery uses the configured Audible Sync instance.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingAudibleSyncBaseURL, Type: SettingTypeString, Default: "",
+		Description: "Base URL of the Audible Sync instance.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingAudibleSyncAPIToken, Type: SettingTypeString, Default: "",
+		Description: "Audible Sync API token. Written by the Audible Sync settings screen, never returned.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingAudibleSyncAccountID, Type: SettingTypeInt, Default: "", Min: "1",
+		Description: "The Audible Sync account wishlist lists read unless a list picks another. Empty uses Audible Sync's oldest signed in account.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingAudibleSyncSyncInterval, Type: SettingTypeDuration, Default: "6h", Min: "1h", Max: "168h",
+		Description:     "How often Audible Sync wishlist import lists sync.",
+		RestartRequired: true,
+		State:           SettingStateActive,
+	},
+
 	// Google Books.
 	{
 		Key: SettingGoogleBooksAPIKey, Type: SettingTypeString, Default: "",

@@ -22,6 +22,10 @@ export interface ImportList {
   // null = global (visible to all users); a user id scopes synced content to
   // that Bindery user. Only meaningful for provider-sync lists (e.g. hardcover).
   ownerUserId?: number | null
+  // Audible Sync wishlist lists only (type 'audiblesync'): skip books the
+  // Audible account owns, and take imported books off the wishlist.
+  skipOwned?: boolean
+  removeOnImport?: boolean
   lastSyncAt?: string | null
   createdAt: string
   updatedAt: string
@@ -70,6 +74,12 @@ export interface ImportListSyncProgress {
   message?: string
   error?: string
   stats: ImportListSyncStats
+}
+
+// AudibleSyncListSyncProgress is the polled shape of the Audible Sync wishlist
+// sync: the Hardcover shape with the counts only a wishlist has.
+export interface AudibleSyncListSyncProgress extends Omit<ImportListSyncProgress, 'stats'> {
+  stats: ImportListSyncStats & { owned: number; unresolved: number; removed: number }
 }
 
 // MigrateResult is one section of an import summary (authors, indexers, ...).
@@ -155,6 +165,9 @@ export const importListsApi = {
   // 202 Accepted — the sync runs in the background; poll importListSyncStatus.
   syncImportList: (id: number) => request<ImportListSyncProgress>(`/importlist/${id}/sync`, { method: 'POST' }),
   importListSyncStatus: () => request<ImportListSyncProgress>('/importlist/sync/status'),
+  // Same 202-then-poll contract for Audible Sync wishlists, which have their
+  // own syncer; the start goes through syncImportList like any list.
+  audibleSyncListSyncStatus: () => request<AudibleSyncListSyncProgress>('/importlist/sync/status?type=audiblesync'),
   hardcoverLists: (token?: string) =>
     request<HardcoverListsResponse>('/importlist/hardcover/lists', {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,

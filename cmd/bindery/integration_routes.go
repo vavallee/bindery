@@ -55,6 +55,28 @@ func registerGrimmoryRoutes(r chi.Router, h grimmoryRouteHandler) {
 	})
 }
 
+// audibleSyncRouteHandler is the /audiblesync/* surface.
+type audibleSyncRouteHandler interface {
+	GetConfig(http.ResponseWriter, *http.Request)
+	SetConfig(http.ResponseWriter, *http.Request)
+	Test(http.ResponseWriter, *http.Request)
+	Accounts(http.ResponseWriter, *http.Request)
+}
+
+// registerAudibleSyncRoutes mounts /audiblesync/*, all admin only, like the
+// Grimmory and ABS config routes. GetConfig redacts the token but returns
+// the instance URL, which GET /setting withholds from non admins; Test and
+// Accounts call the saved URL with the stored token.
+func registerAudibleSyncRoutes(r chi.Router, h audibleSyncRouteHandler) {
+	r.Group(func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
+		r.Get("/audiblesync/config", h.GetConfig)
+		r.Put("/audiblesync/config", h.SetConfig)
+		r.Post("/audiblesync/test", h.Test)
+		r.Post("/audiblesync/accounts", h.Accounts)
+	})
+}
+
 // grimmorySyncRouteHandler is the /grimmory/sync surface.
 type grimmorySyncRouteHandler interface {
 	Start(http.ResponseWriter, *http.Request)

@@ -27,6 +27,7 @@ import { seriesApi } from './series'
 import { settingsApi } from './settings'
 import { calibreApi } from './calibre'
 import { grimmoryApi } from './grimmory'
+import { audibleSyncApi } from './audiblesync'
 import { absApi } from './abs'
 import { bookOrbitApi } from './bookorbit'
 import { importListsApi } from './importlists'
@@ -59,6 +60,7 @@ export type * from './series'
 export type * from './settings'
 export type * from './calibre'
 export type * from './grimmory'
+export type * from './audiblesync'
 export type * from './abs'
 export type * from './bookorbit'
 export type * from './importlists'
@@ -91,6 +93,7 @@ export const api = {
   ...settingsApi,
   ...calibreApi,
   ...grimmoryApi,
+  ...audibleSyncApi,
   ...absApi,
   ...bookOrbitApi,
   ...importListsApi,
