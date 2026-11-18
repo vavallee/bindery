@@ -102,6 +102,7 @@ type Client interface {
 	RemoveFromWishlist(ctx context.Context, accountID int, asin string) error
 	Library(ctx context.Context, accountID int, status string) ([]audiblesync.LibraryBook, error)
 	LibraryBook(ctx context.Context, id int) (*audiblesync.LibraryBook, error)
+	CatalogBook(ctx context.Context, asin string, accountID int) (*audiblesync.CatalogBook, error)
 }
 
 // ClientSource builds a client from the current Audible Sync settings, or
@@ -561,6 +562,9 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		if c, ok := item.CopyIn(account); ok {
 			sourceID = int64(c.BookID)
 		}
+		if book.Description == "" {
+			s.describe(ctx, client, book, item, account, sourceID)
+		}
 		target, outcome := s.addBook(ctx, il, book, sourceID, ownerID, scope, nameIndex)
 		switch outcome {
 		case outcomeImported:
@@ -589,6 +593,41 @@ func (s *ListSyncer) syncList(ctx context.Context, il models.ImportList) error {
 		})
 	}
 	return nil
+}
+
+// describe fills the empty description of a book about to be added, from
+// the first of these that has one:
+//   - the wishlist item itself, from an Audible Sync that stores descriptions
+//     with the wishlist;
+//   - the account's copy in Audible Sync's library, when it owns the book
+//     (every unavailable book): Audible Sync's own database, not Audible;
+//   - for a wishlist book, a catalogue lookup: a live request to Audible
+//     through the account, so only for a book being added, and one at a time
+//     (the sync adds books in turn).
+//
+// A failed read leaves the book without one; it never stops the add.
+func (s *ListSyncer) describe(ctx context.Context, client Client, book *models.Book, item audiblesync.WishlistItem, account int, sourceID int64) {
+	if d := strings.TrimSpace(item.Description); d != "" {
+		book.Description = d
+		return
+	}
+	if sourceID > 0 {
+		// Owned: the library copy is the source, and the catalogue holds
+		// nothing it does not, so a miss here is not worth a live request.
+		lb, err := client.LibraryBook(ctx, int(sourceID))
+		if err != nil {
+			slog.Debug("Audible Sync list: could not read a library book's description", "title", book.Title, "asin", book.ASIN, "error", err)
+			return
+		}
+		book.Description = strings.TrimSpace(lb.Description)
+		return
+	}
+	cb, err := client.CatalogBook(ctx, book.ASIN, account)
+	if err != nil {
+		slog.Debug("Audible Sync list: could not look a book's description up in the catalogue", "title", book.Title, "asin", book.ASIN, "error", err)
+		return
+	}
+	book.Description = strings.TrimSpace(cb.Description)
 }
 
 // removeFromWishlist takes an imported book off the Audible wishlist. The

@@ -55,6 +55,10 @@ type CatalogBook struct {
 	Rating        *float64        `json:"rating"`
 	RatingCount   int             `json:"rating_count"`
 	Multipart     bool            `json:"multipart"`
+	// Description is plain text. A wishlist item carries it from Audible
+	// Sync versions that store it, and a single-book catalogue lookup always
+	// does; a catalogue search page leaves it out.
+	Description string `json:"description"`
 	// InLibrary is true when any account of this marketplace owns the book,
 	// not only the account asked about: use OwnedBy for one account.
 	InLibrary bool `json:"in_library"`
@@ -146,6 +150,12 @@ type LibraryBook struct {
 	ReleaseDate   string        `json:"release_date"`
 	CoverURL      string        `json:"cover_url"`
 	Status        string        `json:"status"`
+	// Language is ISO 639-1, as the catalogue's. Empty when Audible gave
+	// none, or from an Audible Sync too old to send it.
+	Language string `json:"language"`
+	// Description is plain text, and only GET /api/books/{id} sends it: a
+	// page of the library leaves it out.
+	Description string `json:"description"`
 }
 
 // LibraryPage is GET /api/books.
@@ -167,7 +177,7 @@ func (b LibraryBook) CatalogBook() CatalogBook {
 	cb := CatalogBook{
 		ASIN: b.ASIN, Title: b.Title, Subtitle: b.Subtitle, Authors: authors, Narrators: b.Narrators,
 		Series: b.Series, PrimarySeries: b.PrimarySeries, Genres: b.Genres, ReleaseDate: b.ReleaseDate,
-		CoverURL: b.CoverURL, InLibrary: true,
+		CoverURL: b.CoverURL, Language: b.Language, InLibrary: true,
 		Library: []LibraryCopy{{AccountID: b.AccountID, BookID: b.ID, Status: b.Status}},
 	}
 	if b.Length > 0 {

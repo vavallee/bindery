@@ -134,6 +134,27 @@ func (c *Client) LibraryBook(ctx context.Context, id int) (*LibraryBook, error) 
 	return &out, nil
 }
 
+// CatalogBook looks one book up in the Audible catalogue through the account
+// accountID (zero: the client's, or Audible Sync's default), description
+// included. Unlike the other reads this is a live request to Audible, which
+// Audible Sync neither paces nor batches: call it for one book at a time. A
+// book Audible does not know is ErrNotFound.
+func (c *Client) CatalogBook(ctx context.Context, asin string, accountID int) (*CatalogBook, error) {
+	asin = isbnutil.NormalizeASIN(asin)
+	if asin == "" {
+		return nil, errors.New("asin required")
+	}
+	q := url.Values{}
+	if accountID > 0 {
+		q.Set("account_id", strconv.Itoa(accountID))
+	}
+	var out CatalogBook
+	if err := c.do(ctx, http.MethodGet, "/api/catalog/books/"+url.PathEscape(asin), c.query(q), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // WishlistTotal is how many books are on the wishlist of accountID, read with
 // a one-book page.
 func (c *Client) WishlistTotal(ctx context.Context, accountID int) (int, error) {

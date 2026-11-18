@@ -245,8 +245,28 @@ func TestOwnedByIsPerAccount(t *testing.T) {
 }
 
 func TestLibraryBookAsCatalogBookKeepsItsCopy(t *testing.T) {
-	cb := LibraryBook{ID: 9, AccountID: 3, ASIN: "B00ABCDEFG", Status: LibraryStatusUnavailable}.CatalogBook()
+	cb := LibraryBook{ID: 9, AccountID: 3, ASIN: "B00ABCDEFG", Status: LibraryStatusUnavailable, Language: "en"}.CatalogBook()
 	if c, ok := cb.CopyIn(3); !ok || c.BookID != 9 || c.Status != LibraryStatusUnavailable {
 		t.Fatalf("copy = %+v, %v", c, ok)
+	}
+	if cb.Language != "en" {
+		t.Fatalf("language = %q, want it carried over", cb.Language)
+	}
+}
+
+func TestCatalogBookSendsAccountAndReadsDescription(t *testing.T) {
+	c := newTestClient(t, 0, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/catalog/books/B00ABCDEFG" && r.URL.Query().Get("account_id") == "2" {
+			writeJSON(t, w, 200, map[string]any{"asin": "B00ABCDEFG", "title": "T", "description": "Plain text.", "description_html": "<p>Plain text.</p>"})
+			return
+		}
+		writeJSON(t, w, 404, map[string]string{"detail": "No book in the catalogue"})
+	})
+	b, err := c.CatalogBook(context.Background(), "b00abcdefg", 2)
+	if err != nil || b.Description != "Plain text." {
+		t.Fatalf("CatalogBook = %+v, %v", b, err)
+	}
+	if _, err := c.CatalogBook(context.Background(), "B00ZZZZZZZ", 2); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown ASIN err = %v, want ErrNotFound", err)
 	}
 }

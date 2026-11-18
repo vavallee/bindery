@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -28,12 +29,31 @@ type fakeClient struct {
 	library []audiblesync.LibraryBook
 	// libraryReads counts whole-library walks, lookups single-book reads.
 	libraryReads, lookups int
+	// hideOnLookup makes a single-book read of these ids find nothing.
+	hideOnLookup map[int]bool
+	// catalog answers catalogue lookups by ASIN; catalogAsked records them
+	// with the account they went through.
+	catalog      map[string]audiblesync.CatalogBook
+	catalogAsked []string
+}
+
+func (f *fakeClient) CatalogBook(_ context.Context, asin string, accountID int) (*audiblesync.CatalogBook, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.catalogAsked = append(f.catalogAsked, asin+"@"+strconv.Itoa(accountID))
+	if b, ok := f.catalog[asin]; ok {
+		return &b, nil
+	}
+	return nil, audiblesync.ErrNotFound
 }
 
 func (f *fakeClient) LibraryBook(_ context.Context, id int) (*audiblesync.LibraryBook, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lookups++
+	if f.hideOnLookup[id] {
+		return nil, audiblesync.ErrNotFound
+	}
 	for _, b := range f.library {
 		if b.ID == id {
 			return &b, nil
@@ -593,7 +613,9 @@ func TestReturnedBooksAreLookedUpOneByOne(t *testing.T) {
 		t.Fatalf("records = %+v; want both, with their Audible Sync ids", recs)
 	}
 
-	// The first is refunded and leaves the library; the second fails.
+	// The first is refunded and leaves the library; the second fails. Only
+	// the lookups of this pass count, not the first pass's description reads.
+	f.client.lookups = 0
 	f.client.library = []audiblesync.LibraryBook{f.client.library[1]}
 	f.client.library[0].Status = audiblesync.LibraryStatusFailed
 	if err := f.s.SyncOne(ctx, il.ID); err != nil {
@@ -610,5 +632,89 @@ func TestReturnedBooksAreLookedUpOneByOne(t *testing.T) {
 		if b, _ := f.books.GetByForeignID(ctx, "audible:"+asin); b == nil || !b.Monitored {
 			t.Fatalf("%s = %+v; want still monitored", asin, b)
 		}
+	}
+}
+
+// A book added from the library takes its description from Audible Sync's
+// copy, one lookup per added book; a book the primary provider describes
+// keeps its own, and a failed lookup still adds the book.
+func TestLibraryBooksTakeTheirDescriptionFromAudibleSync(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.resolver.authors["Plus Author"] = &models.Author{ForeignID: "OL15A", Name: "Plus Author"}
+	described := libBook("B000000014", "Described", "Plus Author", audiblesync.LibraryStatusUnavailable)
+	described.Description = "  A withdrawn title, as Audible describes it.  "
+	missing := libBook("B000000015", "Lookup Fails", "Plus Author", audiblesync.LibraryStatusUnavailable)
+	f.resolver.books["B000000016"] = &models.Book{ForeignID: "OL16W", Title: "Has One", Description: "From the provider.",
+		Author: &models.Author{ForeignID: "OL15A", Name: "Plus Author"}}
+	provided := libBook("B000000016", "Has One", "Plus Author", audiblesync.LibraryStatusUnavailable)
+	provided.Description = "From Audible."
+	f.client.library = []audiblesync.LibraryBook{described, missing, provided}
+	il := f.list(t, func(il *models.ImportList) { il.URL = models.ImportListSourceUnavailable })
+
+	// The fake answers a lookup from its library, so drop the second book
+	// from it after the list is read: its lookup then finds nothing.
+	f.client.hideOnLookup = map[int]bool{missing.ID: true}
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"audible:B000000014": "A withdrawn title, as Audible describes it.",
+		"audible:B000000015": "",
+		"OL16W":              "From the provider.",
+	}
+	for id, desc := range want {
+		b, _ := f.books.GetByForeignID(ctx, id)
+		if b == nil || b.Description != desc {
+			t.Fatalf("%s = %+v; want description %q", id, b, desc)
+		}
+	}
+	if f.client.lookups != 2 {
+		t.Fatalf("lookups = %d; want one per added book without a description", f.client.lookups)
+	}
+}
+
+// A wishlist book takes the description the wishlist item carries; without
+// one it is looked up in the catalogue through the list's account, and a
+// failed lookup still adds the book.
+func TestWishlistBooksTakeTheirDescription(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.resolver.authors["Wish Author"] = &models.Author{ForeignID: "OL17A", Name: "Wish Author"}
+	carried := item("B000000017", "Carried", "Wish Author")
+	carried.Description = "Stored with the wishlist."
+	f.client.items = []audiblesync.WishlistItem{
+		carried,
+		item("B000000018", "Looked Up", "Wish Author"),
+		item("B000000019", "Unknown To Audible", "Wish Author"),
+	}
+	f.client.catalog = map[string]audiblesync.CatalogBook{"B000000018": {ASIN: "B000000018", Description: " From the catalogue. "}}
+	il := f.list(t, nil)
+
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"audible:B000000017": "Stored with the wishlist.",
+		"audible:B000000018": "From the catalogue.",
+		"audible:B000000019": "",
+	}
+	for id, desc := range want {
+		b, _ := f.books.GetByForeignID(ctx, id)
+		if b == nil || b.Description != desc {
+			t.Fatalf("%s = %+v; want description %q", id, b, desc)
+		}
+	}
+	if got := strings.Join(f.client.catalogAsked, ","); got != "B000000018@1,B000000019@1" {
+		t.Fatalf("catalogue lookups = %s; want only the two without one, through account 1", got)
+	}
+
+	// Tracked books are not looked up again on a later sync.
+	f.client.catalogAsked = nil
+	if err := f.s.SyncOne(ctx, il.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.client.catalogAsked) != 0 {
+		t.Fatalf("second pass looked up %v", f.client.catalogAsked)
 	}
 }

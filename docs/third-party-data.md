@@ -267,9 +267,12 @@ Sync** ([guide](AudibleSync-Wiki.md)).
 
 Bindery asks Audible Sync for the accounts it holds, their wishlists and the
 books in their libraries, and, when a list is set to, asks it to take an
-imported book off the wishlist. That is all it sends there. Bindery never
-contacts Audible through it otherwise, and reading a list does not reach
-Audible at all: Audible Sync serves it as its own sync last read it.
+imported book off the wishlist. Reading a list does not reach Audible: Audible
+Sync serves it as its own sync last read it. The one read that does is a
+catalogue lookup by ASIN, which Audible Sync makes live through the account:
+Bindery uses it only for a wishlist book it is adding that came without a
+description, which happens with Audible Sync versions that do not store
+wishlist descriptions, and only once per book.
 
 To file a wishlist book under the right work, the sync looks its ASIN up the way
 **Add Book** by ASIN does, through audnex and the primary provider, so the

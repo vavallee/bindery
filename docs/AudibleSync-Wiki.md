@@ -47,6 +47,12 @@ Each sync of a list:
 - **skips** a book whose author the metadata provider cannot find, rather than
   inventing an author no refresh could ever fill. It is counted as *unknown
   author* in the sync result;
+- gives a book with no description from the metadata provider Audible's own:
+  the one the wishlist item carries, or for a book the account owns (every
+  unavailable book) the one Audible Sync stores for its copy. Neither read
+  contacts Audible. Only with an Audible Sync too old to send wishlist
+  descriptions is a new wishlist book looked up in the Audible catalogue
+  through the account, one book at a time and only when it is first added;
 - turns a tracked ebook of the same work into *ebook and audiobook*, so the
   audiobook is searched for too;
 - leaves books on the import list exclusions alone.
