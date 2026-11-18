@@ -113,7 +113,7 @@ func isReceiptOrRepairFile(name string) bool {
 }
 
 // removeDownloadArtifacts deletes receipt and repair files (not archive
-// volumes, see isReceiptOrRepairFile) anywhere under dir. Used after MoveDir's
+// volumes, see isReceiptOrRepairFile) anywhere under dir. Used after MoveDirCtx's
 // same-filesystem rename fast path, which moves the job folder wholesale (a
 // rename cannot filter); the copy-based paths skip the receipt and repair files
 // at placement time instead. Archive volumes are never removed. Best-effort: a receipt that cannot be removed is not worth
@@ -193,12 +193,6 @@ type Renamer struct {
 func (r *Renamer) WithWindowsNames(on bool) *Renamer {
 	r.windowsNames = on
 	return r
-}
-
-// NewRenamer creates a renamer with the given naming template.
-// If template is empty, the default template is used.
-func NewRenamer(template string) *Renamer {
-	return NewRenamerWithAudiobook(template, "")
 }
 
 // NewRenamerWithAudiobook creates a renamer with separate ebook and audiobook
@@ -754,42 +748,6 @@ func firstGenre(genres []string) string {
 	return genres[0]
 }
 
-// MoveFile atomically copies a file to the destination and then removes the source.
-// This handles cross-filesystem moves (e.g., NFS download dir → NFS library).
-func MoveFile(src, dst string) error {
-	// Ensure destination directory exists
-	if err := os.MkdirAll(filepath.Dir(dst), dirperm.Library()); err != nil {
-		return fmt.Errorf("create dir: %w", err)
-	}
-
-	// Try rename first (same filesystem, instant)
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	}
-
-	// Cross-filesystem: copy then delete
-	if err := copyFile(src, dst); err != nil {
-		return fmt.Errorf("copy file: %w", err)
-	}
-
-	// Verify copy
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return fmt.Errorf("stat source: %w", err)
-	}
-	dstInfo, err := os.Stat(dst)
-	if err != nil {
-		return fmt.Errorf("stat destination: %w", err)
-	}
-	if srcInfo.Size() != dstInfo.Size() {
-		os.Remove(dst)
-		return fmt.Errorf("size mismatch: src=%d dst=%d", srcInfo.Size(), dstInfo.Size())
-	}
-
-	// Remove source
-	return os.Remove(src)
-}
-
 // ErrDestInsideSource marks a directory placement whose destination sits inside
 // the source directory. Callers can test for it with errors.Is; the wrapped
 // message names both paths.
@@ -890,14 +848,7 @@ func resolveForContainment(p string) string {
 	}
 }
 
-// MoveDir moves a directory (with all its contents) to the destination.
-// Cross-filesystem safe: tries rename first, else recursive copy + delete.
-// The destination directory must not already exist.
-func MoveDir(src, dst string) error {
-	return moveDirCtx(context.Background(), src, dst)
-}
-
-// moveDirCtx is the context-aware implementation of MoveDir. On the slow
+// moveDirCtx is the implementation behind MoveDirCtx. On the slow
 // (cross-filesystem) path the recursive copy honours ctx; if ctx is cancelled
 // the partial destination is removed but the source is left intact — never
 // remove the still-seeding source after a cancelled or failed copy.
@@ -1025,16 +976,6 @@ func MoveDirMergeCtx(ctx context.Context, src, dst string) (skipped []string, er
 	return skipped, nil
 }
 
-// CopyFile copies src to dst without removing the source. It is the "copy"
-// import mode counterpart to MoveFile. The source is left intact so that
-// torrent clients continue seeding from the original download location.
-func CopyFile(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), dirperm.Library()); err != nil {
-		return fmt.Errorf("create dir: %w", err)
-	}
-	return copyFile(src, dst)
-}
-
 // HardlinkFile creates a hard link at dst pointing to the same inode as src.
 // When the two paths turn out to be on different mounts (EXDEV — common with
 // separate Docker bind mounts or Unraid /mnt/user shares that share a device id
@@ -1082,14 +1023,7 @@ func linkError(src, dst string, err error) error {
 	}
 }
 
-// CopyDir copies a directory tree from src to dst without removing the source.
-// Used by "copy" import mode for audiobook folders so the download client can
-// continue seeding from the original location.
-func CopyDir(src, dst string) error {
-	return copyDirPublicCtx(context.Background(), src, dst)
-}
-
-// copyDirPublicCtx is the context-aware implementation of CopyDir. On
+// copyDirPublicCtx is the implementation behind CopyDirCtx. On
 // cancellation the partial destination is removed; the source is never
 // touched (copy mode preserves seeding).
 func copyDirPublicCtx(ctx context.Context, src, dst string) error {
@@ -1660,7 +1594,9 @@ var osLink = os.Link
 // (#3560) now steers around. Production always uses os.Rename.
 var commitStagedRename = os.Rename
 
-// MoveFileCtx is like MoveFile but returns ctx.Err() if the context is
+// MoveFileCtx moves src to dst, creating dst's parent directory. It tries a
+// rename first (same filesystem, instant); otherwise it copies, verifies the
+// size, then removes the source. It returns ctx.Err() if the context is
 // cancelled during the cross-filesystem copy phase.
 func MoveFileCtx(ctx context.Context, src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), dirperm.Library()); err != nil {
@@ -1694,8 +1630,9 @@ func MoveFileCtx(ctx context.Context, src, dst string) error {
 	return nil
 }
 
-// CopyFileCtx is like CopyFile but returns ctx.Err() if the context is
-// cancelled during the copy.
+// CopyFileCtx copies src to dst without removing the source (the "copy"
+// import mode), so torrent clients keep seeding from the download location.
+// It returns ctx.Err() if the context is cancelled during the copy.
 func CopyFileCtx(ctx context.Context, src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), dirperm.Library()); err != nil {
 		return fmt.Errorf("create dir: %w", err)
@@ -1881,7 +1818,9 @@ func stageMove(ctx context.Context, src, staged string) (movedViaRename bool, er
 	return false, nil
 }
 
-// MoveDirCtx is like MoveDir but returns ctx.Err() if the context is
+// MoveDirCtx moves a directory (with all its contents) to dst, which must
+// not already exist. It tries a rename first, else a recursive copy followed
+// by removal of the source. It returns ctx.Err() if the context is
 // cancelled. Unlike the previous detached-goroutine implementation, the copy
 // is performed inline with per-entry cancellation checks: when ctx fires the
 // copy stops promptly and the source is NOT removed. A cancelled or shut-down
@@ -2006,8 +1945,9 @@ func capEntries(entries []string) []string {
 	return entries
 }
 
-// CopyDirCtx is like CopyDir but returns ctx.Err() if the context is
-// cancelled. The copy honours ctx per-entry; on cancellation the partial
+// CopyDirCtx copies a directory tree from src to dst without removing the
+// source ("copy" import mode, so the download client keeps seeding). It
+// returns ctx.Err() if the context is cancelled. The copy honours ctx per-entry; on cancellation the partial
 // destination is removed and the source is left untouched.
 func CopyDirCtx(ctx context.Context, src, dst string) error {
 	return copyDirPublicCtx(ctx, src, dst)
@@ -2157,7 +2097,7 @@ func DefaultNamingTemplate() string {
 }
 
 // UniqueDir returns dst if nothing exists there; otherwise appends
-// " (2)", " (3)", ... until a free path is found. MoveDir refuses an
+// " (2)", " (3)", ... until a free path is found. MoveDirCtx refuses an
 // existing destination, so callers that import the same title twice
 // (duplicate grab, reprocessed history, second edition) resolve the
 // collision here before the move rather than failing silently.

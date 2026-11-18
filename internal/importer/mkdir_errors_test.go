@@ -33,9 +33,7 @@ func TestPlacementMkdirFails(t *testing.T) {
 		fn        func(src, dst string) error
 		want      string
 	}{
-		{"MoveFile", false, func(src, dst string) error { return MoveFile(src, dst) }, "create dir"},
 		{"MoveFileCtx", false, func(src, dst string) error { return MoveFileCtx(context.Background(), src, dst) }, "create dir"},
-		{"CopyFile", false, func(src, dst string) error { return CopyFile(src, dst) }, "create dir"},
 		{"CopyFileCtx", false, func(src, dst string) error { return CopyFileCtx(context.Background(), src, dst) }, "create dir"},
 		{"HardlinkFile", false, func(src, dst string) error { return HardlinkFile(src, dst) }, "create dir"},
 		{"StagedImport", false, func(src, dst string) error {
@@ -45,7 +43,6 @@ func TestPlacementMkdirFails(t *testing.T) {
 			}
 			return err
 		}, "create dir"},
-		{"MoveDir", true, func(src, dst string) error { return MoveDir(src, dst) }, "create parent dir"},
 		{"MoveDirCtx", true, func(src, dst string) error { return MoveDirCtx(context.Background(), src, dst) }, "create parent dir"},
 		{"CopyDirCtx", true, func(src, dst string) error { return CopyDirCtx(context.Background(), src, dst) }, "create parent dir"},
 		{"HardlinkDir", true, func(src, dst string) error { return HardlinkDir(src, dst) }, "create dest dir"},

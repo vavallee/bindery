@@ -14,7 +14,7 @@ import (
 // TestAudiobookDestDir verifies the audiobook template drops the per-file
 // parts (no {ext}) so the caller can move a whole download folder into it.
 func TestAudiobookDestDir(t *testing.T) {
-	r := NewRenamer("") // both templates default
+	r := NewRenamerWithAudiobook("", "") // both templates default
 	releaseDate := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	author := &models.Author{Name: "Ursula K. Le Guin"}
 	book := &models.Book{Title: "The Dispossessed", ReleaseDate: &releaseDate}
@@ -32,7 +32,7 @@ func TestAudiobookDestDir(t *testing.T) {
 func TestAudiobookDestDir_NilAuthor(t *testing.T) {
 	// When author is unknown we fall back to "Unknown Author" so imports
 	// still land under a predictable folder rather than panicking.
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	book := &models.Book{Title: "Mystery"}
 	got, err := r.AudiobookDestDir("/audio", nil, book, "", "")
 	if err != nil {
@@ -91,8 +91,8 @@ func TestNowYear(t *testing.T) {
 	}
 }
 
-// TestCopyFile exercises the cross-filesystem fallback that MoveFile
-// uses when os.Rename fails. Called directly here because rename always
+// TestCopyFile exercises copyFile, the copy that HardlinkFile falls back to
+// on a cross-device link. Called directly here because rename always
 // succeeds within a single temp dir — the slow path would otherwise be
 // unreachable in unit tests.
 func TestCopyFile(t *testing.T) {
@@ -171,9 +171,9 @@ func TestCopyDir_MissingSource(t *testing.T) {
 }
 
 func TestMoveFile_RenameOverwriteDir(t *testing.T) {
-	// Dst already exists as a directory → os.Rename fails; copyFile also
+	// Dst already exists as a directory → the rename fails; the copy also
 	// fails because os.Create can't create a file over a directory. This
-	// drives MoveFile down its error-handling branch.
+	// drives MoveFileCtx down its error-handling branch.
 	tmp := t.TempDir()
 	src := filepath.Join(tmp, "src.epub")
 	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
@@ -183,7 +183,7 @@ func TestMoveFile_RenameOverwriteDir(t *testing.T) {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := MoveFile(src, dst); err == nil {
+	if err := MoveFileCtx(t.Context(), src, dst); err == nil {
 		t.Error("expected error moving file over existing directory")
 	}
 }
@@ -194,13 +194,13 @@ func TestMoveDir_SourceNotDir(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := MoveDir(file, filepath.Join(tmp, "dst")); err == nil {
+	if err := MoveDirCtx(t.Context(), file, filepath.Join(tmp, "dst")); err == nil {
 		t.Error("expected error when source is a file, not a dir")
 	}
 }
 
 func TestMoveDir_MissingSource(t *testing.T) {
-	if err := MoveDir("/nope/does-not-exist", filepath.Join(t.TempDir(), "dst")); err == nil {
+	if err := MoveDirCtx(t.Context(), "/nope/does-not-exist", filepath.Join(t.TempDir(), "dst")); err == nil {
 		t.Error("expected error for missing source")
 	}
 }

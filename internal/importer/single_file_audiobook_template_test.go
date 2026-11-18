@@ -19,7 +19,7 @@ import (
 const conditionalPartTemplate = "{Author} - {Title}{ - Pt. Part:3}.{ext}"
 
 func TestAudiobookSingleFileName(t *testing.T) {
-	r := NewRenamer("")
+	r := NewRenamerWithAudiobook("", "")
 	author := &models.Author{Name: "Stephen King"}
 	book := &models.Book{Title: "The Shining"}
 

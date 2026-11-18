@@ -14,7 +14,7 @@ import (
 // renderSegment kept it verbatim, so "{Narrator}" landed in the path as
 // literal braces.
 func TestRenamerNarratorToken(t *testing.T) {
-	r := NewRenamer("{Author}/{Narrator}/{Title}.{ext}")
+	r := NewRenamerWithAudiobook("{Author}/{Narrator}/{Title}.{ext}", "")
 	author := &models.Author{Name: "Brandon Sanderson"}
 	book := &models.Book{
 		Title:    "The Way of Kings",
@@ -36,7 +36,7 @@ func TestRenamerNarratorToken(t *testing.T) {
 // that renders empty is dropped. Nothing here invents a fallback or leaves the
 // braces behind.
 func TestRenamerNarratorTokenEmpty(t *testing.T) {
-	r := NewRenamer("{Author}/{Narrator}/{Title}.{ext}")
+	r := NewRenamerWithAudiobook("{Author}/{Narrator}/{Title}.{ext}", "")
 	author := &models.Author{Name: "Author"}
 	book := &models.Book{Title: "Some Book"}
 
@@ -54,7 +54,7 @@ func TestRenamerNarratorTokenEmpty(t *testing.T) {
 // sanitizePath as every other text token, so a ":" or "?" in the name cannot
 // reach the filesystem.
 func TestRenamerNarratorSanitized(t *testing.T) {
-	r := NewRenamer("{Author}/{Narrator}/{Title}.{ext}")
+	r := NewRenamerWithAudiobook("{Author}/{Narrator}/{Title}.{ext}", "")
 	author := &models.Author{Name: "Author"}
 	book := &models.Book{
 		Title:    "Some Book",
