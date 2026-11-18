@@ -27,6 +27,7 @@ jobs:
             api.github.com:443
             results-receiver.actions.githubusercontent.com:443
             api.deps.dev:443
+            api.securityscorecards.dev:443
 
       - name: 'Checkout Repository'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
