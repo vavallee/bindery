@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -281,28 +282,40 @@ func splitDotWords(s string) string {
 	if !strings.ContainsRune(s, ' ') {
 		return dotSepRe.ReplaceAllString(s, " ")
 	}
-	runes := []rune(strings.ReplaceAll(s, "_", " "))
+	// Work on bytes, not runes: a []rune round trip turns every invalid UTF-8
+	// byte (a Latin-1 file name is legal on Linux) into the 3 byte U+FFFD, so
+	// the title would no longer be a substring of the name it came from.
+	s = strings.ReplaceAll(s, "_", " ")
 	var b strings.Builder
-	for i := 0; i < len(runes); i++ {
-		if runes[i] != '.' {
-			b.WriteRune(runes[i])
+	for i := 0; i < len(s); i++ {
+		if s[i] != '.' {
+			b.WriteByte(s[i])
 			continue
 		}
 		end := i
-		for end < len(runes) && runes[end] == '.' {
+		for end < len(s) && s[end] == '.' {
 			end++
 		}
 		// The word in front of the dot run, back to the last non letter.
 		word := 0
-		for k := i - 1; k >= 0 && unicode.IsLetter(runes[k]); k-- {
+		for k := i; k > 0; {
+			r, size := utf8.DecodeLastRuneInString(s[:k])
+			if !unicode.IsLetter(r) {
+				break
+			}
 			word++
+			k -= size
 		}
-		atBreak := end == len(runes) || unicode.IsSpace(runes[end])
+		atBreak := end == len(s)
+		if !atBreak {
+			r, _ := utf8.DecodeRuneInString(s[end:])
+			atBreak = unicode.IsSpace(r)
+		}
 		initial := end-i == 1 && word == 1
 		if atBreak || initial {
-			b.WriteString(string(runes[i:end]))
+			b.WriteString(s[i:end])
 		} else {
-			b.WriteRune(' ')
+			b.WriteByte(' ')
 		}
 		i = end - 1
 	}
