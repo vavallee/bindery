@@ -255,6 +255,10 @@ export default function AudibleSyncListsSection({ onNavigate }: { onNavigate?: (
                       </label>
                     </>
                   )}
+                  {/* Who sees the list's books only matters with more than one
+                      Bindery user; a list that already has an owner keeps the
+                      choice so it can be set back to global. */}
+                  {(users.length > 1 || il.ownerUserId != null) && (
                   <select
                     value={il.ownerUserId ?? ''}
                     onChange={e => update(il, { ownerUserId: e.target.value === '' ? null : Number(e.target.value) })}
@@ -265,6 +269,7 @@ export default function AudibleSyncListsSection({ onNavigate }: { onNavigate?: (
                     <option value="">{t('settings.import.ownerGlobal', 'Global (all users)')}</option>
                     {users.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
                   </select>
+                  )}
                   <button
                     onClick={() => sync(il)}
                     disabled={running || !il.enabled || !configured}

@@ -102,4 +102,24 @@ describe('AudibleSyncListsSection', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Sync now' }))
     expect(await screen.findByText(/3 added, 0 already tracked, 2 owned on Audible, .* 1 downloadable again/)).toBeInTheDocument()
   })
+
+  it('offers the owner only when Bindery has more than one user', async () => {
+    mocked.listUsers.mockResolvedValue([{ id: 1, username: 'admin' }])
+    const { unmount } = render(<AudibleSyncListsSection />)
+    await screen.findByLabelText('Watch Main: wishlist')
+    await waitFor(() => expect(mocked.listUsers).toHaveBeenCalled())
+    expect(screen.queryByLabelText('Owner')).toBeNull()
+    unmount()
+
+    mocked.listUsers.mockResolvedValue([{ id: 1, username: 'admin' }, { id: 2, username: 'reader' }])
+    render(<AudibleSyncListsSection />)
+    expect(await screen.findByLabelText('Owner')).toBeInTheDocument()
+  })
+
+  it('keeps the owner of a list that has one, even with one user', async () => {
+    mocked.listUsers.mockResolvedValue([{ id: 1, username: 'admin' }])
+    mocked.listImportLists.mockResolvedValue([{ ...savedWishlist, ownerUserId: 1 }])
+    render(<AudibleSyncListsSection />)
+    expect(await screen.findByLabelText('Owner')).toHaveValue('1')
+  })
 })
