@@ -553,6 +553,34 @@ func (r *BookFileRepo) ListAllPaths(ctx context.Context) ([]string, error) {
 	return paths, rows.Err()
 }
 
+// FileOwner is one book_files row reduced to who tracks which path.
+type FileOwner struct {
+	BookID int64
+	Path   string
+	Format string
+}
+
+// ListLiveFileOwners returns every book_files row whose book still exists, in
+// one query. Reorganize builds its per-run folder index from it instead of
+// asking one LIKE query per file.
+func (r *BookFileRepo) ListLiveFileOwners(ctx context.Context) ([]FileOwner, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT bf.book_id, bf.path, bf.format FROM book_files bf JOIN books b ON b.id = bf.book_id`)
+	if err != nil {
+		return nil, fmt.Errorf("book_files list live owners: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []FileOwner
+	for rows.Next() {
+		var o FileOwner
+		if err := rows.Scan(&o.BookID, &o.Path, &o.Format); err != nil {
+			return nil, fmt.Errorf("book_files scan live owner: %w", err)
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 // RecentEbookPaths returns up to limit ebook paths, newest first. The Calibre
 // Test connection walks them for one that exists on Bindery's side and asks
 // the plugin to open it through the push remap, because the library root on

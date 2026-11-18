@@ -1296,6 +1296,12 @@ func (r *BookRepo) PathOwnedByLiveOtherBook(ctx context.Context, path string, ex
 	return r.files.PathOwnedByLiveOtherBook(ctx, path, excludeBookID)
 }
 
+// ListLiveFileOwners returns the (book, path, format) of every tracked file of
+// an existing book. See BookFileRepo.ListLiveFileOwners.
+func (r *BookRepo) ListLiveFileOwners(ctx context.Context) ([]FileOwner, error) {
+	return r.files.ListLiveFileOwners(ctx)
+}
+
 // ListAllBookFilePaths returns every path in book_files.
 // Used by ScanLibrary to build the set of already-tracked files efficiently.
 func (r *BookRepo) ListAllBookFilePaths(ctx context.Context) ([]string, error) {

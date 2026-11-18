@@ -870,8 +870,20 @@ files or their tags.
 If the library app downstream reads sidecar metadata, turn on **Write a
 metadata.opf sidecar** in Settings → General (off by default). Bindery then
 writes a Calibre style `metadata.opf` next to each imported ebook and
-audiobook with its own title, author, series and identifiers, and refreshes it
-on Reorganize. The book file itself is never modified.
+audiobook with its own title, author, series and identifiers. The book file
+itself is never modified.
+
+Reorganize also refreshes the sidecar for books that are already in the right
+place, so a library gets consistent sidecars without renaming anything. It only
+writes a `metadata.opf` that is missing or that Bindery wrote itself (new files
+carry a `bindery:generator` marker). A `metadata.opf` from Calibre,
+Audiobookshelf or a hand edit is left alone and counted as skipped, and a file
+that is already up to date is not rewritten. A folder that holds more than one book (a flat
+template such as `{Author}/{Title}.{ext}`) gets no sidecar, since one file cannot
+describe two books, and a `metadata.opf` that is a symlink is never replaced.
+Formats in External import mode
+are skipped. A write that fails, say on a read only mount, is reported for that
+book and the run carries on. Imports still replace an existing sidecar.
 
 **Queue and History.** The Queue page shows live downloads and, importantly,
 the recovery actions: **Retry import** (after fixing a path remap), **Retry
@@ -1292,7 +1304,10 @@ each destination on the server rather than trusting the list you were shown, so
 a file that changed under you is skipped instead of moved somewhere stale. A
 move is always a move, never a copy, so hardlinks survive and nothing is
 duplicated. Bindery also prunes the folder a file left behind when it empties,
-and refreshes the `metadata.opf` sidecar when you have that turned on.
+and refreshes the `metadata.opf` sidecar when you have that turned on (see
+above for what it will and will not overwrite). The dialog also lists files that
+are already correct but still need a sidecar, and the result counts how many
+sidecars were written and how many were skipped.
 
 An audiobook folder moves as a whole, so one that also holds a file another
 book tracks (say a second copy of the same title added from another metadata

@@ -10,6 +10,7 @@ import { useModal } from './useModal'
 import RichText from './RichText'
 import { errorText } from '../util/errorText'
 import { ApiError } from '../api/core'
+import type { TFunction } from 'i18next'
 
 interface Props {
   scope: ReorganizeScope
@@ -42,6 +43,19 @@ function knownFormats(raw: unknown): string[] {
     if ((f === 'ebook' || f === 'audiobook') && !out.includes(f)) out.push(f)
   }
   return out
+}
+
+// sidecarSummary appends the metadata.opf counts of an apply, empty when the
+// setting is off and nothing was reported.
+function sidecarSummary(s: ReorganizeResponse['summary'], t: TFunction): string {
+  const written = s.sidecarWritten ?? 0
+  const skipped = (s.sidecarUnchanged ?? 0) + (s.sidecarForeign ?? 0) + (s.sidecarShared ?? 0)
+  const failed = s.sidecarFailed ?? 0
+  if (written + skipped + failed === 0) return ''
+  return ', ' + t('renameFiles.sidecarSummary', {
+    written, skipped, failed,
+    defaultValue: '{{written}} metadata.opf written, {{skipped}} skipped, {{failed}} failed',
+  })
 }
 
 const statusLabel: Record<string, string> = {
@@ -88,6 +102,10 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
   }, [scope, id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const movable = (preview?.moves ?? []).filter(m => m.status === 'move')
+  // Files already in place whose metadata.opf would be written (#4008). They
+  // go to apply too, but only the moves count as renames.
+  const sidecarOnly = (preview?.moves ?? []).filter(m => m.status === 'noop' && m.sidecar === 'write')
+  const actionable = movable.length + sidecarOnly.length
   const previewFormats = knownFormats(preview?.externalFormats)
   // The warning shows only when the API reports External mode for at least one
   // format in the plan; a 409 on apply turns it on when the mode flipped late.
@@ -107,16 +125,16 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
       })
 
   const apply = async () => {
-    if (movable.length === 0) return
+    if (actionable === 0) return
     setApplying(true)
     setError(null)
     try {
-      const ids = movable.map(m => m.fileId)
+      const ids = [...movable, ...sidecarOnly].map(m => m.fileId)
       const res = externalMode && confirmExternal
         ? await reorganizeApi.apply(ids, true)
         : await reorganizeApi.apply(ids)
       setApplied(res)
-      if (res.summary.moved > 0) onApplied?.()
+      if (res.summary.moved > 0 || (res.summary.sidecarWritten ?? 0) > 0) onApplied?.()
     } catch (err) {
       if (err instanceof ApiError && err.status === 409 && err.body?.code === 'reorganize_external_mode') {
         setExternalRefused(true)
@@ -188,8 +206,9 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
         <div className="mt-4 pt-4 border-t border-slate-200 dark:border-zinc-800 flex items-center gap-2">
           <span className="text-xs text-fg-muted">
             {applied
-              ? t('renameFiles.appliedSummary', { moved: applied.summary.moved, failed: applied.summary.failed, defaultValue: '{{moved}} moved, {{failed}} failed' })
-              : t('renameFiles.previewSummary', { movable: movable.length, total: moves.length, defaultValue: '{{movable}} of {{total}} will move' })}
+              ? t('renameFiles.appliedSummary', { moved: applied.summary.moved, failed: applied.summary.failed, defaultValue: '{{moved}} moved, {{failed}} failed' }) + sidecarSummary(applied.summary, t)
+              : t('renameFiles.previewSummary', { movable: movable.length, total: moves.length, defaultValue: '{{movable}} of {{total}} will move' }) +
+                (sidecarOnly.length > 0 ? ', ' + t('renameFiles.sidecarPreview', { count: preview?.summary.sidecarToWrite ?? sidecarOnly.length, defaultValue: '{{count}} metadata.opf to write' }) : '')}
           </span>
           <div className="ml-auto flex gap-2">
             <button
@@ -203,10 +222,14 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
               <button
                 type="button"
                 onClick={apply}
-                disabled={applying || movable.length === 0 || (externalMode && !confirmExternal)}
+                disabled={applying || actionable === 0 || (externalMode && !confirmExternal)}
                 className="px-4 py-1.5 text-sm rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-40 font-medium text-white"
               >
-                {applying ? t('renameFiles.renaming', 'Renaming…') : t('renameFiles.apply', { count: movable.length })}
+                {applying
+                  ? t('renameFiles.renaming', 'Renaming…')
+                  : movable.length === 0 && sidecarOnly.length > 0
+                    ? t('renameFiles.applySidecars', { count: sidecarOnly.length, defaultValue: 'Write {{count}} metadata.opf' })
+                    : t('renameFiles.apply', { count: movable.length })}
               </button>
             )}
           </div>
@@ -239,6 +262,12 @@ function MoveRow({ move }: { move: ReorganizeMove }) {
           <div>
             <span className="text-fg-muted">{t('renameFiles.to', 'to')} </span>
             {move.proposed}
+          </div>
+        )}
+        {move.sidecar && move.sidecar !== 'write' && (
+          <div className="text-fg-muted not-italic">
+            {t(`renameFiles.sidecar.${move.sidecar}`, `metadata.opf ${move.sidecar}`)}
+            {move.sidecarMessage ? `: ${move.sidecarMessage}` : ''}
           </div>
         )}
         {move.message && (

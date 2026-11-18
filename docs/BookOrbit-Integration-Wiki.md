@@ -189,13 +189,13 @@ The lab saw the older behaviour on 1.51.1: a wrong book was dropped under the wa
 
 ### Reorganize
 
-Since #3947, Reorganize shows a warning in External mode that names the affected formats (ebook files, audiobook files, or both, as set by Import Mode and the audiobook import mode), and the Rename button stays off until you tick a confirmation. Without the confirmation the apply route answers 409 and moves nothing. Do not confirm it for a BookOrbit library. On 1.51.1 the Reorganize preview offered to move all eight BookOrbit filed books to Bindery's own names. Library scans and metadata refreshes changed nothing on disk.
+Since #3947, Reorganize shows a warning in External mode that names the affected formats (ebook files, audiobook files, or both, as set by Import Mode and the audiobook import mode), and the Rename button stays off until you tick a confirmation. Without the confirmation the apply route answers 409 and moves nothing. Do not confirm it for a BookOrbit library. On 1.51.1 the Reorganize preview offered to move all eight BookOrbit filed books to Bindery's own names. Library scans and metadata refreshes changed nothing on disk. Reorganize does not write `metadata.opf` sidecars for a format in External mode unless it also moves that file after you confirm.
 
 ### Known limits
 
 - **Upgrades do not replace the BookOrbit copy.** A second delivery of a book BookOrbit already has is parked with a message that a file with that name already exists at the target. Nothing is overwritten or duplicated.
 - **The library scan needs the author as the top level folder.** It reads `Author/Title/...` and takes the author from the first folder, even when the file's own metadata names the author. BookOrbit's default naming fits. A pattern like `Genre/Author/Series/NN - Title` does not: every file under that shape came back unmatched, with the genre read as the author.
-- **No `.opf` reaches the dock.** `import.write_opf_sidecar` applies to books Bindery files itself, so it does nothing on this path, flat or templated.
+- **No `.opf` reaches the dock.** `import.write_opf_sidecar` applies to books Bindery files itself, so it does nothing on this path, flat or templated. Reorganize leaves External mode formats out of its sidecar refresh too.
 - **Empty folders stay behind in the dock** after an audiobook or a templated drop is filed. They are harmless. A later drop of the same audiobook goes to `Title - Author (2)`.
 - **The handed off download stays in Bindery's queue** after the book is imported, and no Book imported history event is written for a book the scan reconciles. That is how External mode works with every tool.
 - **A new book can take up to one scan interval to leave Wanted.** Lower `library.scan_interval` or run a scan by hand.
