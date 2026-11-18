@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -725,5 +726,37 @@ func TestDownloadRepo_ListByStatuses(t *testing.T) {
 	}
 	if len(none) != 0 {
 		t.Errorf("no statuses should return no rows, got %d", len(none))
+	}
+}
+
+// TestDownloadRepo_ImportPathKeepsNonUTF8Bytes: a handed off path that is not
+// valid UTF-8 (legal on Linux) must come back from the database byte for byte,
+// as a single path and inside a multi path value.
+func TestDownloadRepo_ImportPathKeepsNonUTF8Bytes(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewDownloadRepo(database)
+	for name, in := range map[string][]string{
+		"single":  {"/dl/a\xffb.epub"},
+		"several": {"/dl/a\xffb.epub", "/dl/c.epub", "/dl/d\xe9.epub"},
+	} {
+		dl := &models.Download{GUID: "nonutf8-" + name, Title: "t", NZBURL: "x", Status: models.StateImportExternal}
+		if err := repo.Create(ctx, dl); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.SetImportPath(ctx, dl.ID, models.EncodeHandedOffSources(in)); err != nil {
+			t.Fatal(err)
+		}
+		got, err := repo.GetByID(ctx, dl.ID)
+		if err != nil || got == nil {
+			t.Fatalf("%s: GetByID = %v, %v", name, got, err)
+		}
+		if back := got.HandedOffSources(); !slices.Equal(back, in) {
+			t.Errorf("%s: after the database got %q, want %q", name, back, in)
+		}
 	}
 }
