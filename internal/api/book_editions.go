@@ -1,13 +1,11 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -16,14 +14,14 @@ import (
 )
 
 // UpdateEdition is PUT /book/{id}/edition/{editionId}: a user edit of an
-// edition's publication fields. Setting a field applies the value and locks
+// edition's publication fields. Changing a field applies the value and locks
 // it against imports and hydration, the contract PUT /book/{id} has for the
 // book's fields; lockedFields, when present, replaces the lock set. The
-// edition is resolved through the owned book, and an edition that is not
+// edition is resolved through a book the caller may write, and one that is not
 // this book's answers exactly as a missing book does, so the route reveals
 // nothing about other users' catalogues.
 func (h *BookHandler) UpdateEdition(w http.ResponseWriter, r *http.Request) {
-	book, ok := h.loadOwnedBook(w, r)
+	book, ok := h.loadWritableBook(w, r)
 	if !ok {
 		return
 	}
@@ -54,66 +52,69 @@ func (h *BookHandler) UpdateEdition(w http.ResponseWriter, r *http.Request) {
 		ASIN         *string   `json:"asin"`
 		LockedFields *[]string `json:"lockedFields"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
+	// A field locks only when the submitted value differs from the stored
+	// one, the rule PUT /book/{id} follows: the body of a GET can be sent
+	// back unchanged without locking anything, and lockedFields is how to
+	// lock a field without changing it. Validation also runs only on a
+	// change, so a stored value an import wrote is never refused.
 	if req.Publisher != nil {
-		edition.Publisher = strings.TrimSpace(*req.Publisher)
-		edition.LockField(models.EditionFieldPublisher)
-	}
-	if req.PublishDate != nil {
-		if strings.TrimSpace(*req.PublishDate) == "" {
-			edition.PublishDate = nil
-		} else {
-			d, perr := time.Parse("2006-01-02", strings.TrimSpace(*req.PublishDate))
-			if perr != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "publishDate must be YYYY-MM-DD or empty"})
+		v := strings.TrimSpace(*req.Publisher)
+		if v != edition.Publisher {
+			if len(v) > maxEditionPublisherBytes {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("publisher must be at most %d bytes", maxEditionPublisherBytes)})
 				return
 			}
-			edition.PublishDate = &d
+			edition.Publisher = v
+			edition.LockField(models.EditionFieldPublisher)
 		}
-		edition.LockField(models.EditionFieldPublishDate)
+	}
+	if req.PublishDate != nil {
+		d, ok := parseDateField(strings.TrimSpace(*req.PublishDate))
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "publishDate must be YYYY-MM-DD, an RFC 3339 timestamp, or empty"})
+			return
+		}
+		if !sameDay(d, edition.PublishDate) {
+			edition.PublishDate = d
+			edition.LockField(models.EditionFieldPublishDate)
+		}
 	}
 	if req.ISBN13 != nil {
 		v := isbnutil.Normalize(*req.ISBN13)
-		if v == "" {
-			edition.ISBN13 = nil
-		} else {
-			if !isbnutil.ValidISBN13(v) {
+		if v != derefString(edition.ISBN13) {
+			if v != "" && !isbnutil.ValidISBN13(v) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "isbn13 is not a valid ISBN-13"})
 				return
 			}
-			edition.ISBN13 = &v
+			edition.ISBN13 = optionalString(v)
+			edition.LockField(models.EditionFieldISBN13)
 		}
-		edition.LockField(models.EditionFieldISBN13)
 	}
 	if req.ISBN10 != nil {
 		v := isbnutil.Normalize(*req.ISBN10)
-		if v == "" {
-			edition.ISBN10 = nil
-		} else {
-			if !isbnutil.ValidISBN10(v) {
+		if v != derefString(edition.ISBN10) {
+			if v != "" && !isbnutil.ValidISBN10(v) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "isbn10 is not a valid ISBN-10"})
 				return
 			}
-			edition.ISBN10 = &v
+			edition.ISBN10 = optionalString(v)
+			edition.LockField(models.EditionFieldISBN10)
 		}
-		edition.LockField(models.EditionFieldISBN10)
 	}
 	if req.ASIN != nil {
 		v := isbnutil.NormalizeASIN(*req.ASIN)
-		if v == "" {
-			edition.ASIN = nil
-		} else {
-			if !validASIN(v) {
+		if v != derefString(edition.ASIN) {
+			if v != "" && !validASIN(v) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "asin must be 10 letters or digits"})
 				return
 			}
-			edition.ASIN = &v
+			edition.ASIN = optionalString(v)
+			edition.LockField(models.EditionFieldASIN)
 		}
-		edition.LockField(models.EditionFieldASIN)
 	}
 	if req.LockedFields != nil {
 		cleaned := make([]string, 0, len(*req.LockedFields))
@@ -164,4 +165,13 @@ func (h *BookHandler) UpdateEdition(w http.ResponseWriter, r *http.Request) {
 	// cannot reach the database.
 	stored.ImageURL = ProxyImageURL(stored.ImageURL)
 	writeJSON(w, http.StatusOK, stored)
+}
+
+// optionalString stores an empty value as NULL, the way the importers leave
+// an unknown identifier.
+func optionalString(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
 }

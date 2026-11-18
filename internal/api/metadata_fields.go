@@ -10,6 +10,8 @@ const (
 	maxBookNarratorBytes = 1000
 	// maxBookDurationSeconds is 1000 hours, far past the longest audiobook.
 	maxBookDurationSeconds = 1000 * 60 * 60
+	// maxEditionPublisherBytes is far past any real imprint name.
+	maxEditionPublisherBytes = 500
 )
 
 // parseDateField reads a date sent on a metadata PUT. It accepts YYYY-MM-DD,

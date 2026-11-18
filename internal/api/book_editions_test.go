@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -345,5 +346,96 @@ func TestUpdateEdition_StaleWriteAnswers409(t *testing.T) {
 	}
 	if stored.Publisher == "Example Audio" || stored.IsFieldLocked(models.EditionFieldPublisher) {
 		t.Fatalf("refused write still landed: %+v", stored)
+	}
+}
+
+// TestUpdateEdition_RoundTripLocksNothing pins #3216's review points: an
+// edition read from GET /book/{id} and written straight back answers 200
+// (publishDate comes out as RFC 3339) and locks nothing, and sending a value
+// the edition already has, {"publisher": ""} on an edition with none, is not
+// a lock either.
+func TestUpdateEdition_RoundTripLocksNothing(t *testing.T) {
+	f := newEditionFixture(t)
+	b, e := f.seedBookWithEdition(t, "ED-ROUNDTRIP", 0)
+	adminCtx := withAuthCtx(f.ctx, 1, auth.RoleAdmin)
+
+	if rec := putEdition(t, f.h, adminCtx, b.ID, e.ID, map[string]any{"publisher": ""}); rec.Code != http.StatusOK {
+		t.Fatalf("empty publisher: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	stored, _ := f.editions.GetByID(f.ctx, e.ID)
+	if len(stored.LockedFields) != 0 {
+		t.Errorf(`{"publisher":""} on an edition with no publisher locked %v`, stored.LockedFields)
+	}
+
+	// Give the edition values, then unlock, so the round trip starts clean.
+	rec := putEdition(t, f.h, adminCtx, b.ID, e.ID, map[string]any{
+		"publisher": "Tor", "publishDate": "2020-05-01", "isbn13": "9780306406157",
+		"isbn10": "0306406152", "asin": "B0D2XYZ123", "lockedFields": []string{},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	getRec := httptest.NewRecorder()
+	bid := strconv.FormatInt(b.ID, 10)
+	f.h.Get(getRec, withURLParam(httptest.NewRequest(http.MethodGet, "/api/v1/book/"+bid, nil).WithContext(adminCtx), "id", bid))
+	var detail struct {
+		Editions []map[string]any `json:"editions"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &detail); err != nil || len(detail.Editions) != 1 {
+		t.Fatalf("get: %v %s", err, getRec.Body.String())
+	}
+	body := detail.Editions[0]
+	if pd, _ := body["publishDate"].(string); pd != "2020-05-01T00:00:00Z" {
+		t.Fatalf("GET publishDate = %v, the test expects the RFC 3339 form", body["publishDate"])
+	}
+	for _, name := range []string{"full", "without lockedFields"} {
+		if name != "full" {
+			delete(body, "lockedFields")
+		}
+		rec := putEdition(t, f.h, adminCtx, b.ID, e.ID, body)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s round trip: expected 200, got %d: %s", name, rec.Code, rec.Body.String())
+			continue
+		}
+		stored, _ := f.editions.GetByID(f.ctx, e.ID)
+		if len(stored.LockedFields) != 0 {
+			t.Errorf("%s round trip locked %v, want none", name, stored.LockedFields)
+		}
+		if stored.Publisher != "Tor" || stored.PublishDate == nil || stored.PublishDate.Format("2006-01-02") != "2020-05-01" {
+			t.Errorf("%s round trip changed values: %+v", name, stored)
+		}
+	}
+
+	// A changed RFC 3339 date is read as its day and locks.
+	if rec := putEdition(t, f.h, adminCtx, b.ID, e.ID, map[string]any{"publishDate": "2021-02-03T10:00:00Z"}); rec.Code != http.StatusOK {
+		t.Fatalf("rfc3339 change: %d %s", rec.Code, rec.Body.String())
+	}
+	stored, _ = f.editions.GetByID(f.ctx, e.ID)
+	if stored.PublishDate == nil || stored.PublishDate.Format("2006-01-02") != "2021-02-03" ||
+		!stored.IsFieldLocked(models.EditionFieldPublishDate) || len(stored.LockedFields) != 1 {
+		t.Fatalf("rfc3339 change: date=%v locked=%v", stored.PublishDate, stored.LockedFields)
+	}
+}
+
+// TestUpdateEdition_PublisherCap pins the publisher length cap: over it is a
+// JSON 400 and nothing is stored; at it is accepted.
+func TestUpdateEdition_PublisherCap(t *testing.T) {
+	f := newEditionFixture(t)
+	b, e := f.seedBookWithEdition(t, "ED-CAP", 0)
+	adminCtx := withAuthCtx(f.ctx, 1, auth.RoleAdmin)
+
+	for _, n := range []int{501, 5 << 20} {
+		rec := putEdition(t, f.h, adminCtx, b.ID, e.ID, map[string]any{"publisher": strings.Repeat("p", n)})
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"error"`) {
+			t.Errorf("publisher of %d bytes: expected a JSON 400, got %d", n, rec.Code)
+		}
+	}
+	stored, _ := f.editions.GetByID(f.ctx, e.ID)
+	if stored.Publisher != "" || len(stored.LockedFields) != 0 {
+		t.Fatalf("refused publisher stored: %q locked=%v", stored.Publisher, stored.LockedFields)
+	}
+	if rec := putEdition(t, f.h, adminCtx, b.ID, e.ID, map[string]any{"publisher": strings.Repeat("p", 500)}); rec.Code != http.StatusOK {
+		t.Fatalf("publisher at the cap: expected 200, got %d", rec.Code)
 	}
 }
