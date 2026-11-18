@@ -212,6 +212,18 @@ describe('RequestsPage', () => {
     })))
   })
 
+  it('keeps the format the requester asked for on an author request instead of the default', async () => {
+    vi.mocked(api.listRequestQueue).mockResolvedValue({ items: [req({ id: 6, kind: 'author', title: 'Ann Leckie', mediaType: 'audiobook' })], total: 1, limit: 50, offset: 0 })
+    vi.mocked(api.approveRequest).mockResolvedValue(req({ id: 6, kind: 'author', status: 'approved' }))
+    render(<RequestsPage />)
+
+    const { form, submit } = await openApproveForm('Ann Leckie', 'author')
+    expect(within(form).getByLabelText('Format')).toHaveValue('audiobook')
+    fireEvent.click(submit)
+
+    await waitFor(() => expect(api.approveRequest).toHaveBeenCalledWith(6, expect.objectContaining({ mediaType: 'audiobook' })))
+  })
+
   // #3831: the picker shows the default but sends a profile only once the
   // admin changes it, so an untouched picker leaves the default to the server.
   describe('quality profile picker (#3831)', () => {
