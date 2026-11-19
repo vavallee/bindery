@@ -187,7 +187,7 @@ function Shell() {
         </span>
       )}
       {(item.key === 'requests' || item.key === 'activity') && pendingRequests > 0 && (
-        <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-semibold">
+        <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-700 text-white text-[10px] font-semibold">
           <span aria-hidden="true">{pendingRequests}</span>
           <span className="sr-only">{t('nav.requestsPending', { count: pendingRequests })}</span>
         </span>

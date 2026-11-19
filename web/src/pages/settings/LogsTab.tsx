@@ -170,7 +170,7 @@ export default function LogsTab() {
               onClick={() => { setLogFilter(f); fetchLogs(0, { ...filterParams(), level: f !== 'all' ? f : undefined }) }}
               className={`px-2.5 py-1 rounded font-medium transition-colors ${logFilter === f
                 ? f === 'error' ? 'bg-red-600 text-white'
-                  : f === 'warn' ? 'bg-amber-500 text-white'
+                  : f === 'warn' ? 'bg-amber-700 text-white'
                   : 'bg-slate-700 dark:bg-zinc-600 text-white'
                 : 'bg-slate-200 dark:bg-zinc-800 text-fg-muted hover:text-slate-900 dark:hover:text-white'}`}
             >

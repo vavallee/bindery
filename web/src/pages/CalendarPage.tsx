@@ -168,7 +168,7 @@ export default function CalendarPage() {
                     {day && (
                       <>
                         <div className={`text-xs font-medium mb-1 w-6 h-6 flex items-center justify-center rounded-full ${
-                          isToday ? 'bg-emerald-600 text-white' : 'text-fg-muted'
+                          isToday ? 'bg-emerald-700 text-white' : 'text-fg-muted'
                         }`}>
                           {day}
                         </div>
@@ -222,7 +222,7 @@ export default function CalendarPage() {
                       className={`${cellCls} touch-manipulation`}
                     >
                       <span className={`w-6 h-6 flex items-center justify-center rounded-full text-xs ${
-                        isToday ? 'bg-emerald-600 text-white' : 'text-fg-muted'
+                        isToday ? 'bg-emerald-700 text-white' : 'text-fg-muted'
                       }`}>
                         {day}
                       </span>
@@ -238,7 +238,7 @@ export default function CalendarPage() {
                     {day && (
                       <>
                         <span className={`w-6 h-6 flex items-center justify-center rounded-full text-xs ${
-                          isToday ? 'bg-emerald-600 text-white' : 'text-fg-muted'
+                          isToday ? 'bg-emerald-700 text-white' : 'text-fg-muted'
                         }`}>
                           {day}
                         </span>

@@ -263,6 +263,59 @@ describe('explicit text colours on the background in the same string', () => {
     expect(failures, failures.join('\n')).toEqual([])
   })
 
+  // The case above finds a string by its hued text class, so white text on a
+  // fill (bg-amber-500 text-white, a banner or a pill) was never seen: white
+  // is 2.1:1 on amber-500 and 3.7:1 on emerald-600. A hover fill is the
+  // ground while the pointer is on it, so it is measured too, with the hover
+  // text colour when the string sets one (hover:bg-emerald-600
+  // hover:text-white). Picked per theme as above, the dark: class when the
+  // string has one, else the shared class; text and fill opacity are mixed in.
+  it('white and black text stay AA on the fill in the same string, resting and hovered', () => {
+    const HOVER_TEXT = /^(dark:)?hover:text-([a-z]+-\d+|white|black)$/
+    const HOVER_BG = /^(dark:)?hover:bg-([a-z]+-\d+|white|black)$/
+    const failures: string[] = []
+    let checked = 0
+    for (const [file, source] of Object.entries(sources)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      const code = source.replace(/^\s*\/\/.*$/gm, '')
+      for (const [, str] of code.matchAll(/["'`]([^"'`]*\btext-(?:white|black)\b[^"'`]*)["'`]/g)) {
+        const classes = str.split(/\s+/)
+        const opacityOf = (m: RegExpMatchArray) => classes.find(c => c.split('/')[0] === m[0])?.split('/')[1]
+        for (const theme of ['light', 'dark'] as const) {
+          const pick = (pattern: RegExp) => {
+            const matches = classes.map(c => c.split('/')[0].match(pattern)).filter((m): m is RegExpMatchArray => m !== null)
+            const own = matches.find(m => Boolean(m[1]) === (theme === 'dark'))
+            return own ?? (theme === 'dark' ? matches.find(m => !m[1]) : undefined)
+          }
+          const restText = pick(HUE_TEXT)
+          const restBg = pick(HUE_BG)
+          const hoverText = pick(HOVER_TEXT) ?? restText
+          const hoverBg = pick(HOVER_BG) ?? restBg
+          const pairs: Array<[RegExpMatchArray | undefined, RegExpMatchArray | undefined]> = [[restText, restBg]]
+          if (hoverText !== restText || hoverBg !== restBg) pairs.push([hoverText, hoverBg])
+          const card = theme === 'dark' ? SURFACES.darkCard : SURFACES.lightCard
+          for (const [text, ground] of pairs) {
+            // Only white and black: a hued text colour is the case above.
+            if (!text || !ground || (text[2] !== 'white' && text[2] !== 'black')) continue
+            const fgBase = TAILWIND.get(text[2])
+            const base = TAILWIND.get(ground[2])
+            if (!fgBase || !base) continue
+            const bgOpacity = opacityOf(ground)
+            const bg = bgOpacity ? mix(base, card, Number(bgOpacity) / 100) : base
+            const fgOpacity = opacityOf(text)
+            const fg = fgOpacity ? mix(fgBase, bg, Number(fgOpacity) / 100) : fgBase
+            checked++
+            const ratio = contrast(fg, bg)
+            const shown = (m: RegExpMatchArray, o?: string) => (o ? `${m[0]}/${o}` : m[0])
+            if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${shown(text, fgOpacity)} on ${shown(ground, bgOpacity)} is ${ratio.toFixed(2)}:1`)
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(50)
+    expect(failures, failures.join('\n')).toEqual([])
+  })
+
   // Coloured text with no background of its own sits on whatever its parent
   // paints, which a string cannot show. It is measured on the page and on the
   // card of each theme, the two surfaces nearly all of it lands on: the dark:
@@ -396,6 +449,16 @@ describe('grey text colours that have no background in their string', () => {
     }
     expect(checked).toBeGreaterThan(100)
     expect(failures, failures.join('\n')).toEqual([])
+  })
+
+  // The BulkActionBar exemption above rests on the bar's own fill, so measure
+  // it: if the bar moves to a lighter fill, the clear button has to follow.
+  it('the bulk action bar clear button stays AA on the bar in both themes', () => {
+    const bar = sources['../components/BulkActionBar.tsx']
+    expect(bar).toContain('bg-slate-800 dark:bg-zinc-950')
+    expect(bar).toMatch(/clearClass = '[^']*\btext-slate-400\b/)
+    expect(contrast(TAILWIND.get('slate-400')!, TAILWIND.get('slate-800')!)).toBeGreaterThanOrEqual(AA_NORMAL)
+    expect(contrast(TAILWIND.get('slate-400')!, TAILWIND.get('zinc-950')!)).toBeGreaterThanOrEqual(AA_NORMAL)
   })
 })
 
