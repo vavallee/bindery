@@ -9,7 +9,7 @@ import { useSaveResult } from './useSaveResult'
 import { secretInputAttrs } from '../../util/inputAttrs'
 import { slateFill } from '../../components/buttons'
 import { errorText } from '../../util/errorText'
-import { useAutoSave } from './useAutoSave'
+import { restoreSetting, useAutoSave } from './useAutoSave'
 
 export default function ApiKeysTab() {
   const fid = useId()
@@ -116,7 +116,10 @@ export default function ApiKeysTab() {
     setSettings(s => ({ ...s, 'hardcover.enhanced_series_enabled': next }))
     setSaving('hardcover.enhanced_series_enabled')
     try {
-      await autoSave('hardcover.enhanced_series_enabled', () => api.setSetting('hardcover.enhanced_series_enabled', next), undefined, true)
+      await autoSave('hardcover.enhanced_series_enabled', () => api.setSetting('hardcover.enhanced_series_enabled', next), {
+        rethrow: true,
+        revert: () => restoreSetting(setSettings, 'hardcover.enhanced_series_enabled', settings['hardcover.enhanced_series_enabled']),
+      })
       await refreshSystemStatus()
     } catch (err) {
       console.error(err)

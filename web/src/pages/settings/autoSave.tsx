@@ -6,39 +6,76 @@
 //
 // useAutoSave() wraps the request, then shows a toast: "<Field> saved" on
 // success, "Couldn't save <Field>" on failure. The field name comes from the
-// same label the Settings search indexes, so the two cannot drift. The toast
-// renders in <SettingsToastHost />, mounted once by the Settings page; without
+// same label the Settings search indexes, so the two cannot drift. Toasts
+// render in <SettingsToastHost />, mounted once by the Settings page; without
 // a host (a tab rendered on its own) the save still happens, only the toast
 // is absent.
+//
+// The host is a stack, not one slot, so a failure is never overwritten by a
+// later success. It stays on screen at least 8 seconds, pauses its timer while
+// the pointer or keyboard focus is on it (WCAG 2.2.1), and has a Dismiss
+// button. The polite live region is always in the page, so text inserted into
+// it is announced.
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { listeners, type Listener, type ToastMessage } from './toastBus'
 
-export function SettingsToastHost() {
-  const [msg, setMsg] = useState<ToastMessage | null>(null)
+const SUCCESS_MS = 4000
+const ERROR_MS = 8000
+
+function Toast({ msg, onDismiss }: { msg: ToastMessage; onDismiss: (id: number) => void }) {
+  const { t } = useTranslation()
+  const [paused, setPaused] = useState(false)
+  const error = msg.kind === 'error'
 
   useEffect(() => {
-    const l: Listener = m => setMsg(m)
+    if (paused) return
+    const timer = setTimeout(() => onDismiss(msg.id), error ? ERROR_MS : SUCCESS_MS)
+    return () => clearTimeout(timer)
+  }, [paused, error, msg.id, onDismiss])
+
+  return (
+    <div
+      role={error ? 'alert' : undefined}
+      data-testid="settings-toast"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={() => setPaused(false)}
+      className={`pointer-events-auto flex items-center gap-3 px-4 py-2.5 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in ${error ? 'bg-red-600' : 'bg-emerald-700'}`}
+    >
+      <span>{msg.text}</span>
+      <button
+        type="button"
+        onClick={() => onDismiss(msg.id)}
+        aria-label={t('common.dismiss', 'Dismiss')}
+        className="shrink-0 rounded px-1 leading-none text-white/90 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+      >
+        <span aria-hidden="true">×</span>
+      </button>
+    </div>
+  )
+}
+
+export function SettingsToastHost() {
+  const [toasts, setToasts] = useState<ToastMessage[]>([])
+
+  useEffect(() => {
+    const l: Listener = m => setToasts(prev => [...prev.slice(-4), m])
     listeners.add(l)
     return () => { listeners.delete(l) }
   }, [])
 
-  useEffect(() => {
-    if (!msg) return
-    const timer = setTimeout(() => setMsg(null), msg.kind === 'error' ? 5000 : 2500)
-    return () => clearTimeout(timer)
-  }, [msg])
+  const dismiss = useCallback((id: number) => setToasts(prev => prev.filter(m => m.id !== id)), [])
 
-  if (!msg) return null
-  const error = msg.kind === 'error'
   return (
     <div
-      key={msg.id}
-      role={error ? 'alert' : 'status'}
-      data-testid="settings-toast"
-      className={`fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in ${error ? 'bg-red-600' : 'bg-emerald-700'}`}
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-safe-6 right-safe-6 z-50 flex flex-col items-end gap-2 pointer-events-none"
     >
-      {msg.text}
+      {toasts.map(m => <Toast key={m.id} msg={m} onDismiss={dismiss} />)}
     </div>
   )
 }

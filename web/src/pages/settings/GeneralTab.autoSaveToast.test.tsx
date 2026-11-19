@@ -54,7 +54,7 @@ describe('GeneralTab auto-save toasts', () => {
     vi.mocked(api.setSetting).mockResolvedValue(undefined as never)
     render(<><SettingsToastHost /><GeneralTab /></>)
     fireEvent.click(await screen.findByRole('button', { name: 'External' }))
-    expect(await screen.findByRole('status')).toHaveTextContent('set to External')
+    expect(await screen.findByText(/set to External/)).toBeInTheDocument()
     expect(api.setSetting).toHaveBeenCalledWith('import.mode', 'external')
   })
 
@@ -64,6 +64,35 @@ describe('GeneralTab auto-save toasts', () => {
     render(<><SettingsToastHost /><GeneralTab /></>)
     fireEvent.click(await screen.findByRole('button', { name: 'Copy' }))
     expect(await screen.findByTestId('settings-toast')).toHaveTextContent("Couldn't save")
+    spy.mockRestore()
+  })
+
+  // The handlers update the control before the request, so a failed save has
+  // to put the old value back: otherwise it shows a choice the server never
+  // stored.
+  it('puts the old value back when a select save fails', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(api.setSetting).mockRejectedValue(new Error('nope'))
+    render(<><SettingsToastHost /><GeneralTab /></>)
+    const select = await screen.findByTestId('import-audiobook-mode') as HTMLSelectElement
+    expect(select.value).toBe('')
+    fireEvent.change(select, { target: { value: 'copy' } })
+    await screen.findByTestId('settings-toast')
+    expect(select.value).toBe('')
+    spy.mockRestore()
+  })
+
+  it('puts Import Mode back on the previous choice when its save fails', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(api.setSetting).mockRejectedValue(new Error('nope'))
+    render(<><SettingsToastHost /><GeneralTab /></>)
+    const copy = await screen.findByRole('button', { name: 'Copy' })
+    const auto = screen.getByRole('button', { name: 'Auto' })
+    expect(auto.className).toContain('bg-emerald-700')
+    fireEvent.click(copy)
+    await screen.findByTestId('settings-toast')
+    expect(auto.className).toContain('bg-emerald-700')
+    expect(copy.className).not.toContain('bg-emerald-700')
     spy.mockRestore()
   })
 })

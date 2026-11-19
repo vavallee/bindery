@@ -40,7 +40,7 @@ export default function RootFoldersTab() {
   const setDefault = async (value: string) => {
     setDefaultRootFolderId(value)
     try {
-      await autoSave('library.defaultRootFolderId', () => api.setSetting(DEFAULT_ROOT_FOLDER_KEY, value), undefined, true)
+      await autoSave('library.defaultRootFolderId', () => api.setSetting(DEFAULT_ROOT_FOLDER_KEY, value), { rethrow: true })
     } catch (err) {
       console.error(err)
     }
@@ -49,7 +49,7 @@ export default function RootFoldersTab() {
   const setAudiobookDefault = async (value: string) => {
     setDefaultAudiobookRootFolderId(value)
     try {
-      await autoSave('library.defaultAudiobookRootFolderId', () => api.setSetting(DEFAULT_AUDIOBOOK_ROOT_FOLDER_KEY, value), undefined, true)
+      await autoSave('library.defaultAudiobookRootFolderId', () => api.setSetting(DEFAULT_AUDIOBOOK_ROOT_FOLDER_KEY, value), { rethrow: true })
     } catch (err) {
       console.error(err)
     }

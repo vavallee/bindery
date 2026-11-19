@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useAutoSave } from './useAutoSave'
+import { restoreSetting, useAutoSave } from './useAutoSave'
 import RichText from '../../components/RichText'
 import Alert from '../../components/Alert'
 import {
@@ -330,14 +330,22 @@ function CalibreSection({
   const setMode = async (next: 'off' | 'calibredb' | 'plugin') => {
     setSettings(s => ({ ...s, 'calibre.mode': next }))
     setCalibredbMissing(null)
-    const res = await autoSave('calibre.mode', () => api.setSetting('calibre.mode', next), next)
+    const label = {
+      off: t('settings.calibre.mode.off', 'Off'),
+      calibredb: t('settings.calibre.mode.calibredb', 'calibredb CLI'),
+      plugin: t('settings.calibre.mode.plugin', 'Calibre Bridge plugin'),
+    }[next]
+    const res = await autoSave('calibre.mode', () => api.setSetting('calibre.mode', next), {
+      value: label,
+      revert: () => restoreSetting(setSettings, 'calibre.mode', settings['calibre.mode']),
+    })
     if (res) applyCalibredbWarning(res)
   }
 
   const setTransport = async (next: 'push' | 'pull') => {
     setTestResult(null)
     setSettings(s => ({ ...s, 'calibre.plugin_transport': next }))
-    await autoSave('calibre.plugin_transport', () => api.setSetting('calibre.plugin_transport', next), next)
+    await autoSave('calibre.plugin_transport', () => api.setSetting('calibre.plugin_transport', next), { value: t(next === 'push' ? 'settings.calibre.transport.push' : 'settings.calibre.transport.pull'), revert: () => restoreSetting(setSettings, 'calibre.plugin_transport', settings['calibre.plugin_transport']) })
   }
 
   return (
@@ -616,7 +624,7 @@ function CalibreSection({
               onChange={async () => {
                 const next = libraryImportEnabled ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'calibre.library_import_enabled': next }))
-                await autoSave('calibre.library_import_enabled', () => api.setSetting('calibre.library_import_enabled', next))
+                await autoSave('calibre.library_import_enabled', () => api.setSetting('calibre.library_import_enabled', next), { revert: () => restoreSetting(setSettings, 'calibre.library_import_enabled', settings['calibre.library_import_enabled']) })
               }}
               title={libraryImportEnabled ? t('settings.calibre.import.disable', 'Disable library import') : t('settings.calibre.import.enable', 'Enable library import')}
             />
@@ -634,7 +642,7 @@ function CalibreSection({
                   onChange={async () => {
                     const next = syncOnStartup ? 'false' : 'true'
                     setSettings(s => ({ ...s, 'calibre.sync_on_startup': next }))
-                    await autoSave('calibre.sync_on_startup', () => api.setSetting('calibre.sync_on_startup', next))
+                    await autoSave('calibre.sync_on_startup', () => api.setSetting('calibre.sync_on_startup', next), { revert: () => restoreSetting(setSettings, 'calibre.sync_on_startup', settings['calibre.sync_on_startup']) })
                   }}
                   title={syncOnStartup ? t('common.disable', 'Disable') : t('common.enable', 'Enable')}
                 />

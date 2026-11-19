@@ -159,7 +159,7 @@ function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) 
     setDefaultId(value ? Number(value) : null)
     setDefaultErr(null)
     try {
-      await autoSave('author.default_quality_profile_id', () => api.setSetting(DEFAULT_QUALITY_PROFILE_SETTING, value), undefined, true)
+      await autoSave('author.default_quality_profile_id', () => api.setSetting(DEFAULT_QUALITY_PROFILE_SETTING, value), { rethrow: true })
     } catch (e) {
       // Put the select back on what the server still holds, so it never
       // shows a default that was not saved.
