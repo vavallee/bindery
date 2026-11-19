@@ -121,9 +121,9 @@ func (b *Book) ClearProviderFieldsMissingFrom(src *Book, lockedBefore []string) 
 //     wrote a description (a typed one is locked, an import's is not), and
 //     replacing it on every refresh would undo the import.
 //
-// Language is deliberately NOT adopted: a catalogue record's language can be a
-// guess (an edition majority, or the author's majority language). Genres are
-// not either: the refresh already updates them from Hardcover provenance.
+//   - language, genres: filled only when b has none, for the same reason as the
+//     description. The refresh's separate Hardcover genre path still replaces
+//     an unlocked set on Hardcover provenance; this adds no removal.
 //
 // Nothing happens unless src comes from the provider b's own record came from.
 func (b *Book) AdoptRefreshedProviderFields(src *Book) []string {
@@ -143,6 +143,17 @@ func (b *Book) AdoptRefreshedProviderFields(src *Book) []string {
 	if strings.TrimSpace(src.Description) != "" && strings.TrimSpace(b.Description) == "" && writable(BookFieldDescription) {
 		b.Description = src.Description
 		changed = append(changed, BookFieldDescription)
+	}
+	// Language and genres are fill-only too. Bindery does not record whether a
+	// language came from the user, a file's dc:language or a provider, so a
+	// value that is present is never replaced; only an empty one is filled.
+	if strings.TrimSpace(src.Language) != "" && strings.TrimSpace(b.Language) == "" && writable(BookFieldLanguage) {
+		b.Language = src.Language
+		changed = append(changed, BookFieldLanguage)
+	}
+	if len(src.Genres) > 0 && len(b.Genres) == 0 && writable(BookFieldGenres) {
+		b.Genres = slices.Clone(src.Genres)
+		changed = append(changed, BookFieldGenres)
 	}
 	return changed
 }
