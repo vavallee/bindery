@@ -24,6 +24,7 @@ import { btn, btnSize } from '../components/buttons'
 import Switch from '../components/Switch'
 import CoverPlaceholder from '../components/CoverPlaceholder'
 import Checkbox from '../components/Checkbox'
+import { selectingClick as selectingClickFor } from '../components/selectingClick'
 import BookRating from '../components/BookRating'
 import MoreMenu from '../components/MoreMenu'
 import Section from '../components/Section'
@@ -804,18 +805,10 @@ export default function AuthorDetailPage() {
   const bookNavState = (book: Book) => ({ ids: bookIds, index: bookIndexById.get(book.id) ?? -1, hopDepth: 1 })
 
   // While a selection exists, a plain click anywhere on a card or row adds or
-  // removes that book instead of opening it, so a click that misses the small
-  // checkbox no longer navigates away and loses the selection (#2456). With
-  // nothing selected the click opens the book as before. Modified clicks
-  // (ctrl/cmd/shift/alt) pass through so open in a new tab keeps working;
-  // middle click never reaches onClick. Returns true when it handled the click.
-  const selectingClick = (e: MouseEvent, book: Book): boolean => {
-    if (selected.size === 0) return false
-    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return false
-    e.preventDefault()
-    toggleSelect(book.id)
-    return true
-  }
+  // removes that book instead of opening it (#2456). The rules live in
+  // components/selectingClick so the Authors and Books grids share them.
+  const selectingClick = (e: MouseEvent, book: Book): boolean =>
+    selectingClickFor(e, selected.size > 0, () => toggleSelect(book.id))
 
   // Render helpers shared by the flat and grouped-by-series (#1125) layouts so
   // each series section and the standalone group reuse the exact same table

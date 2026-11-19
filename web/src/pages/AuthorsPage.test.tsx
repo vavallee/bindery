@@ -1026,3 +1026,68 @@ describe('AuthorsPage bulk monitoring cascade', () => {
     )
   })
 })
+
+// #3960: once something is selected, the whole card toggles like the book
+// cards on the author page (#2456) instead of opening the author.
+describe('AuthorsPage grid card selection mode (#3960)', () => {
+  const author = (id: number, authorName: string) => ({
+    id, foreignAuthorId: `OL${id}`, authorName, sortName: authorName, description: '', imageUrl: '',
+    disambiguation: '', ratingsCount: 0, averageRating: 0, monitored: true,
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.listAuthors).mockResolvedValue({ items: [author(7, 'Andy Weir'), author(8, 'Becky Chambers')], total: 2, limit: 100, offset: 0 })
+  })
+
+  const renderGrid = async () => {
+    render(
+      <MemoryRouter initialEntries={['/authors']}>
+        <Routes>
+          <Route path="/authors" element={<AuthorsPage />} />
+          <Route path="/author/:id" element={<p>author detail</p>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByTitle('Select Becky Chambers')
+    const link = (name: string) => screen.getByText(name, { selector: 'h3' }).closest('a') as HTMLAnchorElement
+    return { link, box: (name: string) => screen.getByTitle(`Select ${name}`) }
+  }
+
+  it('opens the author on a card click while nothing is selected', async () => {
+    const { link } = await renderGrid()
+    fireEvent.click(link('Becky Chambers'))
+    expect(await screen.findByText('author detail')).toBeInTheDocument()
+  })
+
+  it('toggles a card on a plain click while selecting, and lets a modified click through', async () => {
+    const { link, box } = await renderGrid()
+    fireEvent.click(box('Andy Weir'))
+
+    fireEvent.click(link('Becky Chambers'))
+    expect(box('Becky Chambers')).toBeChecked()
+    expect(screen.queryByText('author detail')).not.toBeInTheDocument()
+
+    fireEvent.click(link('Becky Chambers'))
+    expect(box('Becky Chambers')).not.toBeChecked()
+
+    // Ctrl click keeps open in a new tab: not handled as a toggle.
+    fireEvent.click(link('Becky Chambers'), { ctrlKey: true })
+    expect(box('Becky Chambers')).not.toBeChecked()
+  })
+
+  it('toggles on Enter and Space while selecting and leaves the keys alone otherwise', async () => {
+    const { link, box } = await renderGrid()
+    // Not selecting: Enter is not swallowed, so the link still activates.
+    expect(fireEvent.keyDown(link('Becky Chambers'), { key: 'Enter' })).toBe(true)
+    expect(fireEvent.keyDown(link('Becky Chambers'), { key: ' ' })).toBe(true)
+    expect(box('Becky Chambers')).not.toBeChecked()
+
+    fireEvent.click(box('Andy Weir'))
+    expect(fireEvent.keyDown(link('Becky Chambers'), { key: 'Enter' })).toBe(false)
+    expect(box('Becky Chambers')).toBeChecked()
+    expect(fireEvent.keyDown(link('Becky Chambers'), { key: ' ' })).toBe(false)
+    expect(box('Becky Chambers')).not.toBeChecked()
+    expect(screen.queryByText('author detail')).not.toBeInTheDocument()
+  })
+})

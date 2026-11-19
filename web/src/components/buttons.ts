@@ -42,7 +42,7 @@ export const btn = {
   // Reserve it for actions with no undo (delete a book and its files, delete an
   // author). A reversible destructive action gets `danger` above; when both
   // appear on one page, solid red must mark the one you can't take back.
-  dangerSolid: `${base} bg-red-600 hover:bg-red-500 text-white focus-visible:ring-red-500`,
+  dangerSolid: `${base} bg-red-600 hover:bg-red-700 text-white focus-visible:ring-red-500`,
 } as const
 
 export const btnSize = {

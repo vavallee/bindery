@@ -26,6 +26,10 @@ export default defineConfig({
       },
     },
     globals: true,
+    // A backstop for a loaded CI runner, not a licence for slow tests. The
+    // 5 s default failed requests.test.tsx on an unchanged tree (#3606); fix
+    // the test first, the timeout only absorbs scheduler noise.
+    testTimeout: 15_000,
     setupFiles: ['./src/test-localstorage.ts', './src/test-setup.ts'],
     // Only collected with `npm run test:coverage` (CI uploads web/coverage/
     // lcov.info to Codecov under the `frontend` flag). Plain `npm test` stays

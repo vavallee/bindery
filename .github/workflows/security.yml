@@ -292,6 +292,7 @@ jobs:
             registry-1.docker.io:443
             auth.docker.io:443
             production.cloudfront.docker.com:443
+            docker-images-prod.s3.dualstack.us-east-1.amazonaws.com:443
             gcr.io:443
             grype.anchore.io:443
             tuf-repo-cdn.sigstore.dev:443
@@ -379,6 +380,7 @@ jobs:
             registry-1.docker.io:443
             auth.docker.io:443
             production.cloudfront.docker.com:443
+            docker-images-prod.s3.dualstack.us-east-1.amazonaws.com:443
             go.dev:443
             golang.org:443
             dl.google.com:443
@@ -475,6 +477,7 @@ jobs:
             registry-1.docker.io:443
             auth.docker.io:443
             production.cloudfront.docker.com:443
+            docker-images-prod.s3.dualstack.us-east-1.amazonaws.com:443
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

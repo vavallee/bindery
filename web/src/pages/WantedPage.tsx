@@ -595,7 +595,7 @@ export default function WantedPage() {
                             grabbedGuid === r.guid
                               ? 'bg-emerald-700 text-white'
                               : grabbingGuid === r.guid
-                              ? 'bg-emerald-600/60 text-white/70'
+                              ? 'bg-emerald-800 text-white/80'
                               : `${primaryFill}`
                           }`}
                         >
