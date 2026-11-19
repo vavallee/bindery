@@ -360,7 +360,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
               type="button"
               onClick={confirmReassign}
               disabled={submitting || (relocate && previewLoading) || previewRefused}
-              className="px-3 py-1.5 text-xs rounded bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+              className="px-3 py-1.5 text-xs rounded bg-amber-700 text-white hover:bg-amber-800 disabled:opacity-50"
             >
               {movesOnDisk
                 ? t('bookDetail.fixMatch.confirmButton', 'Move and reassign')
