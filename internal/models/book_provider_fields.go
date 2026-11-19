@@ -117,6 +117,7 @@ func (b *Book) ClearProviderFieldsMissingFrom(src *Book, lockedBefore []string) 
 //     (Jan 1), so it does not replace a date in the same year, which may be a
 //     precise one from an import and says nothing new. A date the merge filled
 //     in from a supplementary provider is marked unknown on src and not used.
+//
 //   - description: filled only when b has none. Bindery has no record of what
 //     wrote a description (a typed one is locked, an import's is not), and
 //     replacing it on every refresh would undo the import.
