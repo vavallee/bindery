@@ -1,2 +1,2 @@
 ### Fixed
-- Refreshing an author now also fills a language and genres that an existing book is missing, from the provider record that book already came from (#3105). A value already there, a locked field and a book from another provider are left alone, and a refresh never clears anything.
+- Refreshing an author now also fills genres, and a language, that an existing book is missing, from the provider record that book already came from (#3105). A language is filled only for a book with no file yet, so the file's own language stays the source of truth for the library scan. A value already there, a locked field, a field with an Audiobookshelf conflict and a book from another provider are left alone, and a refresh never clears anything.

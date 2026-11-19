@@ -123,7 +123,8 @@ func (b *Book) ClearProviderFieldsMissingFrom(src *Book, lockedBefore []string) 
 //     replacing it on every refresh would undo the import.
 //
 //   - language, genres: filled only when b has none, for the same reason as the
-//     description. The refresh's separate Hardcover genre path still replaces
+//     description. Language is also left alone once the book has a file, so the
+//     file's own dc:language stays the source of truth. The refresh's separate Hardcover genre path still replaces
 //     an unlocked set on Hardcover provenance; this adds no removal.
 //
 // Nothing happens unless src comes from the provider b's own record came from.
@@ -148,7 +149,10 @@ func (b *Book) AdoptRefreshedProviderFields(src *Book) []string {
 	// Language and genres are fill-only too. Bindery does not record whether a
 	// language came from the user, a file's dc:language or a provider, so a
 	// value that is present is never replaced; only an empty one is filled.
-	if strings.TrimSpace(src.Language) != "" && strings.TrimSpace(b.Language) == "" && writable(BookFieldLanguage) {
+	// A book with a file is left for the library scan, which reads the file's
+	// own dc:language and only fills a blank one: a catalogue guess landing
+	// first would stop the file from ever supplying it.
+	if strings.TrimSpace(src.Language) != "" && strings.TrimSpace(b.Language) == "" && !b.hasAttachedFile() && writable(BookFieldLanguage) {
 		b.Language = src.Language
 		changed = append(changed, BookFieldLanguage)
 	}
@@ -157,6 +161,12 @@ func (b *Book) AdoptRefreshedProviderFields(src *Book) []string {
 		changed = append(changed, BookFieldGenres)
 	}
 	return changed
+}
+
+// hasAttachedFile reports whether the book has any file recorded, through the
+// legacy path, the computed per-format paths or its file rows.
+func (b *Book) hasAttachedFile() bool {
+	return b.FilePath != "" || b.EbookFilePath != "" || b.AudiobookFilePath != "" || len(b.BookFiles) > 0
 }
 
 // sameReleaseDate reports whether adopting incoming would tell the book

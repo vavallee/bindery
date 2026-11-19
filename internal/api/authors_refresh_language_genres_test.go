@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -55,6 +56,42 @@ func TestRefreshAuthorBooks_OtherProviderRowGetsNoLanguageOrGenres(t *testing.T)
 	f.runWithGenres(models.Book{Language: "eng", Genres: []string{"Fantasy"}})
 	if got := f.stored(); got.Language != "" || len(got.Genres) != 0 {
 		t.Errorf("a row from another provider was filled: lang=%q genres=%v", got.Language, got.Genres)
+	}
+}
+
+func TestRefreshAuthorBooks_PendingABSLanguageConflictBlocksFill(t *testing.T) {
+	f := newRefreshFieldsFixture(t, models.Book{})
+	if err := f.sqlExec(fmt.Sprintf(`INSERT INTO abs_metadata_conflicts
+		(source_id, library_id, item_id, entity_type, local_id, field_name, abs_value, upstream_value,
+		 applied_source, preferred_source, resolution_status, created_at, updated_at)
+		VALUES ('s','l','i','book',%d,'language','','eng','abs','abs','unresolved',datetime('now'),datetime('now'))`, f.existing.ID)); err != nil {
+		t.Fatal(err)
+	}
+	f.runWithGenres(models.Book{Language: "eng", Genres: []string{"Fantasy"}})
+	got := f.stored()
+	if got.Language != "" {
+		t.Errorf("a language with an ABS conflict was filled: %q", got.Language)
+	}
+	if len(got.Genres) != 1 {
+		t.Errorf("genres have no conflict and should still be filled: %v", got.Genres)
+	}
+}
+
+func TestRefreshAuthorBooks_BookWithFileKeepsLanguageForTheScan(t *testing.T) {
+	f := newRefreshFieldsFixture(t, models.Book{})
+	if err := f.books.AddBookFile(f.ctx, f.existing.ID, "ebook", "/library/a.epub"); err != nil {
+		t.Fatal(err)
+	}
+	f.runWithGenres(models.Book{Language: "eng", Genres: []string{"Fantasy"}})
+	got := f.stored()
+	if got.EbookFilePath == "" {
+		t.Fatal("fixture book lost its file")
+	}
+	if got.Language != "" {
+		t.Errorf("a book with a file took the catalogue language: %q", got.Language)
+	}
+	if len(got.Genres) != 1 {
+		t.Errorf("genres should still be filled for a book with a file: %v", got.Genres)
 	}
 }
 

@@ -40,7 +40,10 @@ fills a description, language or genres the book lacks. It does this only for
 books the same provider identifies by its own id, never replaces a language,
 description or genre set that is already there, and never touches a locked
 field, the title, the author, series membership or files. Bindery does not
-record who wrote a language or description, so only empty ones are filled. See
+record who wrote a language or description, so only empty ones are filled. A
+book that already has a file never gets a language from the provider: the
+library scan reads the file's own language instead. A field with a pending
+Audiobookshelf conflict is skipped as well. See
 [Refresh metadata](User-Guide-Wiki.md).
 
 ## Unlocking
