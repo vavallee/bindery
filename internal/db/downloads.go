@@ -229,15 +229,6 @@ func (r *DownloadRepo) GetByNzoID(ctx context.Context, nzoID string) (*models.Do
 	return &dl[0], nil
 }
 
-func (r *DownloadRepo) GetByTorrentID(ctx context.Context, torrentID string) (*models.Download, error) {
-	torrentID = strings.ToLower(torrentID)
-	dl, err := r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads WHERE torrent_id=?", torrentID)
-	if err != nil || len(dl) == 0 {
-		return nil, err
-	}
-	return &dl[0], nil
-}
-
 // ListByClientTorrentID returns every download whose torrent_id is torrentID
 // on client or on any other client entry that talks to the same daemon,
 // across all owners. A torrent client adopts a torrent it already holds when a
@@ -640,12 +631,6 @@ func (r *DownloadRepo) SetNzoID(ctx context.Context, id int64, nzoID string) err
 	return err
 }
 
-// SetDownloadClientID records the download client selected for a download.
-func (r *DownloadRepo) SetDownloadClientID(ctx context.Context, id, clientID int64) error {
-	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET download_client_id=? WHERE id=?", clientID, id)
-	return err
-}
-
 func (r *DownloadRepo) SetTorrentID(ctx context.Context, id int64, torrentID string) error {
 	torrentID = strings.ToLower(torrentID)
 	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET torrent_id=? WHERE id=?", torrentID, id)
@@ -663,7 +648,10 @@ func (r *DownloadRepo) SetBookID(ctx context.Context, id, bookID int64) error {
 // SetImportPath records the on-disk location of a completed download's files so
 // a later manual "Match to book" (#1589) can import them directly. Called when
 // an import fails only because no catalogue book matched — the files are valid
-// and present, they just have nowhere to go yet.
+// and present, they just have nowhere to go yet. Pair gating records a held
+// download's files here, and an external hand-off records the source files it
+// handed off (models.EncodeHandedOffSources), so the manual import folder scan
+// does not offer them again.
 func (r *DownloadRepo) SetImportPath(ctx context.Context, id int64, path string) error {
 	_, err := r.db.ExecContext(ctx, "UPDATE downloads SET import_path=? WHERE id=?", path, id)
 	return err

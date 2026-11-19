@@ -217,26 +217,23 @@ func forceRegrabbable(d *models.Download) bool {
 // state, book and history are that user's.
 const foreignRowGrabbedDetail = "another user already has this release in their queue"
 
-// foreignRowClaimable reports whether a grab may claim d, a download row that
-// belongs to another user, at now. It is the scheduler's rule for its own
-// automatic re-grab (scheduler.blockingRegrabReason): an orphaned import
-// whatever its age, or a failed row that has been dead for at least
-// models.DeadRegrabCooldown. db.DownloadRepo.RetryDeadForAutoGrab claims
-// exactly these rows and re-checks the cooldown in SQL.
-func foreignRowClaimable(d *models.Download, now time.Time) bool {
-	if d.BlocksAutoRegrab() {
-		return false
-	}
-	if d.IsOrphanedImport() {
-		return true
-	}
-	return !d.DeadSince().After(now.Add(-models.DeadRegrabCooldown))
-}
-
 // errGrabBookNotFound is returned when the book a grab names does not exist or
-// belongs to another user. The handlers answer 404 for both, as the book
+// belongs to another user or is shared with no owner (for a caller who may not
+// change it). The handlers answer 404 for both, as the book
 // handlers do, so a caller cannot tell the two apart.
 var errGrabBookNotFound = errors.New("book not found")
+
+// grabBookSharedError is returned instead of errGrabBookNotFound when the book
+// is visible to the caller and only the write check fails: a shared book with
+// no owner. The status stays 404, but hiding why helps nobody, since the
+// caller can already see the book. It matches errGrabBookNotFound with
+// errors.Is so every handler that maps that sentinel still maps this one.
+type grabBookSharedError struct{}
+
+func (grabBookSharedError) Error() string {
+	return "That book is shared, so only an admin can grab for it."
+}
+func (grabBookSharedError) Is(target error) bool { return target == errGrabBookNotFound }
 
 // errReleaseNotSearched refuses a grab of a release no recent search returned,
 // from any caller but an API key. See SearchResultRegistry.
@@ -1076,6 +1073,10 @@ type grabRequest struct {
 	// Force re-grabs a release whose earlier download already imported,
 	// after the user confirmed it (#2289). See forceRegrabbable.
 	Force bool `json:"force"`
+	// ownBook skips the write check on BookID. Set only by a retry, whose row
+	// the caller already owns, so a book that became shared since does not
+	// strand it. Not part of the request body.
+	ownBook bool
 }
 
 func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
@@ -1277,7 +1278,9 @@ func (h *QueueHandler) resendRelease(ctx context.Context, d models.Download) (*m
 	if !regrabbable(&d) {
 		return nil, fmt.Errorf("%w: %s", errRetryNotResendable, retryNotResendableDetail(d.Status))
 	}
-	return h.grab(ctx, retryGrabRequest(d))
+	req := retryGrabRequest(d)
+	req.ownBook = true
+	return h.grab(ctx, req)
 }
 
 // RetryDownload handles POST /api/v1/queue/{id}/retry: send this row's release
@@ -1599,26 +1602,25 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		return nil, err
 	}
 	// The GUID lookup is global because the column is UNIQUE, so under tenancy
-	// the row it finds may be another user's. Such a row is claimed on the
-	// scheduler's terms and no others (foreignRowClaimable): a failed row once
-	// it has been dead for models.DeadRegrabCooldown, and an orphaned import
-	// (#2289). Inside the cooldown a failed row is still its owner's to Retry,
-	// an importBlocked row is its owner's to Retry import, and a live row is
-	// live work. The refusal does not describe the row, since it is not the
-	// caller's to see. A claimed foreign row is fully reset and lends the grab
-	// nothing (see below).
-	now := time.Now().UTC()
+	// the row it finds may be another user's, or a shared one with no owner. A
+	// caller who may not change that row (the check Retry and Delete make) never
+	// takes it over, whatever its state or age: the row is its owner's, and
+	// reusing it would hand over the owner, the book link and the queue entry.
+	// The column cannot be scoped per owner without a migration, so the grab is
+	// refused and an admin clears a stale row. The scheduler's own re-grab
+	// (RetryDeadForAutoGrab) is unaffected, and a caller keeps reusing their
+	// own dead row (#2289). The refusal does not describe the row, since it is
+	// not the caller's to see.
 	foreignRow := existing != nil && !auth.CheckWriteOwnership(ctx, existing.OwnerUserID)
-	if foreignRow && !foreignRowClaimable(existing, now) {
+	if foreignRow {
 		return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, foreignRowGrabbedDetail)
 	}
 	// forced is a grab the user confirmed over the "already imported"
-	// refusal (#2289). A foreign row is never forced: the check above already
-	// refuses every foreign imported row that still has its book, and force
-	// is for the caller's own rows whatever the order of these checks.
+	// refusal (#2289). Force is for the caller's own rows only; a foreign row
+	// was refused above.
 	forced := false
 	if existing != nil && !regrabbable(existing) {
-		if foreignRow || !forceRegrabbable(existing) {
+		if !forceRegrabbable(existing) {
 			return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, alreadyGrabbedDetail(existing.Status))
 		}
 		if !req.Force {
@@ -1641,8 +1643,8 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	editionID := (*int64)(nil)
 	indexerFlags := ""
 	// Only the caller's own row lends its book, indexer, edition and flags to
-	// the grab; a foreign orphaned import lends nothing.
-	if existing != nil && !foreignRow {
+	// the grab.
+	if existing != nil {
 		if bookID == nil {
 			bookID = existing.BookID
 		}
@@ -1652,17 +1654,22 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		editionID = existing.EditionID
 		indexerFlags = existing.IndexerFlags
 	}
-	// The book the release is grabbed for must be one the caller may act on,
-	// the same check every book handler makes, and the same 404 for a book
-	// that is someone else's as for one that does not exist.
+	// The book the release is grabbed for must be one the caller may change,
+	// the same write check the book handlers make, and the same 404 for a book
+	// that is someone else's, or shared with no owner, as for one that does not
+	// exist. A grab creates a download and history row on the book, so a user
+	// who could not edit it cannot grab for it either.
 	var bookOwner int64
 	if bookID != nil {
 		b, err := h.books.GetByID(ctx, *bookID)
 		if err != nil {
 			return nil, err
 		}
-		if b == nil || !auth.CheckOwnership(ctx, b.OwnerUserID) {
+		switch {
+		case b == nil || !auth.CheckOwnership(ctx, b.OwnerUserID):
 			return nil, errGrabBookNotFound
+		case !req.ownBook && !auth.CheckWriteOwnership(ctx, b.OwnerUserID):
+			return nil, grabBookSharedError{}
 		}
 		bookOwner = b.OwnerUserID
 	}
@@ -1760,11 +1767,6 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		dl.ID = existing.ID
 		var ok bool
 		switch {
-		case foreignRow:
-			// The scheduler's claim, with its cooldown re-checked in SQL, so a
-			// row that changed hands or died again since the read above is a
-			// refusal rather than a takeover.
-			ok, err = h.downloads.RetryDeadForAutoGrab(ctx, dl, now.Add(-models.DeadRegrabCooldown))
 		case forced:
 			// Claims the row only while it is still imported, so a row that
 			// moved on since the read above is a refusal, not a takeover.
@@ -1776,9 +1778,6 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 			return nil, err
 		}
 		if !ok {
-			if foreignRow {
-				return nil, fmt.Errorf("%w: %s", errAlreadyGrabbed, foreignRowGrabbedDetail)
-			}
 			return nil, errAlreadyGrabbed
 		}
 	} else if err := h.downloads.Create(ctx, dl); err != nil {

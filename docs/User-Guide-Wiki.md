@@ -48,6 +48,10 @@ an arbitrary release is unreliable. The escape hatches:
   at a folder of files you already have and matches them to books; files already
   tracked in the library are skipped by default, and toggling **Show already
   imported** surfaces them again, e.g. to spot a corrupted file or relink one.
+  In External import mode a file whose download is still handed off to your
+  import tool is skipped the same way, and listed as already handed off when
+  the toggle is on, so a rescan cannot drop it twice. It is offered again once
+  the drop fails or is blocked, or its Queue row is removed.
   The folder browser starts at your root folders, the download directories and
   any **import source folders** an admin lists under Settings, General, Import
   (`import.source_folders`, one absolute path per line). A source folder is a
@@ -234,6 +238,14 @@ matches none of the books with that title and the folder name does. Loose files 
 filename alone; if those are misread, move them into author folders, or use
 Manual Import, which lets you pick the right book.
 
+A release folder, one whose name carries a format tag such as `[epub]` or
+`(m4b)`, like `The War of the Worlds - H. G. Wells [m4b]`, is read as a release
+name when a file sits directly in it: the author and title come from the name
+and the tags come off. A tagged folder with a book folder below it is still an
+author folder. Initials keep their dots (`H. G. Wells`, `J.R.R. Tolkien`) so the
+metadata search sees the name the way providers spell it; the same applies to
+automatic import and the library scan (#3974).
+
 Every token, the brace rules and some layouts to copy are in
 [File naming templates](File-Naming-Wiki.md).
 
@@ -308,7 +320,10 @@ Two settings decide whether an author add stays a trickle or becomes a flood:
   books it discovers at all. *Follow monitor mode* adds them and monitors them
   per the mode; *Don't add them* keeps the refresh to the books you already
   have. Library imports (Calibre, ABS) set *Don't add them* on the authors they
-  create, because those catalogues are partial by design.
+  create, because those catalogues are partial by design. The default for
+  authors you add yourself lives in Settings → Metadata Profiles → Library
+  Defaults → **Default for monitoring newly discovered books**. It only applies
+  to authors added after you change it, and the Add Author dialog preselects it.
 
 These two are independent, and monitor mode *None* is not a substitute for the
 second one: it means "list the catalogue, monitor none of it", so a refresh
@@ -370,6 +385,15 @@ many grabs can be dead today; seeders is the number to read when picking a
 torrent by hand, and a release with 0 seeders is shown in red. Peers is
 seeders plus leechers, as the indexer counts them. Usenet results, and torrent
 indexers that leave the counts out, show neither.
+
+Automatic search also reads seeders (#3953). A torrent its indexer reports with
+0 seeders is never grabbed automatically, since nothing can finish it: Bindery
+takes the next release instead, and if every candidate is dead it grabs nothing
+and the book stays Wanted for a later search to find a seeded copy. A torrent
+whose indexer does not report seeders is treated as unknown, not dead, and
+usenet is unaffected. Seeders also break ties between otherwise similar
+results, with a small capped bonus that never outweighs a better format or the
+grab count. Interactive search still lists and grabs zero seeder releases by hand.
 
 **Two language titles.** A translated book whose title is stored as
 "translated / original", such as "El imperio final / The Final Empire", is
@@ -854,8 +878,22 @@ files or their tags.
 If the library app downstream reads sidecar metadata, turn on **Write a
 metadata.opf sidecar** in Settings → General (off by default). Bindery then
 writes a Calibre style `metadata.opf` next to each imported ebook and
-audiobook with its own title, author, series and identifiers, and refreshes it
-on Reorganize. The book file itself is never modified.
+audiobook with its own title, author, series and identifiers. The book file
+itself is never modified.
+
+Reorganize also refreshes the sidecar, for every book it touches: one it moves
+and one that is already in the right place (#4008, #4034), so a library gets
+consistent sidecars without renaming anything. It only
+writes a `metadata.opf` that is missing or that Bindery wrote itself (new files
+carry a `bindery:generator` marker). A `metadata.opf` from Calibre,
+Audiobookshelf or a hand edit is left alone and counted as skipped, and a file
+that is already up to date is not rewritten. A folder that holds more than one book (a flat
+template such as `{Author}/{Title}.{ext}`) gets no sidecar, since one file cannot
+describe two books, and a `metadata.opf` that is a symlink is never replaced.
+When Reorganize finds a folder is shared and it holds a `metadata.opf` that
+Bindery wrote earlier, it removes that stale file. Formats in External import mode
+are skipped, unless Reorganize also moves the file after you confirm. A write that fails, say on a read only mount, is reported for that
+book and the run carries on. Imports still replace an existing sidecar.
 
 **Queue and History.** The Queue page shows live downloads and, importantly,
 the recovery actions: **Retry import** (after fixing a path remap), **Retry
@@ -1276,7 +1314,10 @@ each destination on the server rather than trusting the list you were shown, so
 a file that changed under you is skipped instead of moved somewhere stale. A
 move is always a move, never a copy, so hardlinks survive and nothing is
 duplicated. Bindery also prunes the folder a file left behind when it empties,
-and refreshes the `metadata.opf` sidecar when you have that turned on.
+and refreshes the `metadata.opf` sidecar when you have that turned on (see
+above for what it will and will not overwrite). The dialog also lists files that
+are already correct but still need a sidecar, and the result counts how many
+sidecars were written and how many were skipped.
 
 An audiobook folder moves as a whole, so one that also holds a file another
 book tracks (say a second copy of the same title added from another metadata

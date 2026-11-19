@@ -10,6 +10,7 @@ import { FilterGroup } from '../components/FilterPopover'
 import FilterBar from '../components/FilterBar'
 import DataTable, { type Column } from '../components/DataTable'
 import Checkbox from '../components/Checkbox'
+import { selectingCardProps } from '../components/selectingClick'
 import { nextSort, splitSort } from '../components/tableSort'
 import { SkeletonCards, SkeletonRows } from '../components/Skeleton'
 import EmptyState from '../components/EmptyState'
@@ -533,7 +534,9 @@ export default function BooksPage() {
                     className={selectedIds.has(book.id) ? '' : 'bg-white/80 dark:bg-zinc-900/80'}
                   />
                 </label>
-                <Link to={`/book/${book.id}`} state={bookNavState(i)} aria-label={book.title} className="block w-full h-full rounded-t-lg focus-visible:-outline-offset-2">
+                {/* While selecting, a click or Enter/Space on the cover toggles
+                    the book instead of opening it (#3960). */}
+                <Link to={`/book/${book.id}`} state={bookNavState(i)} aria-label={book.title} {...selectingCardProps(selectedIds.size > 0, () => toggleSelect(book.id))} className="block w-full h-full rounded-t-lg focus-visible:-outline-offset-2">
                   <CoverImage loading="lazy" decoding="async" src={book.imageUrl} alt={book.title} className="w-full h-full object-cover"
                     fallback={<CoverPlaceholder id={book.id} title={book.title} show="initials" className="w-full h-full" />}
                   />

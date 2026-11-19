@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/vavallee/bindery/internal/downloader/rttest"
 )
 
 // multicallRow renders one d.multicall2 row with the given column values as
@@ -199,9 +201,6 @@ func TestPerTorrentCalls_TransportErrors(t *testing.T) {
 	if _, err := c.Files(ctx, magnetHash); err == nil || !strings.Contains(err.Error(), "f.multicall") {
 		t.Errorf("Files err = %v", err)
 	}
-	if err := c.SetLabel(ctx, magnetHash, "books"); err == nil || !strings.Contains(err.Error(), "d.custom1.set") {
-		t.Errorf("SetLabel err = %v", err)
-	}
 }
 
 func TestFiles_SkipsUnusableRows(t *testing.T) {
@@ -299,7 +298,7 @@ func (errReader) Read([]byte) (int, error) { return 0, errors.New("connection re
 
 func TestCall_BodyReadError(t *testing.T) {
 	c := newTestClient(t, "http://h:1/RPC2")
-	c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	c.http.Transport = rttest.Func(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(errReader{}), Request: r}, nil
 	})
 	if _, err := c.Version(context.Background()); err == nil || !strings.Contains(err.Error(), "read body") {
@@ -309,10 +308,6 @@ func TestCall_BodyReadError(t *testing.T) {
 		t.Error("readRPCBody must surface a read error")
 	}
 }
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // ---------------------------------------------------------------- SCGI
 

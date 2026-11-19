@@ -87,9 +87,6 @@ func TestHistoryListPage_DeletedBookHistoryStaysWithOwner(t *testing.T) {
 	}
 	for name, list := range map[string]func() ([]models.HistoryEvent, error){
 		"ListForUser": func() ([]models.HistoryEvent, error) { return history.ListForUser(ctx, bob.ID) },
-		"ListByTypeAndUser": func() ([]models.HistoryEvent, error) {
-			return history.ListByTypeAndUser(ctx, models.HistoryEventGrabbed, bob.ID)
-		},
 	} {
 		if evs, err := list(); err != nil || len(evs) != 0 {
 			t.Errorf("%s(bob) = %d rows, %v; want none", name, len(evs), err)

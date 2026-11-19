@@ -397,6 +397,33 @@ describe('BookDetailPage — header & metadata', () => {
   })
 })
 
+describe('BookDetailPage Open in BookOrbit', () => {
+  it('links to the book in BookOrbit in a new tab', async () => {
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ bookOrbitUrl: 'https://books.example.com/bookorbit/book/61' }))
+    renderBookDetailPage()
+    const link = await screen.findByRole('link', { name: /Open this book in BookOrbit/ })
+    expect(link).toHaveAttribute('href', 'https://books.example.com/bookorbit/book/61')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link.getAttribute('rel')).toContain('noopener')
+    expect(link.getAttribute('rel')).toContain('noreferrer')
+    expect(link).toHaveTextContent('Open in BookOrbit')
+  })
+
+  it('renders nothing when the book has no BookOrbit link', async () => {
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByText(/Open in BookOrbit/)).not.toBeInTheDocument()
+  })
+
+  it('renders nothing for a non admin even if a link slipped into the payload', async () => {
+    asAnotherUser()
+    vi.mocked(api.getBook).mockResolvedValue(makeBook({ bookOrbitUrl: 'https://books.example.com/book/61' }))
+    renderBookDetailPage()
+    await screen.findByRole('heading', { name: 'The Final Empire' })
+    expect(screen.queryByText(/Open in BookOrbit/)).not.toBeInTheDocument()
+  })
+})
+
 // Every delete lives in the File section's More menu. Opens it and picks one.
 async function sectionDelete(name: string | RegExp) {
   const actions = within(await screen.findByTestId('file-section-actions'))
@@ -2607,5 +2634,91 @@ describe('BookDetailPage release date time zone', () => {
     renderBookDetailPage()
     expect(await screen.findByText(/Jan 1, 2014/)).toBeInTheDocument()
     expect(screen.queryByText(/Dec 31, 2013/)).toBeNull()
+  })
+})
+
+describe('BookDetailPage history rows', () => {
+  const missingTypes: Array<[string, string]> = [
+    ['bookRenamed', 'File renamed'],
+    ['downloadFolderImported', 'Folder imported'],
+    ['bookFileDeleted', 'File deleted'],
+    ['downloadStalled', 'Download stalled'],
+    ['downloadRequeued', 'Download requeued'],
+    ['bookRebound', 'Rebound'],
+    ['bookFileMoved', 'File moved'],
+    ['bookLanguageCorrected', 'Language corrected'],
+  ]
+
+  it.each(missingTypes)('labels a %s event instead of showing the raw type', async (eventType, label) => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ eventType, sourceTitle: '' })], total: 1, limit: 100, offset: 0,
+    })
+    renderBookDetailPage()
+    expect(await screen.findByText(label)).toBeInTheDocument()
+    expect(screen.queryByText(eventType)).not.toBeInTheDocument()
+  })
+
+  it('labels a held drop as held, not as a folder import', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ eventType: 'downloadFolderImported', data: '{"mode":"drop-hold"}' })], total: 1, limit: 100, offset: 0,
+    })
+    renderBookDetailPage()
+    expect(await screen.findByText('Held for pair')).toBeInTheDocument()
+    expect(screen.queryByText('Folder imported')).not.toBeInTheDocument()
+  })
+
+  it.each(['importFailed', 'downloadFailed', 'importRejected'])('shows the reason on a %s row', async eventType => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ eventType, data: '{"message":"no files matched the book"}' })], total: 1, limit: 100, offset: 0,
+    })
+    renderBookDetailPage()
+    expect(await screen.findByText('no files matched the book')).toBeInTheDocument()
+  })
+
+  it('renders a row whose data is the string null without throwing', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ eventType: 'downloadFolderImported', data: 'null' })], total: 1, limit: 100, offset: 0,
+    })
+    renderBookDetailPage()
+    expect(await screen.findByText('Folder imported')).toBeInTheDocument()
+  })
+
+  it('does not print the message of an event that is not a failure', async () => {
+    vi.mocked(api.listHistory).mockResolvedValue({
+      items: [makeHistory({ eventType: 'grabbed', data: '{"message":"queued"}' })], total: 1, limit: 100, offset: 0,
+    })
+    renderBookDetailPage()
+    await screen.findByText('Release grabbed')
+    expect(screen.queryByText('queued')).not.toBeInTheDocument()
+  })
+})
+
+describe('BookDetailPage failed grab', () => {
+  async function grabAndFail(error: unknown) {
+    vi.mocked(api.listIndexers).mockResolvedValue([makeIndexer()])
+    vi.mocked(api.searchBook).mockResolvedValue({ results: [makeResult({ guid: 'g1', title: 'Grab Me' })], debug: null })
+    vi.mocked(api.grab).mockRejectedValue(error)
+    renderBookDetailPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Search ebook indexers/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Grab' }))
+    return screen.findByRole('alert')
+  }
+
+  it('says the status when a proxy answers 503 with an empty body', async () => {
+    const alert = await grabAndFail(new ApiError(503, { error: '' }, ''))
+    expect(alert).toHaveTextContent('The server could not start that download (503). Try again.')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Grab' })).toBeEnabled())
+  })
+
+  it('shows the server message on a 400', async () => {
+    const alert = await grabAndFail(new ApiError(400, { error: 'release has no download link' }, 'Bad Request'))
+    expect(alert).toHaveTextContent('release has no download link')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Grab' })).toBeEnabled())
+  })
+
+  it('says the server could not be reached on a network failure', async () => {
+    const alert = await grabAndFail(new TypeError('Failed to fetch'))
+    expect(alert).toHaveTextContent('Could not reach the server to start that download')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Grab' })).toBeEnabled())
   })
 })

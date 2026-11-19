@@ -386,8 +386,8 @@ func TestBulk_BookSearch_DuplicateIDsSearchOnce(t *testing.T) {
 	}
 }
 
-// Under tenancy a book with no owner is open to every user, so the run of a
-// search one of them starts is theirs: they must be able to poll it.
+// Under tenancy a book with no owner is shared: only an admin may search it,
+// so the run of an admin's search of one is theirs, and nobody else reads it.
 func TestBulk_BookSearch_RunOfAnUnownedBookBelongsToTheActingUser(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	f := seedTwoUserBulk(t)
@@ -404,7 +404,7 @@ func TestBulk_BookSearch_RunOfAnUnownedBookBelongsToTheActingUser(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	item := decodeBulk(t, postBulkAs(t, f.h.BooksBulk, fmt.Sprintf(`{"ids":[%d],"action":"search"}`, orphan.ID), f.u1, auth.RoleUser)).Results[strconv.FormatInt(orphan.ID, 10)]
+	item := decodeBulk(t, postBulkAs(t, f.h.BooksBulk, fmt.Sprintf(`{"ids":[%d],"action":"search"}`, orphan.ID), f.u1, auth.RoleAdmin)).Results[strconv.FormatInt(orphan.ID, 10)]
 	if !item.Queued || item.RunID == "" {
 		t.Fatalf("search should queue: %+v", item)
 	}

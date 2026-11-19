@@ -791,3 +791,185 @@ func TestCovImpRollbackActionDisplayName(t *testing.T) {
 		t.Fatalf("rank for unknown type = %d, want 5", rank)
 	}
 }
+
+// TestCovImpRollback_KeepsLockedFields pins the lock through the real
+// rollback: a narrator the user locked after the run keeps the run's value,
+// the unlocked description rolls back, and the action is still a restore.
+func TestCovImpRollback_KeepsLockedFields(t *testing.T) {
+	t.Parallel()
+	env := covImpNewEnv(t)
+	ctx := context.Background()
+	item := sampleABSItem()
+	item.Title = "ABS Title"
+	item.Description = "ABS description."
+	book := covImpSeedExistingBook(t, env, item)
+	runID := runSingleABSImport(t, env.importer, item)
+
+	imported, _ := env.books.GetByID(ctx, book.ID)
+	if imported == nil || imported.Narrator != "Ray Porter" || imported.Description != "ABS description." {
+		t.Fatalf("book after import = %+v, want ABS narrator and description", imported)
+	}
+	imported.LockField(models.BookFieldNarrator)
+	if err := env.books.Update(ctx, imported); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := env.importer.Rollback(ctx, runID)
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if covImpActionsWith(result, "restore_book", "") == 0 {
+		t.Fatalf("actions = %+v, want restore_book", result.Actions)
+	}
+	got, _ := env.books.GetByID(ctx, book.ID)
+	if got == nil {
+		t.Fatal("book gone")
+	}
+	if got.Narrator != "Ray Porter" || !got.IsFieldLocked(models.BookFieldNarrator) {
+		t.Fatalf("rollback reverted a locked narrator: narrator=%q locked=%v", got.Narrator, got.LockedFields)
+	}
+	if got.Description != "Local description." {
+		t.Fatalf("unlocked description not rolled back: %q", got.Description)
+	}
+}
+
+// TestCovImpRollback_RestoresLockedWorkFieldTheRunOverwrote pins that the
+// rollback guard covers only the recording fields. The upstream metadata
+// merge still writes a locked description, and rollback is the way back from
+// that, so a locked work field is restored exactly as before the locks.
+func TestCovImpRollback_RestoresLockedWorkFieldTheRunOverwrote(t *testing.T) {
+	importer, _, bookRepo, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	provider := &stubABSMetadataProvider{
+		searchAuthors: []models.Author{{ForeignID: "OL-ANDY", Name: "Andy Weir"}},
+		authors: map[string]*models.Author{
+			"OL-ANDY": {ForeignID: "OL-ANDY", Name: "Andy Weir", MetadataProvider: "openlibrary"},
+		},
+		booksByISBN: map[string]*models.Book{
+			"9780593135204": {ForeignID: "OL-PHM", Title: "Project Hail Mary"},
+		},
+		books: map[string]*models.Book{
+			"OL-PHM": {ForeignID: "OL-PHM", Title: "Project Hail Mary", Description: "Upstream version of the story.", MetadataProvider: "openlibrary", Language: "eng"},
+		},
+	}
+	importer.WithMetadata(metadata.NewAggregator(provider))
+	item := sampleABSItem()
+	item.ISBN = "9780593135204"
+	item.Description = "ABS version of the story."
+	importer.enumerateFn = func(ctx context.Context, libraryID string, fn func(context.Context, NormalizedLibraryItem) error) (EnumerationStats, error) {
+		if err := fn(ctx, item); err != nil {
+			return EnumerationStats{}, err
+		}
+		return EnumerationStats{PagesScanned: 1, ItemsSeen: 1, ItemsNormalized: 1}, nil
+	}
+	cfg := ImportConfig{SourceID: DefaultSourceID, BaseURL: "https://abs.example.com", APIKey: "secret", LibraryID: item.LibraryID, Label: "Shelf", Enabled: true}
+	ctx := context.Background()
+	if _, err := importer.Run(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	books, _ := bookRepo.ListIncludingExcluded(ctx)
+	if len(books) != 1 {
+		t.Fatalf("books=%d, want 1", len(books))
+	}
+	b := books[0]
+	b.Description = "Mine."
+	b.LockField(models.BookFieldDescription)
+	if err := bookRepo.Update(ctx, &b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.Run(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	runs, _ := importer.RecentRuns(ctx, 1)
+	if len(runs) != 1 {
+		t.Fatalf("runs=%d", len(runs))
+	}
+	if _, err := importer.Rollback(ctx, runs[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := bookRepo.GetByID(ctx, b.ID)
+	if got.Description != "Mine." {
+		t.Fatalf("rollback did not restore the locked value the run overwrote: %q", got.Description)
+	}
+}
+
+// A rollback whose guarded write never lands must say so: the book counts as
+// failed and keeps its provenance link, so the run can be rolled back again.
+func TestCovImpRollback_CountsFailedWhenBookKeepsChanging(t *testing.T) {
+	env := covImpNewEnv(t)
+	provider := &stubABSMetadataProvider{
+		searchAuthors: []models.Author{{ForeignID: "OL-ANDY", Name: "Andy Weir"}},
+		authors: map[string]*models.Author{
+			"OL-ANDY": {ForeignID: "OL-ANDY", Name: "Andy Weir", MetadataProvider: "openlibrary"},
+		},
+		booksByISBN: map[string]*models.Book{
+			"9780593135204": {ForeignID: "OL-PHM", Title: "Project Hail Mary"},
+		},
+		books: map[string]*models.Book{
+			"OL-PHM": {ForeignID: "OL-PHM", Title: "Project Hail Mary", Description: "Upstream version of the story.", MetadataProvider: "openlibrary", Language: "eng"},
+		},
+	}
+	env.importer.WithMetadata(metadata.NewAggregator(provider))
+	item := sampleABSItem()
+	item.ISBN = "9780593135204"
+	item.Description = "ABS version of the story."
+	env.importer.enumerateFn = func(ctx context.Context, libraryID string, fn func(context.Context, NormalizedLibraryItem) error) (EnumerationStats, error) {
+		if err := fn(ctx, item); err != nil {
+			return EnumerationStats{}, err
+		}
+		return EnumerationStats{PagesScanned: 1, ItemsSeen: 1, ItemsNormalized: 1}, nil
+	}
+	cfg := ImportConfig{SourceID: DefaultSourceID, BaseURL: "https://abs.example.com", APIKey: "secret", LibraryID: item.LibraryID, Label: "Shelf", Enabled: true}
+	ctx := context.Background()
+	if _, err := env.importer.Run(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	books, _ := env.books.ListIncludingExcluded(ctx)
+	if len(books) != 1 {
+		t.Fatalf("books=%d, want 1", len(books))
+	}
+	b := books[0]
+	b.Description = "Mine."
+	if err := env.books.Update(ctx, &b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.importer.Run(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	runs, _ := env.importer.RecentRuns(ctx, 1)
+	if len(runs) != 1 {
+		t.Fatalf("runs=%d", len(runs))
+	}
+	before, _ := env.books.GetByID(ctx, b.ID)
+	if before.Description == "Mine." {
+		t.Fatalf("the second run did not overwrite the description, nothing to roll back")
+	}
+
+	// Every write to the row is swallowed, as if another writer kept
+	// touching it between each read and write.
+	env.exec(t, `CREATE TRIGGER keep_changing BEFORE UPDATE ON books BEGIN SELECT RAISE(IGNORE); END`)
+
+	res, err := env.importer.Rollback(ctx, runs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stats.Failed != 1 {
+		t.Fatalf("failed=%d, want 1: %+v", res.Stats.Failed, res.Actions)
+	}
+	var reason string
+	for _, a := range res.Actions {
+		if a.EntityType == entityTypeBook && a.LocalID == b.ID {
+			reason = a.Reason
+		}
+	}
+	if !strings.Contains(reason, "kept changing") {
+		t.Fatalf("book action reason %q does not say the write was lost", reason)
+	}
+	after, _ := env.books.GetByID(ctx, b.ID)
+	if after.Description != before.Description {
+		t.Fatalf("description changed although no write could land: %q", after.Description)
+	}
+	p, err := env.provenance.GetByExternal(ctx, DefaultSourceID, item.LibraryID, entityTypeBook, item.ItemID)
+	if err != nil || p == nil {
+		t.Fatalf("provenance link was removed for a book that was not restored (err=%v)", err)
+	}
+}

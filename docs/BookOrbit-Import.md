@@ -4,6 +4,8 @@ Bindery can learn what you already own from a [BookOrbit](https://github.com/boo
 
 It is a one way read. Bindery never writes to BookOrbit, and the import never moves, renames or deletes a file.
 
+To run Bindery and BookOrbit side by side for new books, see [BookOrbit integration](./BookOrbit-Integration-Wiki.md). This page covers importing a library BookOrbit already holds.
+
 Tested against BookOrbit 3.8.0. See [When BookOrbit changes](#when-bookorbit-changes) for what happens on other versions.
 
 ## Setup
@@ -14,7 +16,7 @@ BookOrbit has static API keys from the version that added **Settings > You > API
 
 Create a key with:
 
-- **Access: Read.** The import only reads.
+- **Access: Read only.** The import only reads.
 - **No extra permissions.**
 - **Libraries: only the ones you want imported.** A key limited to those libraries cannot see the rest, whatever Bindery is told.
 
@@ -28,6 +30,7 @@ Open **Settings > BookOrbit** (admins only) and fill in:
 |---|---|
 | Server URL | Where Bindery reaches BookOrbit, for example `http://bookorbit:3000`. A LAN or loopback address is fine. |
 | API key | The `bok_` key. Bindery stores it, never returns it, and shows only whether one is saved. Leave the field blank later to keep the saved key. |
+| BookOrbit address for your browser | Optional. The address your browser uses for BookOrbit, for example `https://books.example.com`, used only for the Open in BookOrbit link on the book page. Set it when your browser reaches BookOrbit at a different address than Bindery does (Bindery on `http://bookorbit:3000` inside Docker, your browser on a public name). Leave it empty and the link uses the Server URL. Only `http://` and `https://` addresses are accepted, trailing slashes are dropped, and a path such as `https://example.com/bookorbit` is kept. |
 | BookOrbit path remap | See below. |
 
 Save, then use **Test connection**. It reports the user the key belongs to and how many libraries the key can see. The test always uses the saved URL, so save a changed URL first.
@@ -74,7 +77,7 @@ An Audiobookshelf import and a BookOrbit import cannot run at the same time. The
 |---|---|
 | Books listed by BookOrbit | Books read from the selected libraries |
 | Books created | New Bindery books |
-| Books matched | Books linked to a Bindery book that already existed |
+| Books matched | Books linked to a Bindery book that already existed, or to one an earlier book of the same run created. BookOrbit lists a title that comes as an EPUB and as an M4B as two books, and Bindery files them as one book with both formats, so the second counts as matched. A preview counts it the same way. |
 | Books already imported | Books an earlier run brought in, refreshed |
 | Authors created, Series created | New Bindery authors and series |
 | Files registered | Ebook and audiobook files (or audiobook folders) recorded as owned. In a preview this is the number that would be. |
@@ -93,6 +96,15 @@ An Audiobookshelf import and a BookOrbit import cannot run at the same time. The
 - Audiobook files: a single file is registered as that file, a book of several tracks as their common folder
 
 A book with both an ebook and an audiobook in BookOrbit becomes one Bindery book with both formats.
+
+## Open in BookOrbit
+
+A book that an import matched to an existing Bindery book, or created, remembers which BookOrbit book it came from. Its page then shows an **Open in BookOrbit** link, next to the metadata source links, that opens `<address>/book/<id>` in a new tab.
+
+- **Admins only.** The link is shown to admin accounts. Other users never receive it, because it is built from BookOrbit settings that only admins can see. Neither the server URL nor the API key is ever part of a book response.
+- **Only books a real import touched.** A preview writes nothing, so it adds no link. A book whose match was ambiguous is reported as failed and gets no link, because nothing is guessed. A book Bindery handed to BookOrbit through External mode or the Book Dock, but never imported from BookOrbit, has no link. Run an import to link it.
+- **Which address.** The browser address if you set one, otherwise the Server URL. An address that is not `http` or `https` is never used, and no link is shown.
+- **After a BookOrbit rebuild.** If BookOrbit was rebuilt and numbers its books again, run the import again. Each book that matches again takes the new id.
 
 ## What is not imported
 
@@ -136,6 +148,7 @@ Other failures are reported the same way, before any write: a rejected or expire
 | Test connection says the key was rejected | The key was revoked, has expired, or its owner lost the Create API keys permission |
 | A library is missing from the list | The key is limited to other libraries |
 | "another library import is running" | An Audiobookshelf or BookOrbit import is in progress |
+| A book's result says "not linked to a metadata provider" | Several works by that author on the metadata provider share the book's title, so Bindery picked none rather than guess. The book imported with BookOrbit's details and its files are registered. A book or author that already has a provider link never shows this |
 | The address is refused when saving | Bindery blocks cloud metadata and link local addresses. LAN and loopback addresses are allowed. |
 
 ## For contributors

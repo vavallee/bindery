@@ -33,8 +33,7 @@ func (r *SeriesRepo) WithTx(tx *sql.Tx) *SeriesRepo {
 }
 
 func (r *SeriesRepo) List(ctx context.Context) ([]models.Series, error) {
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, foreign_id, title, description, monitored, genre_override, created_at FROM series ORDER BY title")
+	rows, err := r.db.QueryContext(ctx, "SELECT "+seriesColumns+" FROM series ORDER BY title")
 	if err != nil {
 		return nil, fmt.Errorf("list series: %w", err)
 	}
@@ -42,14 +41,8 @@ func (r *SeriesRepo) List(ctx context.Context) ([]models.Series, error) {
 
 	var series []models.Series
 	for rows.Next() {
-		var s models.Series
-		var monitored int
-		var genreOverride sql.NullString
-		if err := rows.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &genreOverride, &s.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan series: %w", err)
-		}
-		s.Monitored = monitored == 1
-		if err := applyGenreOverride(&s, genreOverride); err != nil {
+		s, err := scanSeries(rows)
+		if err != nil {
 			return nil, err
 		}
 		series = append(series, s)
@@ -73,8 +66,10 @@ func (r *SeriesRepo) ListWithBooks(ctx context.Context) ([]models.Series, error)
 // row), so a non-admin can no longer enumerate other users' titles through
 // the series view. userID 0 = unscoped (admin / tenancy off). Legacy
 // NULL-owned books stay visible to everyone, matching the include-NULL tier
-// used by the book and history lists. Series rows themselves are global —
-// one series can span books owned by different users.
+// used by the book and history lists. A series row is stored once (one
+// foreign id, one row, whoever's books link to it), but it is visible to a
+// non-admin only while it links at least one book they can see; a series with
+// no books at all is visible to userID 0 only.
 func (r *SeriesRepo) ListWithBooksForUser(ctx context.Context, userID int64) ([]models.Series, error) {
 	return r.listWithBooksForUser(ctx, userID, nil)
 }
@@ -90,9 +85,9 @@ func (r *SeriesRepo) ListWithBooksForUser(ctx context.Context, userID int64) ([]
 // the page's series ids by title; the second is the same JOIN the unpaginated
 // path uses, restricted to those ids.
 //
-// Total counts series rows, which are global — one series can span books owned
-// by different users, and the unpaginated path returns every series row too,
-// so scoping the count would make it disagree with the rows it describes.
+// Total counts the series the caller can see (see seriesVisibleWhere), the
+// same set the unpaginated path returns, so it always agrees with the rows it
+// describes.
 func (r *SeriesRepo) ListPageWithBooksForUser(ctx context.Context, userID int64, limit, offset int) ([]models.Series, int, error) {
 	if limit <= 0 {
 		limit = 50
@@ -101,13 +96,15 @@ func (r *SeriesRepo) ListPageWithBooksForUser(ctx context.Context, userID int64,
 		offset = 0
 	}
 
+	visible, visArgs := seriesVisibleWhere("series", userID)
 	var total int
-	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM series").Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM series"+visible, visArgs...).Scan(&total); err != nil { //nolint:gosec // G202: visible is a fixed predicate; the user id is a bound arg
 		return nil, 0, fmt.Errorf("count series: %w", err)
 	}
 
 	ids, err := func() ([]int64, error) {
-		rows, err := r.db.QueryContext(ctx, "SELECT id FROM series ORDER BY title LIMIT ? OFFSET ?", limit, offset)
+		pageArgs := append(append([]any{}, visArgs...), limit, offset)
+		rows, err := r.db.QueryContext(ctx, "SELECT id FROM series"+visible+" ORDER BY title LIMIT ? OFFSET ?", pageArgs...) //nolint:gosec // G202: visible is a fixed predicate; every value is a bound arg
 		if err != nil {
 			return nil, fmt.Errorf("list series page ids: %w", err)
 		}
@@ -136,6 +133,22 @@ func (r *SeriesRepo) ListPageWithBooksForUser(ctx context.Context, userID int64,
 	return series, total, nil
 }
 
+// seriesVisibleWhere returns a WHERE clause (with a leading space, or empty
+// for userID 0) that keeps only series linked to at least one book the user
+// can see: their own or unowned. table is the alias the series row has in the
+// surrounding query.
+func seriesVisibleWhere(table string, userID int64) (string, []any) {
+	if userID == 0 {
+		return "", nil
+	}
+	return " WHERE " + seriesVisiblePredicate(table), []any{userID}
+}
+
+func seriesVisiblePredicate(table string) string {
+	return "EXISTS (SELECT 1 FROM series_books vsb JOIN books vb ON vb.id = vsb.book_id" +
+		" WHERE vsb.series_id = " + table + ".id AND (vb.owner_user_id = ? OR vb.owner_user_id IS NULL))"
+}
+
 // listWithBooksForUser backs both the full list and one page of it. A nil
 // seriesIDs means every series; otherwise the JOIN is restricted to those ids,
 // in the same title order.
@@ -146,14 +159,24 @@ func (r *SeriesRepo) listWithBooksForUser(ctx context.Context, userID int64, ser
 		bookJoin += " AND (b.owner_user_id = ? OR b.owner_user_id IS NULL)"
 		args = append(args, userID)
 	}
-	where := ""
+	// The visibility predicate comes first in the SQL, so its bound id must be
+	// the first arg after the join's own.
+	var conds []string
+	if userID != 0 {
+		conds = append(conds, seriesVisiblePredicate("s"))
+		args = append(args, userID)
+	}
 	if seriesIDs != nil {
 		placeholders := make([]string, len(seriesIDs))
 		for i, id := range seriesIDs {
 			placeholders[i] = "?"
 			args = append(args, id)
 		}
-		where = " WHERE s.id IN (" + strings.Join(placeholders, ",") + ")"
+		conds = append(conds, "s.id IN ("+strings.Join(placeholders, ",")+")")
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
 	}
 	//nolint:gosec // G202: the interpolated fragments are a fixed join clause and generated ? placeholders; every user value stays a bound arg
 	rows, err := r.db.QueryContext(ctx, `
@@ -292,6 +315,27 @@ func (r *SeriesRepo) SetMonitored(ctx context.Context, id int64, monitored bool)
 	return err
 }
 
+// seriesColumns is the series row every single-table getter selects, in the
+// order scanSeries reads it. Keep the two together: a getter with its own
+// column list is how GetByForeignID came to drop genre_override.
+const seriesColumns = "id, foreign_id, title, description, monitored, genre_override, created_at"
+
+// scanSeries reads one seriesColumns row. The error wraps sql.ErrNoRows
+// unchanged, so single-row callers can still test for it with errors.Is.
+func scanSeries(row rowScanner) (models.Series, error) {
+	var s models.Series
+	var monitored int
+	var genreOverride sql.NullString
+	if err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &genreOverride, &s.CreatedAt); err != nil {
+		return models.Series{}, fmt.Errorf("scan series: %w", err)
+	}
+	s.Monitored = monitored == 1
+	if err := applyGenreOverride(&s, genreOverride); err != nil {
+		return models.Series{}, err
+	}
+	return s, nil
+}
+
 // applyGenreOverride decodes the nullable genre_override column onto s. A NULL
 // column means no override; a non-NULL empty array deliberately means "keep
 // genres empty and locked", which is why GenreOverrideSet is tracked
@@ -417,24 +461,15 @@ func (r *SeriesRepo) GetByID(ctx context.Context, id int64) (*models.Series, err
 }
 
 // GetByIDForUser is GetByID with per-user book scoping (#1457) — see
-// ListWithBooksForUser for the semantics.
+// ListWithBooksForUser for the semantics. For userID != 0 it returns nil, nil
+// when the series links none of the caller's visible books.
 func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*models.Series, error) {
-	row := r.db.QueryRowContext(ctx,
-		"SELECT id, foreign_id, title, description, monitored, genre_override, created_at FROM series WHERE id=?", id)
-
-	var s models.Series
-	var monitored int
-	var genreOverride sql.NullString
-	err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &genreOverride, &s.CreatedAt)
-	s.Monitored = monitored == 1
+	s, err := scanSeries(r.db.QueryRowContext(ctx, "SELECT "+seriesColumns+" FROM series WHERE id=?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get series %d: %w", id, err)
-	}
-	if err := applyGenreOverride(&s, genreOverride); err != nil {
-		return nil, err
 	}
 
 	// Fetch series books with minimal book data, scoped to the caller's
@@ -452,7 +487,7 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 		ORDER BY sb.position_in_series`
 	bookRows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return &s, nil
+		return nil, fmt.Errorf("get series %d books: %w", id, err)
 	}
 	defer bookRows.Close()
 
@@ -478,6 +513,11 @@ func (r *SeriesRepo) GetByIDForUser(ctx context.Context, id, userID int64) (*mod
 
 	if err := bookRows.Err(); err != nil {
 		return nil, err
+	}
+	// A non-admin sees a series only through a book they can see. One with no
+	// such book answers like a missing row, so its existence does not leak.
+	if userID != 0 && len(s.Books) == 0 {
+		return nil, nil
 	}
 	link, err := r.GetHardcoverLink(ctx, s.ID)
 	if err != nil {
@@ -811,12 +851,8 @@ func (r *SeriesRepo) DeleteHardcoverLink(ctx context.Context, seriesID int64) er
 // with that id, or the series it was merged into (#2554). It resolves through
 // seriesByForeignIDSQL, the one place a provider id is looked up.
 func (r *SeriesRepo) GetByForeignID(ctx context.Context, foreignID string) (*models.Series, error) {
-	row := r.exec.QueryRowContext(ctx,
-		"SELECT id, foreign_id, title, description, monitored, created_at FROM series WHERE id = ("+seriesByForeignIDSQL+")", foreignID, foreignID)
-	var s models.Series
-	var monitored int
-	err := row.Scan(&s.ID, &s.ForeignID, &s.Title, &s.Description, &monitored, &s.CreatedAt)
-	s.Monitored = monitored == 1
+	s, err := scanSeries(r.exec.QueryRowContext(ctx,
+		"SELECT "+seriesColumns+" FROM series WHERE id = ("+seriesByForeignIDSQL+")", foreignID, foreignID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

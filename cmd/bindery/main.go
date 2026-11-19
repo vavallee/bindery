@@ -316,6 +316,7 @@ func main() {
 	metaAgg := metadata.NewAggregator(bootProviders.primary, bootProviders.enrichers...)
 	metaAgg.SetAuthorEnrichers(bootProviders.authorEnrichers...)
 	metaAgg.SetAudiobookSourcesDisabled(bootProviders.audibleOff, bootProviders.audnexOff)
+	metaAgg.SetAudnexRegion(bootProviders.audnexRegion)
 
 	// Optional CLI subcommand: `bindery migrate {csv,readarr} <path>`.
 	// Runs the import and exits; does not start the HTTP server. Useful
@@ -711,6 +712,7 @@ func main() {
 		WithEditionHydration(editionRepo).
 		WithRoots(libraryRoots).
 		WithCoverStore(coverStore).
+		WithBookOrbitLinks(absProvenanceRepo).
 		WithLifetimeCtx(appCtx)
 	// Interactive search records what it returns here, and a grab from a
 	// non-admin account is held to it: it can grab a search result, not make
@@ -1077,6 +1079,7 @@ func main() {
 		r.Delete("/book/{id}/file", bookHandler.DeleteFile)
 		r.Put("/book/{id}/exclude", bookHandler.ToggleExcluded)
 		r.Get("/book/{id}/series-exclusions", bookHandler.SeriesExclusions)
+		r.Put("/book/{id}/edition/{editionId}", bookHandler.UpdateEdition)
 		r.Post("/book/{id}/rebind", bookHandler.Rebind)
 		r.Post("/book/{id}/enrich-audiobook", bookHandler.EnrichAudiobook)
 		registerBookCoverRoutes(r, bookHandler)

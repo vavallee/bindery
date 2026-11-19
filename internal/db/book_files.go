@@ -185,22 +185,6 @@ func (r *BookFileRepo) Add(ctx context.Context, bookID int64, format, path strin
 	return err
 }
 
-// AddIfMissing records a new on-disk file and reports whether this call is the
-// one that made the row the book's (see TrackResult.Created). A path the book
-// already tracks comes back false; a path another book owns comes back as
-// *PathOwnedError rather than being stolen or reported as handled.
-//
-// Callers that need to know what they own use this instead of Add: the Calibre
-// importer may only claim, and later roll back, a file row it actually created
-// (#1635), mirroring SeriesRepo.LinkBookIfMissing.
-func (r *BookFileRepo) AddIfMissing(ctx context.Context, bookID int64, format, path string) (bool, error) {
-	res, err := r.Track(ctx, bookID, format, path)
-	if err != nil {
-		return false, err
-	}
-	return res.Created(), nil
-}
-
 // MoveToBook makes bookID the owner of path, whoever held it before, and
 // returns the previous owner (0 when the path was untracked, bookID when it
 // was already the book's). It is for the explicit "this file belongs to that
@@ -567,6 +551,34 @@ func (r *BookFileRepo) ListAllPaths(ctx context.Context) ([]string, error) {
 		paths = append(paths, p)
 	}
 	return paths, rows.Err()
+}
+
+// FileOwner is one book_files row reduced to who tracks which path.
+type FileOwner struct {
+	BookID int64
+	Path   string
+	Format string
+}
+
+// ListLiveFileOwners returns every book_files row whose book still exists, in
+// one query. Reorganize builds its per-run folder index from it instead of
+// asking one LIKE query per file.
+func (r *BookFileRepo) ListLiveFileOwners(ctx context.Context) ([]FileOwner, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT bf.book_id, bf.path, bf.format FROM book_files bf JOIN books b ON b.id = bf.book_id`)
+	if err != nil {
+		return nil, fmt.Errorf("book_files list live owners: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []FileOwner
+	for rows.Next() {
+		var o FileOwner
+		if err := rows.Scan(&o.BookID, &o.Path, &o.Format); err != nil {
+			return nil, fmt.Errorf("book_files scan live owner: %w", err)
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
 }
 
 // RecentEbookPaths returns up to limit ebook paths, newest first. The Calibre

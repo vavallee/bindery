@@ -337,24 +337,6 @@ func TestTenancyScopedReads_Coverage(t *testing.T) {
 		if evs, _ := repo.ListForUser(ctx, 0); len(evs) != 4 {
 			t.Fatalf("ListForUser(0) = %v", titles(evs))
 		}
-		evs, err = repo.ListByBookAndUser(ctx, aliceBook.ID, bob)
-		if err != nil || len(evs) != 0 {
-			t.Fatalf("ListByBookAndUser(alice's book, bob) = %v, %v; want nothing", titles(evs), err)
-		}
-		evs, err = repo.ListByBookAndUser(ctx, aliceBook.ID, alice)
-		if err != nil || !same(titles(evs), "h-a-import", "h-a-grab") {
-			t.Fatalf("ListByBookAndUser(alice) = %v, %v", titles(evs), err)
-		}
-		if evs, _ := repo.ListByBookAndUser(ctx, bobBook.ID, 0); !same(titles(evs), "h-b-grab") {
-			t.Fatalf("ListByBookAndUser(bob's book, 0) = %v", titles(evs))
-		}
-		evs, err = repo.ListByTypeAndUser(ctx, models.HistoryEventGrabbed, bob)
-		if err != nil || !same(titles(evs), "h-b-grab") {
-			t.Fatalf("ListByTypeAndUser(grabbed, bob) = %v, %v", titles(evs), err)
-		}
-		if evs, _ := repo.ListByTypeAndUser(ctx, models.HistoryEventGrabbed, 0); len(evs) != 3 {
-			t.Fatalf("ListByTypeAndUser(grabbed, 0) = %v", titles(evs))
-		}
 
 		if owner, ok, err := repo.GetOwnerByID(ctx, events[2].ID); err != nil || !ok || owner != bob {
 			t.Fatalf("GetOwnerByID(bob's event) = %d,%v,%v", owner, ok, err)

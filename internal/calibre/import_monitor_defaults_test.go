@@ -89,3 +89,29 @@ func TestImporter_HonoursDefaultMonitorLatestCount(t *testing.T) {
 		t.Errorf("MonitorLatestCount = %d, want 4", authors[0].MonitorLatestCount)
 	}
 }
+
+// The Calibre importer pins monitor new items to none because a library is a
+// partial catalogue by design. The install wide default (#3958) must not move
+// that pin, whichever way it is set.
+func TestImporter_PinsMonitorNewItemsWhateverTheDefault(t *testing.T) {
+	for _, setting := range []string{"all", "none"} {
+		t.Run("default "+setting, func(t *testing.T) {
+			imp, fr, authorRepo, _, _, _, settingsRepo := newImporterFixture(t)
+			ctx := context.Background()
+			if err := settingsRepo.Set(ctx, db.SettingAuthorDefaultMonitorNewItems, setting); err != nil {
+				t.Fatal(err)
+			}
+			fr.books = []CalibreBook{sampleCalibreBook(1, "Book One", "Alice Author")}
+			if _, err := imp.Run(ctx, "/lib"); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			authors, err := authorRepo.List(ctx)
+			if err != nil || len(authors) != 1 {
+				t.Fatalf("authors = %d, err %v", len(authors), err)
+			}
+			if got := authors[0].MonitorNewItems; got != models.AuthorMonitorNewItemsNone {
+				t.Errorf("MonitorNewItems = %q, want the importer's pin (none)", got)
+			}
+		})
+	}
+}

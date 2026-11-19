@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // endedAt fakes the final request of a fetch chain — the URL the redirects
@@ -75,6 +76,18 @@ func TestError_RawSnippetIsCapped(t *testing.T) {
 	err := Error("https://indexer.example.com/getnzb", &http.Response{StatusCode: 500, Request: endedAt(t, "https://indexer.example.com/getnzb")}, []byte(strings.Repeat("x", MaxErrorBody)))
 	if msg := err.Error(); len(msg) > rawBodyCap+200 {
 		t.Errorf("raw body not capped, error is %d bytes", len(msg))
+	}
+}
+
+// TestError_RawSnippetCutsOnARuneBoundary: the capped excerpt ends up on the
+// download row, the history entry and webhook payloads, so a cut through a
+// multi-byte character must not leave invalid UTF-8 behind. The leading "x"
+// puts every two-byte "é" on an odd offset, so a fixed byte cut lands inside one.
+func TestError_RawSnippetCutsOnARuneBoundary(t *testing.T) {
+	body := "x" + strings.Repeat("é", MaxErrorBody)
+	err := Error("https://indexer.example.com/getnzb", &http.Response{StatusCode: 500, Request: endedAt(t, "https://indexer.example.com/getnzb")}, []byte(body))
+	if msg := err.Error(); !utf8.ValidString(msg) {
+		t.Errorf("error message is not valid UTF-8: %q", msg[len(msg)-8:])
 	}
 }
 

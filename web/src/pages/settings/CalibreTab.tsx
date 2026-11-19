@@ -590,7 +590,7 @@ function CalibreSection({
               <button
                 onClick={startSync}
                 disabled={!!syncProgress?.queueing || (!pulling && !pluginURL)}
-                className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+                className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
                 title={!pulling && !pluginURL ? t('settings.calibre.pushAll.needPluginUrl') : ''}
               >
                 {syncProgress?.queueing ? t('settings.calibre.pushAll.queueing') : t('settings.calibre.pushAll.label')}
@@ -652,7 +652,7 @@ function CalibreSection({
                 <button
                   onClick={startImport}
                   disabled={importProgress?.running || !settings['calibre.library_path']}
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+                  className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
                 >
                   {importProgress?.running ? t('settings.calibre.import.running', 'Importing…') : t('settings.calibre.import.start', 'Import library')}
                 </button>
@@ -842,7 +842,7 @@ function CalibreRunsList({
                 onClick={() => onRollback(run)}
                 disabled={rolledBack || running}
                 className={`px-3 py-1.5 rounded text-xs font-medium text-white disabled:opacity-50 ${
-                  rolledBack ? 'bg-slate-500 cursor-not-allowed' : 'bg-amber-600 hover:bg-amber-500'
+                  rolledBack ? 'bg-slate-500 cursor-not-allowed' : 'bg-amber-700 hover:bg-amber-800'
                 }`}
                 title={rolledBack ? t('settings.calibre.runs.rolledBack') : ''}
               >
@@ -1025,7 +1025,7 @@ export function CalibreRollbackModal({
             <button
               onClick={apply}
               disabled={applying || previewLoading || !!error || nothingToRollBack}
-              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 rounded text-sm font-medium text-white disabled:opacity-50"
+              className="px-3 py-1.5 bg-amber-700 hover:bg-amber-800 rounded text-sm font-medium text-white disabled:opacity-50"
             >
               {applying ? t('settings.calibre.runs.applying') : t('settings.calibre.runs.applyRollback')}
             </button>

@@ -109,7 +109,7 @@ export default function NamingTemplateField({
               className={
                 greyed
                   ? 'px-2 py-0.5 rounded text-[11px] font-mono border border-slate-200 dark:border-zinc-800 text-slate-400 dark:text-zinc-600 cursor-not-allowed line-through'
-                  : 'px-2 py-0.5 rounded text-[11px] font-mono border border-slate-300 dark:border-zinc-700 text-slate-700 dark:text-zinc-300 hover:bg-emerald-600 hover:border-emerald-600 hover:text-white dark:hover:text-white transition-colors'
+                  : 'px-2 py-0.5 rounded text-[11px] font-mono border border-slate-300 dark:border-zinc-700 text-slate-700 dark:text-zinc-300 hover:bg-emerald-700 hover:border-emerald-700 hover:text-white dark:hover:text-white transition-colors'
               }
             >
               {tok.token}

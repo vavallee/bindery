@@ -21,7 +21,28 @@ import (
 const (
 	SettingAuthorDefaultMonitorMode        = "author.default_monitor_mode"
 	SettingAuthorDefaultMonitorLatestCount = "author.default_monitor_latest_count"
+	// SettingAuthorDefaultMonitorNewItems is the install wide default for an
+	// author's "Monitor newly discovered books" policy: "all" lets a refresh
+	// add books it discovers, "none" keeps the catalogue as it was added (#3958).
+	SettingAuthorDefaultMonitorNewItems = "author.default_monitor_new_items"
 )
+
+// ResolveAuthorMonitorNewItemsDefault returns the install wide default for an
+// author's monitor new items policy. It falls back to the built-in "all" when
+// the setting is unset, unreadable or holds anything but "all" or "none", so a
+// row written by hand can never put an author into a policy the UI cannot
+// express.
+func ResolveAuthorMonitorNewItemsDefault(ctx context.Context, settings *SettingsRepo) string {
+	if settings == nil {
+		return models.DefaultAuthorMonitorNewItems
+	}
+	if s, err := settings.Get(ctx, SettingAuthorDefaultMonitorNewItems); err == nil && s != nil {
+		if models.IsAuthorMonitorNewItemsValid(s.Value) {
+			return s.Value
+		}
+	}
+	return models.DefaultAuthorMonitorNewItems
+}
 
 // ResolveAuthorMonitorDefaults returns the install-wide default monitor mode
 // and latest-count, falling back to the built-in defaults when the settings are
@@ -72,5 +93,11 @@ func ApplyAuthorMonitorDefaults(ctx context.Context, settings *SettingsRepo, a *
 	}
 	if a.MonitorLatestCount <= 0 {
 		a.MonitorLatestCount = latestCount
+	}
+	// Same rule for the monitor new items policy (#3958): the importers that
+	// pin "none" (ABS, Calibre, Hardcover list sync) set a valid value and keep
+	// it, everything else leaves it empty and gets the install default.
+	if !models.IsAuthorMonitorNewItemsValid(a.MonitorNewItems) {
+		a.MonitorNewItems = ResolveAuthorMonitorNewItemsDefault(ctx, settings)
 	}
 }

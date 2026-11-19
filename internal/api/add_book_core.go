@@ -697,13 +697,31 @@ func (h *AuthorHandler) monitorBookAndSearch(ctx context.Context, book *models.B
 	// The run id lets the caller poll how this search ends (#3133); it is on
 	// the result and on the book the AddBook handler writes back.
 	runID := ""
-	if req.SearchOnAdd && h.searcher != nil {
-		runID = h.runs.Start(book.OwnerUserID, book.ID, string(indexer.OriginAdd))
-		book.SearchRunID = runID
-		go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(searchruns.WithRunID(h.bgCtx(), runID), indexer.OriginAdd), *book) // #nosec G118 -- intentional: search must outlive the request
+	if req.SearchOnAdd {
+		runID = h.startAddSearch(book)
 	}
 
 	return runID, nil
+}
+
+// startAddSearch starts the OriginAdd search for book in the background and
+// returns its run id, or "" when no searcher is wired. It is the one search
+// entry point the Add dialog and every request approval share.
+func (h *AuthorHandler) startAddSearch(book *models.Book) string {
+	if h.searcher == nil {
+		return ""
+	}
+	runID := h.runs.Start(book.OwnerUserID, book.ID, string(indexer.OriginAdd))
+	book.SearchRunID = runID
+	go h.searcher.SearchAndGrabBook(indexer.WithSearchOrigin(searchruns.WithRunID(h.bgCtx(), runID), indexer.OriginAdd), *book) // #nosec G118 -- intentional: search must outlive the request
+	return runID
+}
+
+// searchExistingBookCore searches a book already in the library without
+// changing it, for an approval whose book is monitored for the requested
+// format but has no file for it (#3961). The row is not written.
+func (h *AuthorHandler) searchExistingBookCore(_ context.Context, book *models.Book) string {
+	return h.startAddSearch(book)
 }
 
 // errBookChangedMeanwhile means a conditional save lost to a concurrent write

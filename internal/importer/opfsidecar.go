@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -22,6 +23,97 @@ import (
 // edition, or a merged ebook+audiobook pair) can share a folder, but two
 // different books never do (see DestPath/AudiobookDestDir).
 const opfSidecarFileName = "metadata.opf"
+
+// opfGeneratorMeta marks a sidecar as written by Bindery. Reorganize only
+// regenerates a metadata.opf that carries it (or the legacy shape below),
+// because a file next to the book may equally be Calibre's, Audiobookshelf's
+// or a hand edit, and none of those are Bindery's to overwrite.
+const opfGeneratorMeta = `<meta name="bindery:generator" content="bindery"/>`
+
+// isBinderyOPF reports whether data was written by Bindery. Sidecars from
+// before the marker existed are recognised by their shape: Bindery's own
+// unique-identifier id, which Calibre (uuid_id / calibre_id) never uses, and
+// no calibre:timestamp, which every Calibre written file has.
+func isBinderyOPF(data []byte) bool {
+	if bytes.Contains(data, []byte(opfGeneratorMeta)) {
+		return true
+	}
+	return bytes.Contains(data, []byte(`unique-identifier="bindery-id"`)) &&
+		!bytes.Contains(data, []byte("calibre:timestamp"))
+}
+
+// SidecarResult is what SyncOPFSidecarFile did, or would do, for one folder.
+type SidecarResult string
+
+const (
+	// SidecarWritten means the file was absent or Bindery's own and stale, so
+	// it was (or would be) written.
+	SidecarWritten SidecarResult = "written"
+	// SidecarUnchanged means Bindery's own file already holds this content, so
+	// nothing is rewritten and the mtime stays put.
+	SidecarUnchanged SidecarResult = "unchanged"
+	// SidecarForeign means a metadata.opf Bindery did not write is there, so
+	// it is left alone.
+	SidecarForeign SidecarResult = "foreign"
+	// SidecarSymlink means the folder or the metadata.opf in it is a symlink,
+	// which is never written through or replaced.
+	SidecarSymlink SidecarResult = "symlink"
+)
+
+// SyncOPFSidecarFile is the safe, idempotent counterpart of
+// WriteOPFSidecarFile that Reorganize uses. It writes metadata.opf only when
+// the file is absent or Bindery wrote it, and only when the content would
+// change. A foreign file is never touched. With dryRun it reports the same
+// outcome without writing. The import path keeps calling WriteOPFSidecarFile,
+// which overwrites unconditionally.
+func SyncOPFSidecarFile(dir string, roots []string, dryRun bool, book *models.Book, author *models.Author, edition *models.Edition, seriesTitle, seriesNum string) (SidecarResult, error) {
+	var target string
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rel, relErr := filepath.Rel(filepath.Clean(root), filepath.Clean(dir))
+		if relErr != nil || !filepath.IsLocal(rel) {
+			continue
+		}
+		target = filepath.Join(filepath.Clean(root), rel)
+		break
+	}
+	if target == "" {
+		return "", fmt.Errorf("opfsidecar: refusing to write outside configured library roots: %q", dir)
+	}
+	want, err := BuildOPFXML(book, author, edition, seriesTitle, seriesNum)
+	if err != nil {
+		return "", fmt.Errorf("opfsidecar: build xml: %w", err)
+	}
+	if folderIsLinked(roots, target) {
+		return SidecarSymlink, nil
+	}
+	// A symlink named metadata.opf was put there on purpose; never read
+	// through it or replace it.
+	if fi, lerr := os.Lstat(filepath.Join(target, opfSidecarFileName)); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return SidecarSymlink, nil
+	}
+	existing, err := os.ReadFile(filepath.Join(target, opfSidecarFileName))
+	switch {
+	case err == nil:
+		if !isBinderyOPF(existing) {
+			return SidecarForeign, nil
+		}
+		if bytes.Equal(existing, want) {
+			return SidecarUnchanged, nil
+		}
+	case !os.IsNotExist(err):
+		return "", fmt.Errorf("opfsidecar: read existing: %w", err)
+	}
+	if dryRun {
+		return SidecarWritten, nil
+	}
+	if err := WriteOPFSidecarFile(dir, roots, book, author, edition, seriesTitle, seriesNum); err != nil {
+		return "", err
+	}
+	return SidecarWritten, nil
+}
 
 // opfSidecarEnabled reports whether the opt-in "write a metadata.opf
 // sidecar" feature is on (import.write_opf_sidecar). Off by default: unlike
@@ -61,6 +153,71 @@ func (s *Scanner) writeOPFSidecar(ctx context.Context, dir string, roots []strin
 		return
 	}
 	slog.Info("opf sidecar: metadata.opf written", "bookID", book.ID, "dir", dir)
+}
+
+// RemoveBinderySidecar deletes dir's metadata.opf only when it carries the
+// Bindery generator marker, is a regular file and the folder is not linked.
+// Anything else, including a Calibre or hand written file, is left alone.
+func RemoveBinderySidecar(dir string, roots []string) (bool, error) {
+	var target string
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rel, relErr := filepath.Rel(filepath.Clean(root), filepath.Clean(dir))
+		if relErr != nil || !filepath.IsLocal(rel) {
+			continue
+		}
+		target = filepath.Join(filepath.Clean(root), rel)
+		break
+	}
+	if target == "" || folderIsLinked(roots, target) {
+		return false, nil
+	}
+	file := filepath.Join(target, opfSidecarFileName)
+	fi, err := os.Lstat(file)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false, nil
+	}
+	data, err := os.ReadFile(file)
+	if err != nil || !bytes.Contains(data, []byte(opfGeneratorMeta)) {
+		return false, nil
+	}
+	if err := os.Remove(file); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// folderIsLinked reports whether target reaches its library root through a
+// symlink, so a book folder that is a link (or sits under one inside the
+// library) is never written through. The root itself may be a link: it is
+// resolved first and the rest must match it step for step. A folder that does
+// not exist yet cannot be a link and is not reported.
+func folderIsLinked(roots []string, target string) bool {
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return false
+	}
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rel, relErr := filepath.Rel(filepath.Clean(root), target)
+		if relErr != nil || !filepath.IsLocal(rel) {
+			continue
+		}
+		realRoot, rerr := filepath.EvalSymlinks(root)
+		if rerr != nil {
+			return true
+		}
+		want := filepath.Join(realRoot, rel)
+		if runtime.GOOS == "windows" {
+			return !strings.EqualFold(realTarget, want)
+		}
+		return realTarget != want
+	}
+	return false
 }
 
 // WriteOPFSidecarFile renders book/author/edition metadata as a
@@ -220,6 +377,7 @@ func BuildOPFXML(book *models.Book, author *models.Author, edition *models.Editi
 	var uniqueID string
 	var meta bytes.Buffer
 
+	fmt.Fprintf(&meta, "    %s\n", opfGeneratorMeta)
 	fmt.Fprintf(&meta, "    <dc:title>%s</dc:title>\n", opfEscape(book.Title))
 	if strings.TrimSpace(book.SortTitle) != "" {
 		fmt.Fprintf(&meta, "    <meta name=\"calibre:title_sort\" content=%s/>\n", opfAttr(book.SortTitle))

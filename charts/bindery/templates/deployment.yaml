@@ -96,6 +96,9 @@ spec:
             - name: media
               mountPath: {{ .Values.nfs.mountPath }}
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -110,4 +113,11 @@ spec:
             server: {{ .Values.nfs.server }}
             path: {{ .Values.nfs.path }}
         {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       terminationGracePeriodSeconds: 30

@@ -701,3 +701,34 @@ func TestCoverLanguageMatches(t *testing.T) {
 		}
 	}
 }
+
+// TestAggregator_EnrichAudiobook_RespectsRecordingLocks pins that a locked
+// narrator or duration is not overwritten, and that a locked empty narrator is
+// not filled either (#2757 rule), while the unlocked field still updates.
+func TestAggregator_EnrichAudiobook_RespectsRecordingLocks(t *testing.T) {
+	client := &stubAudnexClient{books: map[string]*audnex.Book{
+		"B000LOCKED": {ASIN: "B000LOCKED", Narrators: []audnex.Person{{Name: "Audnex Narrator"}}, RuntimeLengthMin: 600},
+	}}
+	agg := newTestAggregator(&mockProvider{name: "ol"}).WithAudnexClient(client)
+
+	book := &models.Book{Title: "Audio", MediaType: models.MediaTypeAudiobook, ASIN: "B000LOCKED",
+		Narrator: "Rosario Dawson", DurationSeconds: 100, LockedFields: []string{models.BookFieldNarrator}}
+	if err := agg.EnrichAudiobook(context.Background(), book); err != nil {
+		t.Fatalf("EnrichAudiobook: %v", err)
+	}
+	if book.Narrator != "Rosario Dawson" {
+		t.Fatalf("locked narrator overwritten: %q", book.Narrator)
+	}
+	if book.DurationSeconds != 600*60 {
+		t.Fatalf("unlocked duration should update: %d", book.DurationSeconds)
+	}
+
+	cleared := &models.Book{Title: "Audio", MediaType: models.MediaTypeAudiobook, ASIN: "B000LOCKED",
+		Narrator: "", DurationSeconds: 100, LockedFields: []string{models.BookFieldNarrator, models.BookFieldDurationSeconds}}
+	if err := agg.EnrichAudiobook(context.Background(), cleared); err != nil {
+		t.Fatalf("EnrichAudiobook: %v", err)
+	}
+	if cleared.Narrator != "" || cleared.DurationSeconds != 100 {
+		t.Fatalf("locked fields changed: narrator=%q duration=%d", cleared.Narrator, cleared.DurationSeconds)
+	}
+}

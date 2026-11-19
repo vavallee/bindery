@@ -642,7 +642,11 @@ func (h *BulkHandler) BooksBulk(w http.ResponseWriter, r *http.Request) {
 			opErr = h.deleteBook(r.Context(), id)
 		case "search":
 			book, err := h.books.GetByID(r.Context(), id)
-			if err != nil || book == nil || !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
+			// The write check, like every other action here: a search queues a
+			// grab whose download inherits the book's owner, so a book the
+			// caller may not change (another user's, or shared with no owner
+			// under tenancy) is not theirs to search either.
+			if err != nil || book == nil || !auth.CheckWriteOwnership(r.Context(), book.OwnerUserID) {
 				resp.Results[key] = bulkItemResult{Error: errBulkBookNotOwned.Error()}
 				continue
 			}
@@ -741,7 +745,8 @@ func (h *BulkHandler) WantedBulk(w http.ResponseWriter, r *http.Request) {
 		switch req.Action {
 		case "search":
 			book := booksByID[id]
-			if book == nil || !auth.CheckOwnership(r.Context(), book.OwnerUserID) {
+			// Same write check as the book bulk search and every other action.
+			if book == nil || !auth.CheckWriteOwnership(r.Context(), book.OwnerUserID) {
 				resp.Results[key] = bulkItemResult{Error: errBulkBookNotOwned.Error()}
 				continue
 			}

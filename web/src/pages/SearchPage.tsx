@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { api, isNoDownloadClientError, isNoEligibleClientError, SearchResult } from '../api/client'
 import { formatBytes } from '../util/format'
 import { useConfirmDialog } from '../components/useConfirmDialog'
-import { grabWithForceConfirm } from '../util/forceGrab'
+import { grabErrorText, grabWithForceConfirm } from '../util/forceGrab'
 import { primaryFill } from '../components/buttons'
 import ReleaseSwarm from '../components/ReleaseSwarm'
 import { errorText } from '../util/errorText'
@@ -103,7 +103,7 @@ export default function SearchPage() {
       } else if (isNoDownloadClientError(e)) {
         setNeedsClient(true)
       } else {
-        setError(errorText(e, t('search.grabFailed', 'Grab failed')))
+        setError(grabErrorText(e, t))
       }
     } finally {
       setGrabbing(null)

@@ -19,7 +19,7 @@ import '../../i18n'
 
 const mocked = api as unknown as Record<string, ReturnType<typeof vi.fn>>
 
-const saved: BookOrbitConfig = { baseUrl: 'http://bookorbit:3000', libraryIds: ['2'], pathRemap: '/books:/media/books', apiKeyConfigured: true }
+const saved: BookOrbitConfig = { baseUrl: 'http://bookorbit:3000', publicUrl: '', libraryIds: ['2'], pathRemap: '/books:/media/books', apiKeyConfigured: true }
 const idle: ABSImportProgress = { running: false, processed: 0 }
 
 function stats(overrides: Partial<ABSImportStats> = {}): ABSImportStats {
@@ -61,7 +61,27 @@ describe('BookOrbitTab', () => {
     fireEvent.change(screen.getByLabelText('BookOrbit path remap'), { target: { value: '/books:/srv/books' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(mocked.bookOrbitSetConfig).toHaveBeenCalledTimes(1))
-    expect(mocked.bookOrbitSetConfig).toHaveBeenCalledWith({ baseUrl: 'http://bookorbit:3000', libraryIds: ['2'], pathRemap: '/books:/srv/books' })
+    expect(mocked.bookOrbitSetConfig).toHaveBeenCalledWith({ baseUrl: 'http://bookorbit:3000', publicUrl: '', libraryIds: ['2'], pathRemap: '/books:/srv/books' })
+  })
+
+  it('shows the browser address field with its hint and saves it', async () => {
+    mocked.bookOrbitSetConfig.mockImplementation(async data => ({ ...saved, ...data, apiKeyConfigured: true }))
+    render(<BookOrbitTab />)
+    const field = await screen.findByLabelText('BookOrbit address for your browser')
+    expect((field as HTMLInputElement).value).toBe('')
+    expect(screen.getByText(/uses a different address than the server URL/)).toBeTruthy()
+    expect(field.getAttribute('aria-describedby')).toBeTruthy()
+
+    fireEvent.change(field, { target: { value: ' https://books.example.com/bookorbit ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(mocked.bookOrbitSetConfig).toHaveBeenCalledTimes(1))
+    expect(mocked.bookOrbitSetConfig).toHaveBeenCalledWith(expect.objectContaining({ publicUrl: 'https://books.example.com/bookorbit' }))
+  })
+
+  it('treats an unsaved browser address as an unsaved change', async () => {
+    render(<BookOrbitTab />)
+    fireEvent.change(await screen.findByLabelText('BookOrbit address for your browser'), { target: { value: 'https://b.example.com' } })
+    expect((screen.getByRole('button', { name: 'Preview changes' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('loads libraries, shows their folders and saves the ticked ones', async () => {
@@ -171,5 +191,62 @@ describe('BookOrbitTab', () => {
     expect(mocked.bookOrbitImportRuns).toHaveBeenLastCalledWith({ limit: 11, offset: 10 })
     expect((screen.getByRole('button', { name: 'Older' }) as HTMLButtonElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: 'Newer' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('shows library names after a reload without pressing Load libraries', async () => {
+    mocked.bookOrbitConfig.mockResolvedValue({ ...saved, libraryIds: ['1'] })
+    mocked.bookOrbitLibraries.mockResolvedValue([{ id: '1', name: 'Books', folders: ['/books'] }])
+    mocked.bookOrbitImportRuns.mockResolvedValue([run(7, { libraryId: '1' })])
+    render(<BookOrbitTab />)
+    expect(await screen.findByLabelText(/Books/)).toBeTruthy()
+    expect(await screen.findByText(/Import · Books/)).toBeTruthy()
+    expect(screen.queryByText(/Library 1/)).toBeNull()
+  })
+
+  it('falls back to Library N when BookOrbit cannot be reached, and says nothing about it', async () => {
+    mocked.bookOrbitConfig.mockResolvedValue({ ...saved, libraryIds: ['1'] })
+    mocked.bookOrbitLibraries.mockRejectedValue(new Error('BookOrbit rejected the API key'))
+    mocked.bookOrbitImportRuns.mockResolvedValue([run(7, { libraryId: '1' })])
+    render(<BookOrbitTab />)
+    expect(await screen.findByText(/Import · Library 1/)).toBeTruthy()
+    expect(screen.getByLabelText(/Library 1/)).toBeTruthy()
+    expect(screen.queryByText(/rejected the API key/)).toBeNull()
+  })
+
+  it('clears an earlier error when another action runs', async () => {
+    mocked.bookOrbitLibraries
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error('BookOrbit rejected the API key. It may be revoked.'))
+    mocked.bookOrbitTest.mockResolvedValue({ message: 'connected', username: 'reader', authenticationMethod: 'api_key', libraryCount: 2 })
+    render(<BookOrbitTab />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Load libraries' }))
+    expect(await screen.findByText(/rejected the API key/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+    expect(await screen.findByText('Connected as reader. The key can see 2 libraries.')).toBeTruthy()
+    expect(screen.queryByText(/rejected the API key/)).toBeNull()
+
+    mocked.bookOrbitLibraries.mockRejectedValueOnce(new Error('Host not found'))
+    fireEvent.click(screen.getByRole('button', { name: 'Load libraries' }))
+    expect(await screen.findByText('Host not found')).toBeTruthy()
+    expect(screen.queryByText(/Connected as reader/)).toBeNull()
+  })
+
+  it('drops a slow name lookup from before a save, so the new server names win', async () => {
+    let resolveOld: (v: unknown) => void = () => {}
+    mocked.bookOrbitConfig.mockResolvedValue({ ...saved, libraryIds: ['1'] })
+    mocked.bookOrbitLibraries
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+      .mockResolvedValueOnce([{ id: '1', name: 'New Books', folders: [] }])
+    mocked.bookOrbitSetConfig.mockResolvedValue({ ...saved, baseUrl: 'http://other:3000', libraryIds: ['1'] })
+    render(<BookOrbitTab />)
+    fireEvent.change(await screen.findByLabelText('Server URL'), { target: { value: 'http://other:3000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByLabelText(/New Books/)).toBeTruthy()
+
+    resolveOld([{ id: '1', name: 'Old Books', folders: [] }])
+    await new Promise(r => setTimeout(r, 20))
+    expect(screen.queryByText(/Old Books/)).toBeNull()
+    expect(screen.getByLabelText(/New Books/)).toBeTruthy()
   })
 })

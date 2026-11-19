@@ -215,7 +215,14 @@ list sets no profile of its own) gives it the default quality profile too.
 `POST /api/v1/author` accepts an optional `monitorNewItems` (#2541), the same
 field `PUT /api/v1/author/{id}` takes: `all` (the default) lets a refresh add
 newly discovered books, `none` keeps the catalogue as it was added. Any other
-value is rejected with 400.
+value is rejected with 400. When the request leaves it out, a new author gets the
+install wide `author.default_monitor_new_items` setting (#3958), `all` or `none`,
+`all` when unset. Setting it needs an admin and rejects any other value with 400.
+It applies to authors created from now on, on every path that does not pin its
+own value: this endpoint, request approval, adding a book, series fill and the CSV,
+Readarr and Goodreads imports. The ABS and Calibre imports and Hardcover list sync
+keep `none`, and an author that already exists keeps its own value, including when
+`POST /api/v1/author` relinks it and the request names none.
 
 `POST /api/v1/author` responses include a `providerMismatch` object when the
 linked record routes its catalogue syncs to a provider other than the
@@ -389,12 +396,13 @@ GET    /api/v1/book?language=ita                  filter by language, any spelli
 GET    /api/v1/book/languages                     the languages of the books the caller can see, most common first: [{code, count}], with an empty `code` for books with no language (including `und`, `mis` and `zxx`; `mul` is listed as itself). Excluded books are not counted; under tenancy a non-admin counts their own and unowned books, like the list
 POST   /api/v1/book/bulk                          bulk monitor / status flip / exclude / unexclude (`"expectNoFiles": true` skips books that have files on `exclude`)
 GET    /api/v1/library/export?limit=&cursor=      paged read only export for companion tools: books with files, editions and series memberships (see Library export)
-GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library)
-PUT    /api/v1/book/{id}                          update monitor / status / metadata; when the write starts a search, the book in the response carries `searchRunId` (see search runs)
+GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library; `bookOrbitUrl`, a link to the book in BookOrbit, only for an admin and only for a book a BookOrbit import matched or created, see BookOrbit below)
+PUT    /api/v1/book/{id}                          update monitor / status / metadata (edited fields lock, incl. narrator, durationSeconds, asin); when the write starts a search, the book in the response carries `searchRunId` (see search runs)
 DELETE /api/v1/book/{id}                          remove from library
 DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk (`?format=ebook|audiobook` scopes to one format; `?path=…` deregisters one tracked path WITHOUT deleting anything on disk)
 PUT    /api/v1/book/{id}/exclude                  exclude from future searches
 GET    /api/v1/book/{id}/series-exclusions        the series the book was taken out of: [{seriesForeignId, seriesId, seriesTitle, position}]; seriesId is 0 when nothing resolves the id any more
+PUT    /api/v1/book/{id}/edition/{editionId}      set an edition's publisher / publishDate / isbn13 / isbn10 / asin, locking each one that changes (`publishDate` takes `YYYY-MM-DD` or RFC 3339, `publisher` at most 500 bytes); answers the edition, 404 if not this book's, 409 `reason: changed` if it changed while the request was being handled
 POST   /api/v1/book/{id}/rebind                   re-link to a different metadata record; fields the new record lacks (`releaseDate`, `language`, `description`, `genres`) are emptied unless the book had them locked or the provider could not answer for them, and the book in the response carries a `cleared` array naming them (omitted when nothing was emptied)
 POST   /api/v1/book/{id}/enrich-audiobook         pull narrator/duration/cover from Audnex
 POST   /api/v1/book/{id}/cover                    set the cover from the request body (raw JPEG, PNG, WebP or GIF, max 10 MB); answers 413 over the limit and 415 for anything that is not one of those four; stored locally, replaces the current cover, and a refresh does not replace it. Answers the full book, as `GET /book/{id}` does
@@ -445,8 +453,8 @@ same two fields.
 ### Series
 
 ```
-GET    /api/v1/series                             list series with their linked books
-GET    /api/v1/series/{id}                        one series
+GET    /api/v1/series                             list series with their linked books. With `BINDERY_ENFORCE_TENANCY` on, a `user` gets only series that link a book they can see (their own or an unowned one), and the total counts only those (#4025)
+GET    /api/v1/series/{id}                        one series; 404 for a series a `user` cannot see, the same as a missing id. The `hardcover-link` and `hardcover-diff` routes below answer the same way
 POST   /api/v1/series                             create a series (admin): {"title":"Saga"} makes a plain one; add a "hardcover" object (the fields of a `GET /series/hardcover/search` result: foreignId, providerId, slug, title, authorName, bookCount) to create it already linked, with title then optional (it defaults to the Hardcover title). Answers 201 with the series and its hardcoverLink; 409 {error, seriesId} when that Hardcover series is already in the library (nothing is created, and no Hardcover call is made); 400 for a foreignId that is not `hc-series:<digits>` or for oversized fields; 404 when enhanced Hardcover is off or Hardcover has no such series; 502 when Hardcover cannot be reached (nothing is created). No books are added
 POST   /api/v1/series/{id}/fill                   add the series' missing books as wanted (admin); answers {queued, skippedByProfile, skippedSplitParts}
 POST   /api/v1/series/{id}/split-parts/unmonitor  unmonitor the split edition parts of books already in the series, listed as splitEditionPartBookIds on the series (admin); answers {unmonitored}
@@ -923,6 +931,9 @@ POST   /api/v1/queue/grab                         submit a search result to the 
                                                   record (raw URL) for every caller; otherwise only the API key
                                                   uses the posted nzbUrl, and everyone else gets 400 "this search
                                                   result has expired, search again"
+                                                  404 with BINDERY_ENFORCE_TENANCY on and a bookId the caller may not change: another
+                                                  user's book, or a shared book (error "That book is shared, so only an admin can grab
+                                                  for it."). No download or history row is created
                                                   409 "already grabbed" when a row holds the guid; the body's
                                                   "forceAvailable":true means it is your own imported row and
                                                   the same grab with "force":true re-grabs it (reuses the row,
@@ -965,7 +976,7 @@ POST   /api/v1/queue/manual-import/match          attach an importFailed downloa
 GET    /api/v1/reorganize/preview                 preview renaming tracked files to the current template (admin)
                                                     ?scope=book|author|library (&id=N for book/author)
                                                     response adds externalMode (bool), externalFormats and warning
-                                                    when the plan holds files of a format in External import mode (#3946)
+                                                    when files that would move are of a format in External import mode (#3946)
 POST   /api/v1/reorganize/apply                   move the selected files {fileIds:[…]} to their templated paths (admin)
                                                     409 {error, code:"reorganize_external_mode", formats:[…]} when any file is of a
                                                     format in External import mode, unless the body has "confirmExternalMode": true;
@@ -1822,14 +1833,20 @@ is admin only. Bindery only ever reads from BookOrbit. See
 [BookOrbit-Import.md](BookOrbit-Import.md).
 
 ```
-GET    /api/v1/bookorbit/config            saved connection: {baseUrl, libraryIds[], pathRemap, apiKeyConfigured}. The API key is never returned
-PUT    /api/v1/bookorbit/config            save it: {"baseUrl":"http://bookorbit:3000","apiKey":"bok_...","libraryIds":["2"],"pathRemap":"/books:/media/books"}. Omit apiKey or send it empty to keep the saved key. 400 for a bad URL, a refused address, a bad library id or a bad remap
+GET    /api/v1/bookorbit/config            saved connection: {baseUrl, publicUrl, libraryIds[], pathRemap, apiKeyConfigured}. The API key is never returned
+PUT    /api/v1/bookorbit/config            save it: {"baseUrl":"http://bookorbit:3000","apiKey":"bok_...","libraryIds":["2"],"pathRemap":"/books:/media/books","publicUrl":"https://books.example.com"}. Omit apiKey or send it empty to keep the saved key. publicUrl is the address a browser uses for the Open in BookOrbit link (setting `bookorbit.public_url`): omit it to keep it, send an empty string to clear it and fall back to baseUrl. 400 for a bad URL, a publicUrl that is not http or https, a refused address, a bad library id or a bad remap
 POST   /api/v1/bookorbit/test              call BookOrbit with the saved URL: {message, username, authenticationMethod, libraryCount}. Optional {"apiKey":"bok_..."} tries a key before saving it. 400 when no URL or key is available, 502 with a reason when BookOrbit refuses or cannot be reached
 POST   /api/v1/bookorbit/libraries         libraries the key can see: [{id, name, folders[]}]. Same body and errors as /test
 POST   /api/v1/bookorbit/import            start a run: {"dryRun":true,"libraryIds":["2"]}. A dry run unless dryRun is exactly false. libraryIds is optional and must be a subset of the saved libraries (400 otherwise). 202 with the progress object, 409 while this or an Audiobookshelf import is running
 GET    /api/v1/bookorbit/import/status     progress of the current or last run: {running, dryRun, processed, message, error, stats, results[]}, the same shape as /abs/import/status
 GET    /api/v1/bookorbit/import/runs       recorded BookOrbit runs, newest first: ?limit (default 10, max 200) and ?offset. One row per library
 ```
+
+`GET /api/v1/book/{id}` carries `bookOrbitUrl` for an admin when the book came
+from a BookOrbit import: `<bookorbit.public_url or bookorbit.base_url>/book/<BookOrbit id>`.
+It is absent for everyone else, for a book with no stored BookOrbit id, and when
+the saved address is not http or https. The server URL and the API key are never
+part of a book response.
 
 The test and library routes always call the saved base URL. A URL in the
 request body is ignored, so the routes cannot be pointed at an address that
@@ -1866,6 +1883,7 @@ unset key:
 | `default.media_type` | add author dialog |
 | `author.default_monitor_mode` | add author dialog |
 | `author.default_monitor_latest_count` | add author dialog |
+| `author.default_monitor_new_items` | add author dialog |
 | `author.default_quality_profile_id` | add author dialog |
 
 `author.default_quality_profile_id` (#3831) is the quality profile id given to
@@ -1892,7 +1910,14 @@ primary. A disabled source is sent no request. Turning off DNB also drops its
 cover lookup, and turning off Hardcover removes it as an enricher only; the
 separate enhanced Hardcover series setting is unchanged.
 
-A `PUT` (or `DELETE`) of `metadata.primary_provider`, `metadata.enrichers_disabled`,
+`metadata.audnex_region` (#3982, admin only) is the Audible marketplace audnex
+looks an ASIN up in. It accepts `us` (the default), `ca`, `uk`, `au`, `fr`, `de`,
+`jp`, `it`, `in` and `es`, the marketplaces api.audnex.us supports, and an empty
+value means `us`. Anything else is refused with `400`. Only the one marketplace
+is asked: there is no fallback to the others, so a German ASIN needs `de`. The
+result still goes through the same match against the primary provider as before.
+
+A `PUT` (or `DELETE`) of `metadata.primary_provider`, `metadata.enrichers_disabled`, `metadata.audnex_region`,
 `googlebooks.apiKey`, `google_books_api_key`, `hardcover.api_token` or
 `metadata.author_enrichment.wikidata` (#3287) rebuilds the metadata providers
 before it answers, so the next lookup already uses the new set, with no restart
@@ -1905,6 +1930,22 @@ before it answers, so the next lookup already uses the new set, with no restart
 `appliedLive: false` means the value was stored but the providers could not be
 rebuilt; the previous providers stay in use and the new value applies at the
 next restart. Every other key answers without the field.
+
+Other keys the Settings screens manage, with their defaults (the descriptors
+say the rest):
+
+| Key | Default | What it does |
+|-----|---------|--------------|
+| `autoGrab.enabled` | `true` | Grab the best matching release automatically when a search finds one. `false` leaves every decision to you. |
+| `default.media_type_strict` | `false` | Narrow or skip catalogue books that do not match `default.media_type`, instead of keeping rows that can never be grabbed. |
+| `search.preferredLanguage` | empty | Preferred release language, used to rank search results and for the recommendation taste profile. |
+| `log.retention_days` | `14` | Days of log entries the daily trim keeps. `BINDERY_LOG_RETENTION_DAYS` is the environment equivalent. |
+| `prowlarr.search_timeout_seconds` | `60` | HTTP timeout for Prowlarr searches and syncs. |
+| `import.audiobook.flatten_multi_disc` | `false` | Flatten a multi disc audiobook download into one Part sequence on import. Only runs in copy or hardlink mode. |
+| `hardcover.enhanced_series_enabled` | `false` | Use the enhanced Hardcover series API. Also needs a stored token and the enhanced Hardcover build flag (`BINDERY_ENHANCED_HARDCOVER_API`, on by default). |
+| `calibre.library_path` | empty | Calibre library directory as the Bindery container sees it. Must exist. |
+| `calibre.sync_on_startup` | `false` | Run a Calibre library sync at start. Needs a restart to change. |
+| `calibre.library_import_enabled` | `false` | Allow importing an existing Calibre library. |
 
 Requests authenticated with the API key are treated as admin, so a script or a
 third party client using the key still reads every non secret setting. A client
@@ -2144,6 +2185,53 @@ the previous shape would misread the new one: a field removed or renamed, or
 given a different meaning. New fields can be added to the same version, so
 read the fields you know and ignore the rest, and check `version` after each
 update.
+
+### More routes
+
+Routes that have no section above. "Admin" means `RequireAdmin`; the rest need a signed in user or the API key.
+
+```
+GET    /api/v1/auth/config                        current auth mode and username, plus the API key for admins only (a user or requester never gets it)
+POST   /api/v1/auth/session-secret/rotate         rotate the session signing secret (admin); sessions signed with the previous secret stay valid until the next rotation
+GET    /api/v1/auth/oidc/redirect-base            the redirect base URL Bindery resolved for OIDC, and whether `BINDERY_OIDC_REDIRECT_BASE_URL` is set (admin)
+GET    /api/v1/author/{id}/series                 series the author's books belong to
+PUT    /api/v1/author/{id}/genres                 author level genre override
+DELETE /api/v1/author/{id}/aliases/{aliasID}      remove one alias from an author
+POST   /api/v1/authors/refresh-all                refresh metadata for every author as a background job; 202, 409 when one is running
+GET    /api/v1/authors/refresh-all/status         progress of that job
+PUT    /api/v1/series/{id}                        edit a series (admin)
+DELETE /api/v1/series/{id}                        delete a series (admin)
+PUT    /api/v1/series/{id}/books/{bookId}/primary make this the series the renamer uses for the book (admin)
+PUT    /api/v1/series/{id}/genres                 series genre override (admin); DELETE clears it
+GET    /api/v1/series/{id}/hardcover-link         the series' Hardcover link
+PUT    /api/v1/series/{id}/hardcover-link         set it (admin); DELETE removes it
+POST   /api/v1/series/{id}/hardcover-link/auto    link automatically (admin)
+GET    /api/v1/series/{id}/hardcover-diff         compare the series with its linked Hardcover series
+GET    /api/v1/metadataprofile[/{id}]             metadata profiles; POST, PUT and DELETE are admin
+GET    /api/v1/delayprofile[/{id}]                delay profiles; POST, PUT and DELETE too (all admin)
+GET    /api/v1/importlist[/{id}]                  import lists (admin); POST creates, PUT and DELETE change one
+POST   /api/v1/importlist/{id}/sync               sync one list (admin); GET /importlist/sync/status shows progress
+GET    /api/v1/importlist/hardcover/lists         the Hardcover lists the saved token can read (admin)
+GET    /api/v1/importlistexclusion                list exclusions (admin); POST adds one, DELETE /importlistexclusion/{id} removes it
+GET    /api/v1/recommendations                    Discover rows
+POST   /api/v1/recommendations/refresh            rebuild them
+POST   /api/v1/recommendations/{id}/add           add the author and book, mark it wanted and search
+POST   /api/v1/recommendations/{id}/dismiss       dismiss one; DELETE /recommendations/dismissals clears them all
+GET    /api/v1/recommendations/exclude-author     excluded authors; POST adds one, DELETE /recommendations/exclude-author/{name} removes it
+POST   /api/v1/hardcover/test                     probe the saved Hardcover token (admin)
+GET    /api/v1/abs/config                         Audiobookshelf connection (admin); PUT saves it
+POST   /api/v1/abs/test                           probe the connection (admin)
+POST   /api/v1/abs/libraries                      list its libraries (admin)
+POST   /api/v1/abs/import/runs/{runID}/rollback   roll an import run back (admin); POST .../rollback/preview shows what would change first
+GET    /api/v1/abs/review                         items waiting for review (admin); see abs_import.md for the approve, dismiss and resolve routes
+GET    /api/v1/abs/conflicts                      import conflicts (admin); POST /abs/conflicts/{id}/resolve settles one
+GET    /api/v1/grimmory/config                    Grimmory connection (admin); PUT saves it, POST /grimmory/test probes it
+POST   /api/v1/grimmory/sync                      push imported books to Grimmory (admin); GET /grimmory/sync/status shows progress
+GET    /api/v1/calibre/runs                       recorded Calibre import runs (admin); POST /calibre/runs/{runID}/rollback undoes one, GET .../rollback/preview shows it first
+POST   /api/v1/migrate/goodreads/commit           commit a Goodreads import using the token from /migrate/goodreads/preview (admin)
+```
+
+The ABS review and conflict routes are described in [abs_import.md](abs_import.md). Everything above sits behind the same auth as the rest of `/api/v1`, and the Calibre bridge routes (`/bridge/v1/...`) and the `/api/v1/health` and `/api/v1/health/ready` probes are covered in their own sections.
 
 ### Arr-compatible queue
 

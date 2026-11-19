@@ -205,6 +205,39 @@ func TestReorganizePreview_ExternalModeFlag(t *testing.T) {
 	}
 }
 
+// A format whose files are all already in place is not one Reorganize would
+// touch, so it must not be named, even when its import mode is External.
+func TestReorganizePreview_ExternalFormatsOnlyFromMovingRows(t *testing.T) {
+	e := newReorgExternalEnv(t)
+	e.mode(t, "copy", "")
+	if code, _ := e.apply(t, `{"fileIds":`+idList(e.audioID)+`}`); code != http.StatusOK {
+		t.Fatalf("placing the audiobook: code %d", code)
+	}
+	e.mode(t, "external", "")
+	out := e.preview(t)
+	if toMove(out) != 1 {
+		t.Fatalf("toMove = %v, want 1 (the ebook only)", toMove(out))
+	}
+	if got := formatsOf(out); strings.Join(got, ",") != "ebook" {
+		t.Errorf("externalFormats = %v, want [ebook]", got)
+	}
+	if !strings.Contains(out["warning"].(string), "for ebook,") {
+		t.Errorf("warning = %q, want it to name only ebook", out["warning"])
+	}
+
+	// Once the ebook is in place too, nothing External would move.
+	if code, _ := e.apply(t, `{"fileIds":`+idList(e.ebookID)+`,"confirmExternalMode":true}`); code != http.StatusOK {
+		t.Fatalf("placing the ebook: code %d", code)
+	}
+	out = e.preview(t)
+	if got, _ := out["externalMode"].(bool); got {
+		t.Errorf("externalMode = true with nothing to move: %v", out)
+	}
+	if _, ok := out["warning"]; ok && out["warning"] != "" {
+		t.Errorf("warning = %q, want none", out["warning"])
+	}
+}
+
 func TestReorganizeApply_ExternalMode(t *testing.T) {
 	t.Run("refused with 409 and nothing moves", func(t *testing.T) {
 		e := newReorgExternalEnv(t)

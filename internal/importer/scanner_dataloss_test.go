@@ -287,7 +287,7 @@ func TestMoveDirCtx_CancelDoesNotDeleteSource(t *testing.T) {
 		mustWrite(t, name, "audio-data-"+itoa(i))
 	}
 	// dst must be on a DIFFERENT filesystem branch only conceptually; here we
-	// just need MoveDir's fast-path rename to be irrelevant. We force the slow
+	// just need MoveDirCtx's fast-path rename to be irrelevant. We force the slow
 	// path by pre-creating dst's parent and pointing at a fresh dst — rename
 	// would still succeed on the same fs, so instead we cancel BEFORE calling
 	// and rely on moveDirCtx checking ctx. To exercise the copy path we cancel
@@ -326,8 +326,8 @@ func TestMoveDirCtx_CancelDoesNotDeleteSource(t *testing.T) {
 }
 
 // TestCopyDirContext_AbortsOnCancelledContext directly exercises the finding-3
-// fix: copyDirContext (the shared recursive copy used by both CopyDir and the
-// slow path of MoveDir) must abort with ctx.Err() instead of copying the whole
+// fix: copyDirContext (the shared recursive copy used by both CopyDirCtx and the
+// slow path of MoveDirCtx) must abort with ctx.Err() instead of copying the whole
 // tree. Before the fix the copy ignored ctx entirely and ran to completion in
 // a detached goroutine spawned by MoveDirCtx/CopyDirCtx.
 func TestCopyDirContext_AbortsOnCancelledContext(t *testing.T) {
@@ -355,7 +355,7 @@ func TestCopyDirContext_AbortsOnCancelledContext(t *testing.T) {
 }
 
 // TestMoveDirCtx_FailedCopyKeepsSource verifies finding 3's core safety
-// guarantee at the MoveDir level: when the cross-filesystem copy fails,
+// guarantee at the MoveDirCtx level: when the cross-filesystem copy fails,
 // moveDirCtx must NOT os.RemoveAll the source. The copy is forced to fail by
 // making the destination tree unwritable after the directory is created.
 func TestMoveDirCtx_FailedCopyKeepsSource(t *testing.T) {

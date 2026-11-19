@@ -667,3 +667,45 @@ describe('BooksPage release year time zone', () => {
     expect(screen.queryByText('2013')).toBeNull()
   })
 })
+
+// #3960: the books grid follows the same selection mode as the author page
+// (#2456) and the Authors grid: once something is selected, a card click
+// toggles it instead of opening the book.
+describe('BooksPage grid card selection mode (#3960)', () => {
+  beforeEach(() => {
+    server.use(
+      http.get(apiUrl('/book'), () =>
+        HttpResponse.json({
+          items: [makeBook({ id: 1, title: 'Dune' }), makeBook({ id: 2, title: 'Hyperion' })],
+          total: 2,
+          limit: 50,
+          offset: 0,
+        }),
+      ),
+    )
+  })
+
+  it('opens the book while nothing is selected, and toggles it by click or key while selecting', async () => {
+    let located: Located | undefined
+    renderBooksPage(loc => { located = loc })
+    await screen.findByTitle('Select Hyperion')
+    const card = () => screen.getByRole('link', { name: 'Hyperion' })
+    const box = () => screen.getByTitle('Select Hyperion')
+
+    fireEvent.click(screen.getByTitle('Select Dune'))
+    fireEvent.click(card())
+    expect(box()).toBeChecked()
+    expect(fireEvent.keyDown(card(), { key: ' ' })).toBe(false)
+    expect(box()).not.toBeChecked()
+    expect(fireEvent.keyDown(card(), { key: 'Enter' })).toBe(false)
+    expect(box()).toBeChecked()
+    expect(located?.pathname).toBe('/')
+
+    // Clear the selection: the card opens the book again.
+    fireEvent.click(screen.getByTitle('Select Dune'))
+    fireEvent.click(box())
+    expect(fireEvent.keyDown(card(), { key: 'Enter' })).toBe(true)
+    fireEvent.click(card())
+    await waitFor(() => expect(located?.pathname).toBe('/book/2'))
+  })
+})

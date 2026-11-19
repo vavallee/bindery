@@ -151,7 +151,7 @@ export default function ABSConflictPanel({
                     <button
                       onClick={() => onResolveConflict(conflict.id, 'upstream')}
                       disabled={resolvingConflictId === conflict.id}
-                      className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded text-xs font-medium disabled:opacity-50"
+                      className="px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white rounded text-xs font-medium disabled:opacity-50"
                     >
                       {t('absConflicts.useUpstream', 'Use upstream')}
                     </button>

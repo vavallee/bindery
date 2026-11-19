@@ -16,6 +16,10 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/vavallee/bindery/internal/downloader/rttest"
+
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
 )
 
 // fakeTorrentContent is minimal bencoded content used across tests.
@@ -48,10 +52,8 @@ func TestAddTorrent_ConcurrentUniqueHashes(t *testing.T) {
 	var mu sync.Mutex
 	addedCount := 0
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			mu.Lock()
 			count := addedCount
@@ -77,8 +79,7 @@ func TestAddTorrent_ConcurrentUniqueHashes(t *testing.T) {
 			mu.Unlock()
 			_, _ = w.Write([]byte("Ok."))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	indexer := newFakeIndexer(t)
 	defer indexer.Close()
@@ -130,16 +131,13 @@ func TestAddTorrent_ConcurrentUniqueHashes(t *testing.T) {
 func TestAddTorrent_V5JSONResponse(t *testing.T) {
 	const v5Hash = "cccccccccccccccccccccccccccccccccccccccc"
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"added_torrent_ids":["` + v5Hash + `"],"failure_count":0,"pending_count":0,"success_count":1}`))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	indexer := newFakeIndexer(t)
 	defer indexer.Close()
@@ -161,16 +159,13 @@ func TestAddTorrent_V5JSONResponse(t *testing.T) {
 // success_count=0 and an empty added_torrent_ids is correctly treated as a
 // failure, not accepted on the basis of being JSON.
 func TestAddTorrent_V5JSONResponse_FailureCount(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"added_torrent_ids":[],"failure_count":1,"pending_count":0,"success_count":0}`))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	indexer := newFakeIndexer(t)
 	defer indexer.Close()
@@ -265,7 +260,7 @@ func TestNew_DefaultPortOmitted(t *testing.T) {
 func TestLogin_HostWithoutDefaultPort(t *testing.T) {
 	c := New("sun.seedhost.eu", 443, "u", "p", "", true)
 	var gotHost, gotAuth string
-	c.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	c.http.Transport = rttest.Func(func(r *http.Request) (*http.Response, error) {
 		gotHost = r.Host
 		if gotHost == "" {
 			gotHost = r.URL.Host
@@ -554,17 +549,14 @@ func TestTest_AuthErrorDoesNotMisdirect(t *testing.T) {
 }
 
 func TestTest_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/app/version":
 			_, _ = w.Write([]byte("5.0.0"))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if err := c.Test(context.Background()); err != nil {
@@ -573,16 +565,13 @@ func TestTest_Success(t *testing.T) {
 }
 
 func TestTest_HTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte("server error"))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if err := c.Test(context.Background()); err == nil {
@@ -591,10 +580,8 @@ func TestTest_HTTPError(t *testing.T) {
 }
 
 func TestAddTorrent_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -606,8 +593,7 @@ func TestAddTorrent_Success(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc123", "", ""); err != nil {
@@ -623,10 +609,8 @@ func TestAddTorrent_Success(t *testing.T) {
 func TestAddTorrent_WithCategory_EnablesAutoTMMAndOmitsSavePath(t *testing.T) {
 	var gotCategory, gotAutoTMM string
 	var savePathPresent bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			_ = r.ParseForm()
 			gotCategory = r.FormValue("category")
@@ -634,8 +618,7 @@ func TestAddTorrent_WithCategory_EnablesAutoTMMAndOmitsSavePath(t *testing.T) {
 			_, savePathPresent = r.Form["savepath"]
 			_, _ = w.Write([]byte("Ok."))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "books", "/downloads"); err != nil {
@@ -657,18 +640,15 @@ func TestAddTorrent_WithCategory_EnablesAutoTMMAndOmitsSavePath(t *testing.T) {
 // autoTMM is not enabled.
 func TestAddTorrent_NoCategory_SendsSavePathNoAutoTMM(t *testing.T) {
 	var gotSavePath, gotAutoTMM string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			_ = r.ParseForm()
 			gotSavePath = r.FormValue("savepath")
 			gotAutoTMM = r.FormValue("autoTMM")
 			_, _ = w.Write([]byte("Ok."))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", "/downloads"); err != nil {
@@ -683,10 +663,8 @@ func TestAddTorrent_NoCategory_SendsSavePathNoAutoTMM(t *testing.T) {
 }
 
 func TestGetCategories_NormalizesSavePathKeys(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/categories":
 			_, _ = w.Write([]byte(`{
 				"books":{"name":"books","savePath":"/media/books"},
@@ -695,8 +673,7 @@ func TestGetCategories_NormalizesSavePathKeys(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	cats, err := c.GetCategories(context.Background())
@@ -712,15 +689,12 @@ func TestGetCategories_NormalizesSavePathKeys(t *testing.T) {
 }
 
 func TestAddTorrent_FailsBody(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			_, _ = w.Write([]byte("Fails."))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", ""); err == nil {
@@ -737,15 +711,12 @@ func TestAddTorrent_FailsBody(t *testing.T) {
 func TestAddTorrent_EmptyBody200_Magnet(t *testing.T) {
 	const magnetHash = "dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c"
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			w.WriteHeader(http.StatusOK) // no body, as rdt-client answers
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	c.loggedIn = true
@@ -767,10 +738,8 @@ func TestAddTorrent_EmptyBody200_TorrentFile(t *testing.T) {
 	const polledHash = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
 	added := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			added = true
 			w.WriteHeader(http.StatusOK) // no body
@@ -783,8 +752,7 @@ func TestAddTorrent_EmptyBody200_TorrentFile(t *testing.T) {
 		case "/api/v2/torrents/setCategory", "/api/v2/torrents/setAutoManagement":
 			_, _ = w.Write([]byte("Ok."))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	indexer := newFakeIndexer(t)
 	defer indexer.Close()
@@ -803,16 +771,13 @@ func TestAddTorrent_EmptyBody200_TorrentFile(t *testing.T) {
 }
 
 func TestAddTorrent_HTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte("bad request"))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if _, err := c.AddTorrent(context.Background(), "magnet:?xt=urn:btih:abc", "", ""); err == nil {
@@ -832,10 +797,8 @@ func TestAddTorrent_TorrentURL_SubmitsMultipart(t *testing.T) {
 	indexer := newFakeIndexer(t)
 	defer indexer.Close()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			ct := r.Header.Get("Content-Type")
 			if strings.HasPrefix(ct, "multipart/form-data") {
@@ -875,8 +838,7 @@ func TestAddTorrent_TorrentURL_SubmitsMultipart(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	allowTorrentFetch(c)
@@ -903,10 +865,8 @@ func TestAddTorrent_TorrentURL_WithCategory_EnablesAutoTMMAndOmitsSavePath(t *te
 	indexer := newFakeIndexer(t)
 	defer indexer.Close()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			if err := r.ParseMultipartForm(1 << 20); err == nil {
 				gotCategory = r.FormValue("category")
@@ -929,8 +889,7 @@ func TestAddTorrent_TorrentURL_WithCategory_EnablesAutoTMMAndOmitsSavePath(t *te
 		case "/api/v2/torrents/setCategory", "/api/v2/torrents/setAutoManagement":
 			w.WriteHeader(http.StatusOK)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	allowTorrentFetch(c)
@@ -953,10 +912,8 @@ func TestAddTorrent_TorrentURL_WithCategory_EnablesAutoTMMAndOmitsSavePath(t *te
 func TestSetAutoManagement(t *testing.T) {
 	var gotHash, gotEnable string
 	var hit bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/setAutoManagement":
 			_ = r.ParseForm()
 			gotHash = r.FormValue("hashes")
@@ -966,11 +923,9 @@ func TestSetAutoManagement(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
-	c.loggedIn = true
 	if err := c.setAutoManagement(context.Background(), "abc123", true); err != nil {
 		t.Fatalf("setAutoManagement: %v", err)
 	}
@@ -991,21 +946,17 @@ func TestSetAutoManagement(t *testing.T) {
 // (#969) can fire.
 func TestSetCategory_HTTPError(t *testing.T) {
 	var hit bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/setCategory":
 			hit = true
 			w.WriteHeader(http.StatusConflict)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
-	c.loggedIn = true
 	err := c.setCategory(context.Background(), "abc123", "books")
 	if err == nil {
 		t.Fatal("expected setCategory to return an error on a 409, got nil")
@@ -1026,10 +977,8 @@ func TestAddTorrent_DuplicateRecovery_EnablesAutoManagement(t *testing.T) {
 	var setCategoryHash, setCategoryValue, autoMgmtHash, autoMgmtEnable string
 	var mu sync.Mutex
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_, _ = w.Write([]byte("[]"))
 		case "/api/v2/torrents/add":
@@ -1052,8 +1001,7 @@ func TestAddTorrent_DuplicateRecovery_EnablesAutoManagement(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	c.loggedIn = true
@@ -1087,16 +1035,13 @@ func TestAddTorrent_TorrentURL_FetchFailure(t *testing.T) {
 	}))
 	defer indexer.Close()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			qbitCalled = true
 			_, _ = w.Write([]byte("Ok."))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	allowTorrentFetch(c)
@@ -1121,10 +1066,8 @@ func TestAddTorrent_TorrentURL_RedirectToMagnetUsesURLForm(t *testing.T) {
 	defer indexer.Close()
 
 	var gotURL string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
@@ -1134,8 +1077,7 @@ func TestAddTorrent_TorrentURL_RedirectToMagnetUsesURLForm(t *testing.T) {
 		case "/api/v2/torrents/info":
 			_, _ = w.Write([]byte("[]"))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	allowTorrentFetch(c)
@@ -1162,15 +1104,12 @@ func TestGetTorrents_OversizedAPIResponseIsRejected(t *testing.T) {
 	maxAPIResponseBytes = 32
 	t.Cleanup(func() { maxAPIResponseBytes = orig })
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_, _ = w.Write([]byte(`[{"hash":"` + strings.Repeat("a", 4096) + `"}]`))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	_, err := c.GetTorrents(context.Background(), "")
@@ -1193,18 +1132,15 @@ func TestAddTorrent_TorrentURL_OversizedResponseDoesNotCallQbitAdd(t *testing.T)
 	defer indexer.Close()
 
 	qbitCalled := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			qbitCalled = true
 			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_, _ = w.Write([]byte("[]"))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	allowTorrentFetch(c)
@@ -1230,18 +1166,15 @@ func TestAddTorrent_TorrentURL_DefaultValidationRejectsLoopbackBeforeFetch(t *te
 	defer indexer.Close()
 
 	qbitAddCalled := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			qbitAddCalled = true
 			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_, _ = w.Write([]byte("[]"))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	_, err := c.AddTorrent(context.Background(), indexer.URL+"/blocked.torrent", "", "")
@@ -1267,16 +1200,13 @@ func TestGetTorrents_Success(t *testing.T) {
 	}
 	body, _ := json.Marshal(want)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(body)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	torrents, err := c.GetTorrents(context.Background(), "")
@@ -1296,16 +1226,13 @@ func TestGetTorrents_Success(t *testing.T) {
 
 func TestGetTorrents_WithCategory(t *testing.T) {
 	var gotRawQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			gotRawQuery = r.URL.RawQuery
 			_, _ = w.Write([]byte("[]"))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	_, err := c.GetTorrents(context.Background(), "audiobooks")
@@ -1318,15 +1245,12 @@ func TestGetTorrents_WithCategory(t *testing.T) {
 }
 
 func TestGetTorrents_InvalidJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_, _ = w.Write([]byte("not valid json"))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if _, err := c.GetTorrents(context.Background(), ""); err == nil {
@@ -1341,10 +1265,8 @@ func TestGetTorrents_InvalidJSON(t *testing.T) {
 // cannot process. The normalization must happen at the API boundary so
 // every consumer sees forward-slash paths regardless of qBit's host OS.
 func TestGetTorrents_NormalizesWindowsPaths(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			// Backslashes in JSON strings are escaped as \\; the resulting
 			// Go string contains single backslashes.
@@ -1359,8 +1281,7 @@ func TestGetTorrents_NormalizesWindowsPaths(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	torrents, err := c.GetTorrents(context.Background(), "")
@@ -1383,17 +1304,14 @@ func TestGetTorrents_NormalizesWindowsPaths(t *testing.T) {
 // qBit health-check (which uses category save paths) doesn't fail on a
 // Windows-qBit deployment.
 func TestGetCategories_NormalizesWindowsSavePath(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/categories":
 			_, _ = w.Write([]byte(`{"library":{"name":"library","savePath":"N:\\Torrents\\complete\\library"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	cats, err := c.GetCategories(context.Background())
@@ -1407,18 +1325,15 @@ func TestGetCategories_NormalizesWindowsSavePath(t *testing.T) {
 
 func TestDeleteTorrent_Success(t *testing.T) {
 	var gotHash, gotDeleteFiles string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/delete":
 			_ = r.ParseForm()
 			gotHash = r.FormValue("hashes")
 			gotDeleteFiles = r.FormValue("deleteFiles")
 			w.WriteHeader(http.StatusOK)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if err := c.DeleteTorrent(context.Background(), "abc123", true); err != nil {
@@ -1434,17 +1349,14 @@ func TestDeleteTorrent_Success(t *testing.T) {
 
 func TestDeleteTorrent_KeepFiles(t *testing.T) {
 	var gotDeleteFiles string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/delete":
 			_ = r.ParseForm()
 			gotDeleteFiles = r.FormValue("deleteFiles")
 			w.WriteHeader(http.StatusOK)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	_ = c.DeleteTorrent(context.Background(), "abc", false)
@@ -1454,15 +1366,12 @@ func TestDeleteTorrent_KeepFiles(t *testing.T) {
 }
 
 func TestDeleteTorrent_HTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/delete":
 			w.WriteHeader(http.StatusInternalServerError)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if err := c.DeleteTorrent(context.Background(), "abc", false); err == nil {
@@ -1558,10 +1467,8 @@ func TestAddTorrent_HashFoundUnderDifferentCategory(t *testing.T) {
 	added := false // becomes true after /torrents/add is called
 	infoQueries := []string{}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			mu.Lock()
 			added = true
@@ -1605,8 +1512,7 @@ func TestAddTorrent_HashFoundUnderDifferentCategory(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	indexer := newFakeIndexer(t)
 	defer indexer.Close()
@@ -1656,10 +1562,8 @@ func TestAddTorrent_HashLookupTimeout(t *testing.T) {
 	slog.SetDefault(slog.New(catcher))
 	t.Cleanup(func() { slog.SetDefault(origLogger) })
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
@@ -1668,8 +1572,7 @@ func TestAddTorrent_HashLookupTimeout(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	indexer := newFakeIndexer(t)
 	defer indexer.Close()
@@ -1701,11 +1604,6 @@ func TestAddTorrent_HashLookupTimeout(t *testing.T) {
 	}
 }
 
-// roundTripFunc is a test helper that implements http.RoundTripper via a function.
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 // qbNetTimeoutErr is a minimal net.Error that signals a timeout.
 type qbNetTimeoutErr struct{}
 
@@ -1724,7 +1622,7 @@ func newTransportClient(transport http.RoundTripper) *Client {
 // network hint and does NOT misclassify it as an auth error.
 func TestTest_DNSNotFound(t *testing.T) {
 	dnsErr := &net.DNSError{Name: "qbittorrent-container", IsNotFound: true}
-	c := newTransportClient(roundTripFunc(func(*http.Request) (*http.Response, error) {
+	c := newTransportClient(rttest.Func(func(*http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("dial: %w", dnsErr)
 	}))
 
@@ -1744,7 +1642,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 
 // TestTest_ConnectionRefused verifies that ECONNREFUSED appends the port hint.
 func TestTest_ConnectionRefused(t *testing.T) {
-	c := newTransportClient(roundTripFunc(func(*http.Request) (*http.Response, error) {
+	c := newTransportClient(rttest.Func(func(*http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("dial tcp: %w", syscall.ECONNREFUSED)
 	}))
 
@@ -1760,7 +1658,7 @@ func TestTest_ConnectionRefused(t *testing.T) {
 
 // TestTest_Timeout_QBit verifies that a timeout error appends the firewall hint.
 func TestTest_Timeout_QBit(t *testing.T) {
-	c := newTransportClient(roundTripFunc(func(*http.Request) (*http.Response, error) {
+	c := newTransportClient(rttest.Func(func(*http.Request) (*http.Response, error) {
 		return nil, &qbNetTimeoutErr{}
 	}))
 
@@ -1777,15 +1675,12 @@ func TestTest_Timeout_QBit(t *testing.T) {
 // TestTest_ServerError_NoHint_QBit verifies that an HTTP 500 from the server
 // does NOT produce a network hint (qBittorrent responded, transport worked).
 func TestTest_ServerError_NoHint_QBit(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		default:
 			http.Error(w, "server error", http.StatusInternalServerError)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	err := c.Test(context.Background())
@@ -1885,10 +1780,8 @@ func TestAddTorrent_V4AndV5_ResponseShapes(t *testing.T) {
 		t.Run(f.name, func(t *testing.T) {
 			var mu sync.Mutex
 			added := false
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/auth/login":
-					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/torrents/add":
 					mu.Lock()
 					added = true
@@ -1906,8 +1799,7 @@ func TestAddTorrent_V4AndV5_ResponseShapes(t *testing.T) {
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer srv.Close()
+			})
 
 			indexer := newFakeIndexer(t)
 			defer indexer.Close()
@@ -1963,18 +1855,15 @@ func TestGetTorrents_V4AndV5_StateValues(t *testing.T) {
 	}
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/auth/login":
-					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/torrents/info":
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = w.Write([]byte(f.body))
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer srv.Close()
+			})
 
 			c := newTestClient(srv.URL, "admin", "pass")
 			torrents, err := c.GetTorrents(context.Background(), "")
@@ -2026,17 +1915,14 @@ func TestGetCategories_V4AndV5_ResponseShapes(t *testing.T) {
 	}
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/auth/login":
-					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/torrents/categories":
 					_, _ = w.Write([]byte(f.body))
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer srv.Close()
+			})
 
 			c := newTestClient(srv.URL, "admin", "pass")
 			cats, err := c.GetCategories(context.Background())
@@ -2061,17 +1947,14 @@ func TestGetCategories_V4AndV5_ResponseShapes(t *testing.T) {
 // (qBittorrent returns `{}` on both v4 and v5) decodes to an empty, non-nil-
 // usable map rather than an error.
 func TestGetCategories_EmptyObject(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/categories":
 			_, _ = w.Write([]byte(`{}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	cats, err := c.GetCategories(context.Background())
@@ -2099,17 +1982,14 @@ func TestGetDefaultSavePath_V4AndV5(t *testing.T) {
 	}
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/auth/login":
-					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/app/defaultSavePath":
 					_, _ = w.Write([]byte(f.body))
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer srv.Close()
+			})
 
 			c := newTestClient(srv.URL, "admin", "pass")
 			got, err := c.GetDefaultSavePath(context.Background())
@@ -2137,10 +2017,8 @@ func TestDeleteTorrent_V4AndV5(t *testing.T) {
 	}
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/auth/login":
-					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/torrents/delete":
 					w.WriteHeader(http.StatusOK)
 					if f.body != "" {
@@ -2149,8 +2027,7 @@ func TestDeleteTorrent_V4AndV5(t *testing.T) {
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer srv.Close()
+			})
 
 			c := newTestClient(srv.URL, "admin", "pass")
 			if err := c.DeleteTorrent(context.Background(), "abc123", true); err != nil {
@@ -2172,17 +2049,14 @@ func TestTest_V4AndV5_VersionString(t *testing.T) {
 	}
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/auth/login":
-					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/app/version":
 					_, _ = w.Write([]byte(f.body))
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer srv.Close()
+			})
 
 			c := newTestClient(srv.URL, "admin", "pass")
 			if err := c.Test(context.Background()); err != nil {
@@ -2200,10 +2074,8 @@ func TestTest_V4AndV5_VersionString(t *testing.T) {
 // root.
 func TestClient_Files_ReturnsRelativeNames(t *testing.T) {
 	const hash = "deadbeef1234567890deadbeef1234567890dead"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/files":
 			if got := r.URL.Query().Get("hash"); got != hash {
 				t.Errorf("Files: missing or wrong hash query, got %q", got)
@@ -2216,8 +2088,7 @@ func TestClient_Files_ReturnsRelativeNames(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	files, err := c.Files(context.Background(), hash)
@@ -2240,17 +2111,14 @@ func TestClient_Files_ReturnsRelativeNames(t *testing.T) {
 // basename so the importer can resolve it directly via SavePath join.
 func TestClient_Files_SingleFileTorrent(t *testing.T) {
 	const hash = "1111111111111111111111111111111111111111"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/files":
 			_, _ = w.Write([]byte(`[{"name":"standalone-book.m4b","size":50000,"progress":1}]`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	files, err := c.Files(context.Background(), hash)
@@ -2267,17 +2135,14 @@ func TestClient_Files_SingleFileTorrent(t *testing.T) {
 // fall back to the directory walk (with a WARN) rather than swallowing the
 // signal.
 func TestClient_Files_TorrentMissing(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/files":
 			w.WriteHeader(http.StatusNotFound)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	if _, err := c.Files(context.Background(), "nonexistent-hash"); err == nil {
@@ -2290,15 +2155,12 @@ func TestClient_Files_TorrentMissing(t *testing.T) {
 // downstream uses forward-slash path operations, so Files() must normalize
 // at the API boundary.
 func TestClient_Files_WindowsBackslashesNormalized(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/files":
 			_, _ = w.Write([]byte(`[{"name":"MyBook\\disc01.m4b","size":1024}]`))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	files, err := c.Files(context.Background(), "h")
@@ -2338,10 +2200,8 @@ func requireShareLimitParams(w http.ResponseWriter, r *http.Request) bool {
 // requires.
 func TestSetShareLimits_Positive(t *testing.T) {
 	var gotForm url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/setShareLimits":
 			_ = r.ParseForm()
 			if !requireShareLimitParams(w, r) {
@@ -2352,12 +2212,10 @@ func TestSetShareLimits_Positive(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "u", "p")
-	c.loggedIn = true
-	if err := c.SetShareLimits(context.Background(), "abc", 1.5); err != nil {
+	if err := c.SetShareLimitsDetailed(context.Background(), "abc", ratioLimit(1.5)); err != nil {
 		t.Fatalf("SetShareLimits: %v", err)
 	}
 	if got := gotForm.Get("hashes"); got != "abc" {
@@ -2378,10 +2236,8 @@ func TestSetShareLimits_Positive(t *testing.T) {
 // qBittorrent recognizes -1 as "no limit".
 func TestSetShareLimits_Unlimited(t *testing.T) {
 	var gotRatio string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/setShareLimits":
 			_ = r.ParseForm()
 			if !requireShareLimitParams(w, r) {
@@ -2392,12 +2248,10 @@ func TestSetShareLimits_Unlimited(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "u", "p")
-	c.loggedIn = true
-	if err := c.SetShareLimits(context.Background(), "abc", -1); err != nil {
+	if err := c.SetShareLimitsDetailed(context.Background(), "abc", ratioLimit(-1)); err != nil {
 		t.Fatalf("SetShareLimits: %v", err)
 	}
 	if gotRatio != "-1" {
@@ -2419,7 +2273,7 @@ func TestSetShareLimits_HTTPError(t *testing.T) {
 
 	c := newTestClient(srv.URL, "u", "p")
 	c.loggedIn = true
-	if err := c.SetShareLimits(context.Background(), "abc", 2); err == nil {
+	if err := c.SetShareLimitsDetailed(context.Background(), "abc", ratioLimit(2)); err == nil {
 		t.Fatal("expected error on HTTP 500")
 	}
 }
@@ -2431,10 +2285,8 @@ func TestSetShareLimits_HTTPError(t *testing.T) {
 // response that was cut off in transit, and treating that as success would
 // report a grab that never happened against a hash the client will never hold.
 func TestAddTorrent_TruncatedBodyIsNotSuccess(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			// Promise a body, then hang up before writing it, so io.ReadAll
 			// returns an unexpected EOF with no bytes.
@@ -2450,8 +2302,7 @@ func TestAddTorrent_TruncatedBodyIsNotSuccess(t *testing.T) {
 				_ = conn.Close()
 			}
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	c.loggedIn = true
@@ -2463,3 +2314,6 @@ func TestAddTorrent_TruncatedBodyIsNotSuccess(t *testing.T) {
 		t.Errorf("error = %q, want it to name the read failure", err)
 	}
 }
+
+// ratioLimit is a ShareLimits that sets only the seed ratio.
+func ratioLimit(v float64) ShareLimits { return ShareLimits{Ratio: &v} }

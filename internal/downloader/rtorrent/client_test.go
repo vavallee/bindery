@@ -816,18 +816,6 @@ func TestBasePath(t *testing.T) {
 	}
 }
 
-func TestSetLabel(t *testing.T) {
-	f := newFakeRtorrent(t, nil)
-	c := newTestClient(t, f.URL)
-	if err := c.SetLabel(context.Background(), magnetHash, "sci fi"); err != nil {
-		t.Fatalf("SetLabel: %v", err)
-	}
-	call := f.callsTo("d.custom1.set")[0]
-	if call.Args[1] != "sci%20fi" {
-		t.Fatalf("label must be percent-encoded for ruTorrent, got %q", call.Args[1])
-	}
-}
-
 // ---------------------------------------------------------------- guards
 
 // The RPC transport must refuse to talk to anything but the configured

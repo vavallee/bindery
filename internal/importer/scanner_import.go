@@ -115,6 +115,9 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		if s.dropToFolder(ctx, dl, downloadPath, formatHint, explicitFiles) {
 			return
 		}
+		// The files, not downloadPath: a Transmission path is the shared
+		// category folder, and recording it would hide every book in it.
+		s.recordHandedOffSource(ctx, dl, discoverBookFiles(ctx, downloadPath, explicitFiles))
 		s.updateDownloadStatus(ctx, dl.ID, models.StateImportExternal)
 		slog.Info("external import: download handed off in place, awaiting library scan; the language and content checks do not run without a drop folder", "title", dl.Title)
 		s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{"mode": "external", "status": string(models.StateImportExternal)})
@@ -603,7 +606,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		}
 		slog.Info("importing audiobook folder", "src", audiobookSource, "dst", destDir, "mode", mode, "perFile", usePerFile)
 		// Single-file audiobook releases (e.g. a lone .m4b from a torrent) give
-		// us a file path rather than a folder. MoveDir/CopyDir/HardlinkDir all
+		// us a file path rather than a folder. MoveDirCtx/CopyDirCtx/HardlinkDir all
 		// reject non-directory sources, so place the file inside destDir.
 		var dirErr error
 		if usePerFile {

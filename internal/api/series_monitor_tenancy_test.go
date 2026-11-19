@@ -111,3 +111,29 @@ func TestSeriesCheckNeverAttachesToAnotherAccountsAuthor(t *testing.T) {
 		t.Errorf("the other account's author gained books: %+v", theirBooks)
 	}
 }
+
+// TestSeriesCheckSkipsWhenOwnerSeesNoBook: the owner recorded on the monitoring
+// row has no visible book in the series any more (its only book moved to
+// another account). The scheduled check skips it quietly: no error, no
+// status, nothing added.
+func TestSeriesCheckSkipsWhenOwnerSeesNoBook(t *testing.T) {
+	h, series, books, _, database := tenancyMonitorFixture(t, true)
+	ctx := context.Background()
+	bob, err := db.NewUserRepo(database).GetByUsername(ctx, "bob")
+	if err != nil || bob == nil {
+		t.Fatalf("bob: %v %v", bob, err)
+	}
+	if err := db.NewSeriesRepo(database).SetMonitoring(ctx, series.ID, true, models.SeriesMonitorUpcoming, bob.ID); err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.CheckSeries(ctx, series)
+	if err != nil {
+		t.Fatalf("err = %v, want a quiet skip", err)
+	}
+	if res.Created != 0 || res.Status != "" {
+		t.Fatalf("res = %+v, want nothing done", res)
+	}
+	if got, _ := books.GetByForeignID(ctx, "hc:oathbringer"); got != nil {
+		t.Errorf("a book was added: %+v", got)
+	}
+}

@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useRef, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
-import { api, AuthorMonitorMode, MetadataProfile } from '../../api/client'
+import { api, AuthorMonitorMode, MetadataProfile, MonitorNewItems } from '../../api/client'
 import { inputCls } from './formStyles'
 import { dangerLink, primaryFill } from '../../components/buttons'
 import Toggle from './Toggle'
@@ -57,6 +57,19 @@ const AUDIOBOOK_SOURCE_ROWS = [
   { name: 'audnex', labelKey: 'settings.general.audnexLabel', label: 'audnex', hintKey: 'settings.general.audnexHint', hint: 'Narrator, runtime and cover for audiobooks. A community proxy over the same Audible data.' },
 ]
 
+// The marketplaces api.audnex.us accepts; the server refuses any other value.
+const AUDNEX_REGIONS = [
+  { code: 'us', name: 'United States' },
+  { code: 'ca', name: 'Canada' },
+  { code: 'uk', name: 'United Kingdom' },
+  { code: 'au', name: 'Australia' },
+  { code: 'fr', name: 'France' },
+  { code: 'de', name: 'Germany' },
+  { code: 'jp', name: 'Japan' },
+  { code: 'it', name: 'Italy' },
+  { code: 'in', name: 'India' },
+  { code: 'es', name: 'Spain' },
+]
 const ALL_TOGGLEABLE = [...ENRICHER_ROWS, ...AUDIOBOOK_SOURCE_ROWS].map(r => r.name)
 
 function parseDisabledSources(value: string): string[] {
@@ -253,6 +266,27 @@ export default function MetadataTab() {
               </label>
             ))}
           </div>
+          <div id="metadata.audnex_region" className="mt-3">
+            <label htmlFor={`${fid}-audnex-region`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+              {t('settings.general.audnexRegionLabel', 'audnex marketplace')}
+            </label>
+            <p className="text-xs text-fg-muted mb-2">
+              {t('settings.general.audnexRegionHint', 'The Audible marketplace audnex looks an ASIN up in. An ASIN sold only on another marketplace, such as a German audiobook, is not found in the US one, so pick the one your audiobooks come from. Only this one marketplace is asked. Takes effect from the next lookup, with no restart.')}
+            </p>
+            <select id={`${fid}-audnex-region`}
+              value={AUDNEX_REGIONS.some(r => r.code === settings['metadata.audnex_region']) ? settings['metadata.audnex_region'] : 'us'}
+              onChange={async e => {
+                const next = e.target.value
+                setSettings(s => ({ ...s, 'metadata.audnex_region': next }))
+                await api.setSetting('metadata.audnex_region', next).catch(console.error)
+              }}
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
+            >
+              {AUDNEX_REGIONS.map(r => (
+                <option key={r.code} value={r.code}>{r.name} ({r.code})</option>
+              ))}
+            </select>
+          </div>
           {sourcesError && (
             <p className="text-xs text-red-700 dark:text-red-400 mt-2" role="alert">
               {t('settings.general.sourcesSaveFailed', 'Could not save that change, so it was put back. Try again.')}
@@ -345,6 +379,26 @@ export default function MetadataTab() {
               />
             </div>
           )}
+          <div id="author.default_monitor_new_items">
+            <label htmlFor={`${fid}-9`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+              {t('settings.general.defaultMonitorNewItemsLabel', 'Default for monitoring newly discovered books')}
+            </label>
+            <p className="text-xs text-fg-muted mb-2">
+              {t('settings.general.defaultMonitorNewItemsHint', 'Applied to newly added authors. Choose whether a metadata refresh may add books it discovers later. Existing authors keep their own setting.')}
+            </p>
+            <select id={`${fid}-9`}
+              value={settings['author.default_monitor_new_items'] === 'none' ? 'none' : 'all'}
+              onChange={async e => {
+                const next = e.target.value as MonitorNewItems
+                setSettings(s => ({ ...s, 'author.default_monitor_new_items': next }))
+                await api.setSetting('author.default_monitor_new_items', next).catch(console.error)
+              }}
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
+            >
+              <option value="all">{t('monitorNewItems.all', 'Follow monitor mode')}</option>
+              <option value="none">{t('monitorNewItems.none', 'Don’t add them')}</option>
+            </select>
+          </div>
         </div>
 
         {/* Auto-grab */}

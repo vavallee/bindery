@@ -92,6 +92,9 @@ type requestAdder interface {
 	// library: it monitors the formats in mediaType on the existing row, and
 	// searches when asked (#3835).
 	monitorExistingBookCore(ctx context.Context, book *models.Book, mediaType string, searchOnAdd bool) (addBookResult, error)
+	// searchExistingBookCore starts the add search on a book already monitored
+	// for the requested format, writing nothing, and returns the run id (#3961).
+	searchExistingBookCore(ctx context.Context, book *models.Book) string
 }
 
 // requestMetadata is the provider lookup a create uses to learn the title and
@@ -710,17 +713,23 @@ func requestSentence(forOther bool, self, other string) string {
 // leaves the request pending, so a provider hiccup cannot lose what the
 // requester asked for; the admin queue still sees it.
 //
-// Only a brand new book auto approves. A request for a book the library
-// already holds stays pending whatever the account's setting (#3898):
-// approving it rewrites an existing row, and can turn a book an admin skipped
-// or unmonitored back into a wanted one, which is a human's call. resolvedID
-// is the provider's canonical id for the item, when it differs from the one
-// asked for.
+// A request for a book the library already holds auto approves too (#3954),
+// because the account's admin trusted it to bring books in and "in the
+// catalogue" does not mean "in the library with a file": the same approval an
+// admin would run adds the missing format, or searches for a monitored one,
+// and a format already on disk never reaches here (the create answers that it
+// is in the library). The exception is a book an admin turned away. Excluded
+// (the book page's Exclude action) and Skipped are the two states the product
+// records as a person's decision not to get a book (an unmonitored book carries
+// no such marker, since a default of "monitor nothing" and an admin's unmonitor
+// leave the same row), so a request for either waits for a human and the row is
+// left untouched. resolvedID is the provider's
+// canonical id for the item, when it differs from the one asked for.
 //
 // requestCreated is sent only when the request stays pending, so an admin is
 // not pinged for an item that was added without them (#2718).
 func (h *RequestHandler) writeCreated(ctx context.Context, w http.ResponseWriter, req models.LibraryRequest, owner int64, resolvedID string) {
-	if h.autoApproveRequests(ctx, owner) && !h.targetsExistingBook(ctx, req.Kind, req.ForeignID, resolvedID) {
+	if h.autoApproveRequests(ctx, owner) && !h.targetsHeldBackBook(ctx, req.Kind, req.ForeignID, resolvedID) {
 		switch done, status, msg, err := h.autoApprove(ctx, req, owner); {
 		case err != nil:
 			slog.Error("requests: auto approval failed, leaving the request pending", "id", req.ID, "error", err)
@@ -735,11 +744,11 @@ func (h *RequestHandler) writeCreated(ctx context.Context, w http.ResponseWriter
 	writeJSON(w, http.StatusCreated, toRequestResponse(req, false))
 }
 
-// targetsExistingBook reports whether a book request names a book the library
-// already has a row for, under any of the given provider ids. A lookup error
-// answers true: an auto approval that cannot be shown to be a new add is not
-// run.
-func (h *RequestHandler) targetsExistingBook(ctx context.Context, kind string, foreignIDs ...string) bool {
+// targetsHeldBackBook reports whether a book request names a book an admin
+// excluded or skipped, under any of the given provider ids. A lookup error
+// answers true: an auto approval that cannot be shown to leave such a book
+// alone is not run.
+func (h *RequestHandler) targetsHeldBackBook(ctx context.Context, kind string, foreignIDs ...string) bool {
 	if kind != models.RequestKindBook {
 		return false
 	}
@@ -747,7 +756,8 @@ func (h *RequestHandler) targetsExistingBook(ctx context.Context, kind string, f
 		if id == "" {
 			continue
 		}
-		if b, err := h.books.GetByForeignID(ctx, id); err != nil || b != nil {
+		b, err := h.books.GetByForeignID(ctx, id)
+		if err != nil || (b != nil && (b.Excluded || b.Status == models.BookStatusSkipped)) {
 			return true
 		}
 	}
@@ -975,6 +985,16 @@ func missingRequestFormats(b *models.Book, mediaType string) (ebook, audiobook b
 	return wantEbook && !ownsEbook && !monEbook, wantAudio && !ownsAudio && !monAudio
 }
 
+// coveredButNotOnDisk reports whether a requested format is monitored on the
+// book but has no file yet, so an approval that asks for a search has
+// something to look for. A format already on disk is never searched again.
+func coveredButNotOnDisk(b *models.Book, mediaType string) bool {
+	wantEbook, wantAudio := requestedFormats(mediaType)
+	ownsEbook, ownsAudio := ownedFormats(b)
+	monEbook, monAudio := monitoredFormats(b)
+	return (wantEbook && monEbook && !ownsEbook) || (wantAudio && monAudio && !ownsAudio)
+}
+
 // existingBookOutcome is what approving a request does to a book that is
 // already in the library.
 type existingBookOutcome int
@@ -1034,6 +1054,17 @@ func (h *RequestHandler) approveExistingBook(ctx context.Context, book *models.B
 		outcome, missingEbook, missingAudio := h.existingBookPlan(book, owner, mediaType)
 		switch outcome {
 		case outcomeCovered:
+			// Covered by monitoring is not covered by a file (#3961). When
+			// the approver asked for a search and a requested format is
+			// monitored but not on disk, search for it now, whatever the
+			// author's monitored flag says: the approval is an explicit act
+			// on this one book, as in the Add dialog. The row is not written.
+			// A book held by another account is left alone, as it is for a
+			// widen.
+			if searchOnAdd && coveredButNotOnDisk(book, mediaType) && !bookHeldByAnotherAccount(book, owner) {
+				runID := h.adder.searchExistingBookCore(ctx, book)
+				return runID, "This book was already in the library and monitored for the requested format, so a search was started and the request is resolved.", nil
+			}
 			return "", "This book was already in the library with the requested format, so nothing was added and the request is resolved.", nil
 		case outcomeRefused:
 			return "", "", errBookHeldElsewhere

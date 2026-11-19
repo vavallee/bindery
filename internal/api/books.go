@@ -16,10 +16,12 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/bookhydrate"
+	"github.com/vavallee/bindery/internal/bookorbit"
 	"github.com/vavallee/bindery/internal/covers"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/isbnutil"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/searchruns"
@@ -52,11 +54,23 @@ type BookHandler struct {
 
 	// runs gives the search a status flip starts a pollable run (#3133).
 	runs *searchruns.Store
+
+	// bookOrbitProvenance remembers which BookOrbit book each imported book
+	// came from. Optional.
+	bookOrbitProvenance *db.ABSProvenanceRepo
 }
 
 // WithSearchRuns attaches the store behind GET /search/runs/{id}. Optional.
 func (h *BookHandler) WithSearchRuns(runs *searchruns.Store) *BookHandler {
 	h.runs = runs
+	return h
+}
+
+// WithBookOrbitLinks wires in the import provenance so the book detail can
+// carry an "Open in BookOrbit" link (#1927). Optional: without it no link is
+// ever produced.
+func (h *BookHandler) WithBookOrbitLinks(provenance *db.ABSProvenanceRepo) *BookHandler {
+	h.bookOrbitProvenance = provenance
 	return h
 }
 
@@ -440,7 +454,8 @@ func (h *BookHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // prepareBookDetail shapes a book as the book page expects it: description
-// cleaned, tracked files, provider identifiers and the import flag attached.
+// cleaned, tracked files, provider identifiers, the import flag and the
+// editions with their locks attached.
 // GET /book/{id} and every response the page swaps in for its book use it, so
 // a mutation cannot answer with less than the page already had.
 func (h *BookHandler) prepareBookDetail(ctx context.Context, book *models.Book) {
@@ -448,22 +463,86 @@ func (h *BookHandler) prepareBookDetail(ctx context.Context, book *models.Book) 
 	h.attachBookFiles(ctx, book)
 	h.attachBookIdentifiers(ctx, book)
 	h.attachImportInFlight(ctx, book)
+	h.attachEditions(ctx, book)
 	h.attachRecording(ctx, book)
+	h.attachBookOrbitLink(ctx, book)
+}
+
+// attachBookOrbitLink sets the book's BookOrbit address for an admin. The
+// BookOrbit settings are admin only, so everyone else gets nothing, and the
+// response never carries the server URL or the API key, only the finished
+// link. The id comes from the import's provenance row, which is written only
+// by a real run that matched or created the book. When a rebuilt BookOrbit
+// linked the book again under a new id, the most recent link wins.
+func (h *BookHandler) attachBookOrbitLink(ctx context.Context, book *models.Book) {
+	book.BookOrbitURL = ""
+	if h.bookOrbitProvenance == nil || h.settings == nil || book.ID == 0 {
+		return
+	}
+	if auth.UserRoleFromContext(ctx) != "admin" {
+		return
+	}
+	links, err := h.bookOrbitProvenance.ListByLocal(ctx, bookorbit.ProvenanceBookEntity, book.ID)
+	if err != nil {
+		slog.Debug("book get: bookorbit link lookup failed", "book_id", book.ID, "error", err)
+		return
+	}
+	var best *models.ABSProvenance
+	for idx := range links {
+		l := &links[idx]
+		if l.SourceID != bookorbit.SourceID {
+			continue
+		}
+		if best == nil || !l.UpdatedAt.Before(best.UpdatedAt) {
+			best = l
+		}
+	}
+	if best == nil {
+		return
+	}
+	get := func(key string) string {
+		s, _ := h.settings.Get(ctx, key)
+		if s == nil {
+			return ""
+		}
+		return strings.TrimSpace(s.Value)
+	}
+	book.BookOrbitURL = bookorbit.BookURL(get(SettingBookOrbitPublicURL), get(SettingBookOrbitBaseURL), best.ExternalID)
+}
+
+// attachEditions lists the book's editions with their lockedFields, which is
+// how a client finds the editionId PUT /book/{id}/edition/{editionId} takes.
+// Best effort like the other attachments.
+func (h *BookHandler) attachEditions(ctx context.Context, book *models.Book) {
+	if h.editions == nil {
+		return
+	}
+	editions, err := h.editions.ListByBook(ctx, book.ID)
+	if err != nil {
+		slog.Debug("book get: edition lookup failed", "book_id", book.ID, "error", err)
+		return
+	}
+	book.Editions = editions
 }
 
 // attachRecording fills the book's narrator list and edition type for the
 // detail view (#1358). The audiobook edition that states a narrator list or an
 // edition type supplies them; otherwise the list is the book's narrator string
-// split into names and the type stays unknown. Best effort, read only.
+// split into names and the type stays unknown. It reuses the editions
+// attachEditions read when there are any. Best effort, read only.
 func (h *BookHandler) attachRecording(ctx context.Context, book *models.Book) {
 	book.Narrators = models.SplitNarrators(book.Narrator)
-	if h.editions == nil {
-		return
-	}
-	eds, err := h.editions.ListByBook(ctx, book.ID)
-	if err != nil {
-		slog.Debug("book get: edition lookup failed", "book_id", book.ID, "error", err)
-		return
+	eds := book.Editions
+	if eds == nil {
+		if h.editions == nil {
+			return
+		}
+		var err error
+		eds, err = h.editions.ListByBook(ctx, book.ID)
+		if err != nil {
+			slog.Debug("book get: edition lookup failed", "book_id", book.ID, "error", err)
+			return
+		}
 	}
 	for _, ed := range eds {
 		if ed.IsEbook || (len(ed.Narrators) == 0 && ed.EditionType == "") {
@@ -538,21 +617,24 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// DELETE /book/{id}?deleteFiles=true or DELETE /book/{id}/file.
 	//
 	// Title/Description/Genres/Language/ReleaseDate are the manual metadata
-	// edits (#1237, #1446). Setting one updates the value AND locks the field
+	// edits (#1237, #1446). Changing one updates the value AND locks the field
 	// against metadata refresh; LockedFields, when present, replaces the lock
-	// set wholesale so a client can also unlock fields.
+	// set wholesale so a client can also lock or unlock fields. Narrator,
+	// durationSeconds and asin follow the same rule since the recording-field
+	// locks (#3216).
 	var req struct {
-		Monitored    *bool     `json:"monitored"`
-		Status       *string   `json:"status"`
-		MediaType    *string   `json:"mediaType"`
-		ASIN         *string   `json:"asin"`
-		Narrator     *string   `json:"narrator"`
-		Title        *string   `json:"title"`
-		Description  *string   `json:"description"`
-		Genres       *[]string `json:"genres"`
-		Language     *string   `json:"language"`
-		ReleaseDate  *string   `json:"releaseDate"`
-		LockedFields *[]string `json:"lockedFields"`
+		Monitored       *bool     `json:"monitored"`
+		Status          *string   `json:"status"`
+		MediaType       *string   `json:"mediaType"`
+		ASIN            *string   `json:"asin"`
+		Narrator        *string   `json:"narrator"`
+		DurationSeconds *int      `json:"durationSeconds"`
+		Title           *string   `json:"title"`
+		Description     *string   `json:"description"`
+		Genres          *[]string `json:"genres"`
+		Language        *string   `json:"language"`
+		ReleaseDate     *string   `json:"releaseDate"`
+		LockedFields    *[]string `json:"lockedFields"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -578,11 +660,54 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Every metadata field below follows one rule: a submitted value is applied,
+	// and the field locks only when that value differs from the stored one. A
+	// client that reads a book and writes it back unchanged (scripts, companion
+	// tools) must not lock anything; naming a field in lockedFields is the way
+	// to lock it without changing it. Caps and format checks also run only on
+	// a change, so a stored value an import wrote is never refused on a
+	// round trip.
 	if req.ASIN != nil {
-		book.ASIN = *req.ASIN
+		asin := isbnutil.NormalizeASIN(*req.ASIN)
+		if asin != book.ASIN {
+			if asin != "" && !validASIN(asin) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "asin must be 10 letters or digits"})
+				return
+			}
+			// An empty ASIN is a clear, stored and locked so enrichment does not
+			// refill it (#2757 rule).
+			book.ASIN = asin
+			book.LockField(models.BookFieldASIN)
+		}
 	}
 	if req.Narrator != nil {
-		book.Narrator = *req.Narrator
+		narrator := strings.TrimSpace(*req.Narrator)
+		if narrator != book.Narrator {
+			if len(narrator) > maxBookNarratorBytes {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("narrator must be at most %d bytes", maxBookNarratorBytes)})
+				return
+			}
+			book.Narrator = narrator
+			book.LockField(models.BookFieldNarrator)
+		}
+	}
+	// Zero is what GET serializes for an unknown runtime, so a client that
+	// reads a book and PUTs it back sends it; it means "not set" and neither
+	// writes nor locks. Only a negative value is an error.
+	if req.DurationSeconds != nil {
+		d := *req.DurationSeconds
+		if d < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "durationSeconds must be a positive integer"})
+			return
+		}
+		if d > 0 && d != book.DurationSeconds {
+			if d > maxBookDurationSeconds {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("durationSeconds must be at most %d", maxBookDurationSeconds)})
+				return
+			}
+			book.DurationSeconds = d
+			book.LockField(models.BookFieldDurationSeconds)
+		}
 	}
 
 	// Manual metadata edits (#1237, #1446): apply the value and lock the
@@ -593,11 +718,17 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title must not be empty"})
 			return
 		}
-		book.Title = title
-		book.SortTitle = title
-		book.LockField(models.BookFieldTitle)
+		if title != book.Title {
+			book.Title = title
+			book.SortTitle = title
+			book.LockField(models.BookFieldTitle)
+		}
 	}
-	if req.Description != nil {
+	// GET serves the description cleaned of HTML (cleanBookDescription), so a
+	// client writing back what it read sends the cleaned form. That is not an
+	// edit: it neither locks nor replaces the stored HTML.
+	if req.Description != nil && *req.Description != book.Description &&
+		*req.Description != textutil.CleanDescription(book.Description) {
 		book.Description = *req.Description
 		book.LockField(models.BookFieldDescription)
 	}
@@ -608,28 +739,30 @@ func (h *BookHandler) Update(w http.ResponseWriter, r *http.Request) {
 				genres = append(genres, g)
 			}
 		}
-		book.Genres = genres
-		book.LockField(models.BookFieldGenres)
+		if !slices.Equal(genres, book.Genres) {
+			book.Genres = genres
+			book.LockField(models.BookFieldGenres)
+		}
 	}
 	if req.Language != nil {
 		// Stored in the same ISO 639-2/B form the providers write (#3086).
 		// Anything NormalizeLanguageCode does not recognise passes through
 		// lowercased, so a hand-typed code is never rejected or dropped.
-		book.Language = models.NormalizeLanguageCode(*req.Language)
-		book.LockField(models.BookFieldLanguage)
+		if lang := models.NormalizeLanguageCode(*req.Language); lang != models.NormalizeLanguageCode(book.Language) {
+			book.Language = lang
+			book.LockField(models.BookFieldLanguage)
+		}
 	}
 	if req.ReleaseDate != nil {
-		if *req.ReleaseDate == "" {
-			book.ReleaseDate = nil
-		} else {
-			rd, perr := time.Parse("2006-01-02", *req.ReleaseDate)
-			if perr != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "releaseDate must be YYYY-MM-DD or empty"})
-				return
-			}
-			book.ReleaseDate = &rd
+		rd, ok := parseDateField(*req.ReleaseDate)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "releaseDate must be YYYY-MM-DD, an RFC 3339 timestamp, or empty"})
+			return
 		}
-		book.LockField(models.BookFieldReleaseDate)
+		if !sameDay(rd, book.ReleaseDate) {
+			book.ReleaseDate = rd
+			book.LockField(models.BookFieldReleaseDate)
+		}
 	}
 	// An explicit lock set replaces the computed one — this is the unlock
 	// path. Validated against the closed lockable-field list.
@@ -1468,9 +1601,12 @@ func (h *BookHandler) Rebind(w http.ResponseWriter, r *http.Request) {
 	// monitored, file paths, media type, ASIN, narrator, calibre_id).
 	//
 	// A rebind is an explicit "this is the wrong record, take the new one"
-	// action, so manual field locks (#1237) are cleared: the user is asking
-	// for the new provider's metadata wholesale.
-	book.LockedFields = nil
+	// action, so the work-field locks (#1237) are cleared: the user is asking
+	// for the new provider's metadata wholesale. The recording fields are not
+	// part of that record and keep their values here, so they keep their locks
+	// too; otherwise the hydration below would re-promote an ASIN the user
+	// cleared and locked.
+	book.LockedFields = recordingFieldLocks(book.LockedFields)
 	book.ForeignID = req.ForeignID
 	book.MetadataProvider = req.Provider
 	if upstream.Title != "" {
@@ -1618,6 +1754,19 @@ func (h *BookHandler) ToggleExcluded(w http.ResponseWriter, r *http.Request) {
 	writeBook(w, http.StatusOK, book)
 }
 
+// recordingFieldLocks returns the subset of locks that belong to the recording
+// rather than the work: narrator, durationSeconds and asin.
+func recordingFieldLocks(locked []string) []string {
+	var kept []string
+	for _, f := range locked {
+		switch f {
+		case models.BookFieldNarrator, models.BookFieldDurationSeconds, models.BookFieldASIN:
+			kept = append(kept, f)
+		}
+	}
+	return kept
+}
+
 // preserveBookStateForMetadataMap and bookMapAuthorMatches below are retained:
 // they are shared with tryMapAudiobookMetadataByASIN. The standalone
 // POST /book/{id}/map handler that also used them was removed as dead surface —
@@ -1640,9 +1789,16 @@ func preserveBookStateForMetadataMap(book *models.Book, target *models.Book) {
 	audiobookFilePath := book.AudiobookFilePath
 	excluded := book.Excluded
 
-	// An explicit metadata map is a wholesale identity change, so manual
-	// field locks (#1237) are cleared — the user asked for the new record.
-	book.LockedFields = nil
+	// The map runs inside every Audnex enrich, so it is not the user asking
+	// for a new record (re-bind is, and still clears). Locks and the values
+	// they protect are kept; the identity and the unlocked work fields move
+	// to the target.
+	lockedFields := append([]string(nil), book.LockedFields...)
+	lockedTitle, lockedSortTitle := book.Title, book.SortTitle
+	lockedDescription := book.Description
+	lockedReleaseDate := book.ReleaseDate
+	lockedGenres := book.Genres
+	lockedLanguage := book.Language
 	book.ForeignID = target.ForeignID
 	book.Title = target.Title
 	book.SortTitle = firstNonEmpty(target.SortTitle, target.Title)
@@ -1679,6 +1835,23 @@ func preserveBookStateForMetadataMap(book *models.Book, target *models.Book) {
 	book.EbookFilePath = ebookFilePath
 	book.AudiobookFilePath = audiobookFilePath
 	book.Excluded = excluded
+
+	book.LockedFields = lockedFields
+	if book.IsFieldLocked(models.BookFieldTitle) {
+		book.Title, book.SortTitle = lockedTitle, lockedSortTitle
+	}
+	if book.IsFieldLocked(models.BookFieldDescription) {
+		book.Description = lockedDescription
+	}
+	if book.IsFieldLocked(models.BookFieldReleaseDate) {
+		book.ReleaseDate = lockedReleaseDate
+	}
+	if book.IsFieldLocked(models.BookFieldGenres) {
+		book.Genres = lockedGenres
+	}
+	if book.IsFieldLocked(models.BookFieldLanguage) {
+		book.Language = lockedLanguage
+	}
 }
 
 func bookMapAuthorMatches(current, target *models.Author) bool {

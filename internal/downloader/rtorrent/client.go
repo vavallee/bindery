@@ -42,6 +42,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/torrentfetch"
 	"github.com/vavallee/bindery/internal/downloader/urlbase"
 	"github.com/vavallee/bindery/internal/httpsec"
+	"github.com/vavallee/bindery/internal/textutil"
 	"github.com/vavallee/bindery/internal/useragent"
 )
 
@@ -609,14 +610,6 @@ func (c *Client) RemoveTorrent(ctx context.Context, hash string) error {
 	return nil
 }
 
-// SetLabel writes a torrent's ruTorrent label (d.custom1).
-func (c *Client) SetLabel(ctx context.Context, hash, label string) error {
-	if _, err := c.call(ctx, "d.custom1.set", wireHash(hash), encodeLabel(label)); err != nil {
-		return fmt.Errorf("d.custom1.set: %w", err)
-	}
-	return nil
-}
-
 // wireHash renders a Bindery-side (lower-case) infohash in the upper-case hex
 // form rTorrent uses canonically.
 func wireHash(hash string) string {
@@ -730,15 +723,7 @@ func readRPCBody(r io.Reader) ([]byte, error) {
 // entry and any webhook payload.
 func snippet(body []byte) string {
 	const maxSnippet = 256
-	s := strings.TrimSpace(string(body))
-	if len(s) <= maxSnippet {
-		return s
-	}
-	cut := maxSnippet
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
+	return textutil.TruncateUTF8(strings.TrimSpace(string(body)), maxSnippet)
 }
 
 func (c *Client) validateRequestTarget(target *url.URL) error {

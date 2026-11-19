@@ -23,7 +23,7 @@ export default function BookOrbitTab() {
   const { t } = useTranslation()
   const fid = useId()
   const [config, setConfig] = useState<BookOrbitConfig | null>(null)
-  const [draft, setDraft] = useState({ baseUrl: '', apiKey: '', pathRemap: '', libraryIds: [] as string[] })
+  const [draft, setDraft] = useState({ baseUrl: '', publicUrl: '', apiKey: '', pathRemap: '', libraryIds: [] as string[] })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -32,6 +32,13 @@ export default function BookOrbitTab() {
   const [testError, setTestError] = useState<string | null>(null)
   const [libraries, setLibraries] = useState<BookOrbitLibrary[] | null>(null)
   const [librariesError, setLibrariesError] = useState<string | null>(null)
+  // Names resolved quietly from the live library list, so the saved selection
+  // and the run history read "Books" after a reload instead of "Library 1".
+  const [knownLibraries, setKnownLibraries] = useState<BookOrbitLibrary[]>([])
+  // Bumped by every save and every library listing. A quiet lookup that
+  // started before the latest one is dropped, so a slow answer from the old
+  // server cannot overwrite names from the new one.
+  const namesReq = useRef(0)
   const [progress, setProgress] = useState<ABSImportProgress | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [runs, setRuns] = useState<ABSImportRun[]>([])
@@ -50,6 +57,29 @@ export default function BookOrbitTab() {
       // The history is secondary; a failure here must not hide the form.
     }
   }, [])
+
+  // Best effort: when BookOrbit cannot be reached the ids stay as they are and
+  // nothing is shown, since the admin did not ask for the list.
+  const resolveNames = useCallback(async (cfg: BookOrbitConfig) => {
+    if (!cfg.baseUrl || !cfg.apiKeyConfigured) return
+    const seq = ++namesReq.current
+    try {
+      const list = await api.bookOrbitLibraries()
+      if (seq === namesReq.current && Array.isArray(list)) setKnownLibraries(list)
+    } catch {
+      // Falls back to "Library N".
+    }
+  }, [])
+
+  // Each action starts from a clean slate, so a result or error from an
+  // earlier one never sits beside the answer to a later one.
+  const clearFeedback = () => {
+    setSaveError(null)
+    setTestResult(null)
+    setTestError(null)
+    setLibrariesError(null)
+    setImportError(null)
+  }
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -78,7 +108,8 @@ export default function BookOrbitTab() {
     api.bookOrbitConfig()
       .then(cfg => {
         setConfig(cfg)
-        setDraft({ baseUrl: cfg.baseUrl ?? '', apiKey: '', pathRemap: cfg.pathRemap ?? '', libraryIds: cfg.libraryIds ?? [] })
+        setDraft({ baseUrl: cfg.baseUrl ?? '', publicUrl: cfg.publicUrl ?? '', apiKey: '', pathRemap: cfg.pathRemap ?? '', libraryIds: cfg.libraryIds ?? [] })
+        void resolveNames(cfg)
       })
       .catch(console.error)
       .finally(() => setLoading(false))
@@ -90,21 +121,24 @@ export default function BookOrbitTab() {
       .catch(() => {})
     void loadRuns(0)
     return stopPolling
-  }, [poll, loadRuns, stopPolling])
+  }, [poll, loadRuns, stopPolling, resolveNames])
 
   const save = async () => {
     setSaving(true)
-    setSaveError(null)
+    clearFeedback()
+    namesReq.current++
     try {
-      const payload: { baseUrl: string; libraryIds: string[]; pathRemap: string; apiKey?: string } = {
+      const payload: { baseUrl: string; publicUrl: string; libraryIds: string[]; pathRemap: string; apiKey?: string } = {
         baseUrl: draft.baseUrl.trim(),
+        publicUrl: draft.publicUrl.trim(),
         libraryIds: draft.libraryIds,
         pathRemap: draft.pathRemap.trim(),
       }
       if (draft.apiKey.trim()) payload.apiKey = draft.apiKey.trim()
       const next = await api.bookOrbitSetConfig(payload)
       setConfig(next)
-      setDraft({ baseUrl: next.baseUrl, apiKey: '', pathRemap: next.pathRemap, libraryIds: next.libraryIds })
+      setDraft({ baseUrl: next.baseUrl, publicUrl: next.publicUrl ?? '', apiKey: '', pathRemap: next.pathRemap, libraryIds: next.libraryIds })
+      void resolveNames(next)
     } catch (err) {
       setSaveError(errorText(err, t('settings.bookorbit.errors.save')))
     } finally {
@@ -119,8 +153,7 @@ export default function BookOrbitTab() {
 
   const test = async () => {
     setTesting(true)
-    setTestResult(null)
-    setTestError(null)
+    clearFeedback()
     try {
       setTestResult(await api.bookOrbitTest(probeBody()))
     } catch (err) {
@@ -131,9 +164,12 @@ export default function BookOrbitTab() {
   }
 
   const listLibraries = async () => {
-    setLibrariesError(null)
+    clearFeedback()
+    namesReq.current++
     try {
-      setLibraries(await api.bookOrbitLibraries(probeBody()))
+      const list = await api.bookOrbitLibraries(probeBody())
+      setLibraries(list)
+      setKnownLibraries(list)
     } catch (err) {
       setLibrariesError(errorText(err, t('settings.bookorbit.errors.libraries')))
     }
@@ -149,12 +185,13 @@ export default function BookOrbitTab() {
   const unsaved = !config
     || config.baseUrl !== draft.baseUrl.trim()
     || config.pathRemap !== draft.pathRemap.trim()
+    || (config.publicUrl ?? '') !== draft.publicUrl.trim()
     || draft.apiKey.trim() !== ''
     || !sameIds(config.libraryIds ?? [], draft.libraryIds)
   const ready = Boolean(config?.baseUrl && config.apiKeyConfigured && (config.libraryIds ?? []).length > 0) && !unsaved
 
   const start = async (dryRun: boolean) => {
-    setImportError(null)
+    clearFeedback()
     try {
       setProgress(await api.bookOrbitImportStart({ dryRun }))
       poll()
@@ -168,8 +205,10 @@ export default function BookOrbitTab() {
   const running = Boolean(progress?.running)
   // Libraries to tick: the ones BookOrbit just listed, or, before a listing,
   // the saved selection by id so it stays visible and can be cleared.
-  const choices: BookOrbitLibrary[] = libraries ?? draft.libraryIds.map(id => ({ id, name: t('settings.bookorbit.libraries.unnamed', { id }), folders: [] }))
-  const libraryName = (id: string) => libraries?.find(lib => lib.id === id)?.name ?? t('settings.bookorbit.libraries.unnamed', { id })
+  const libraryName = (id: string) => (libraries ?? knownLibraries).find(lib => lib.id === id)?.name
+    ?? knownLibraries.find(lib => lib.id === id)?.name
+    ?? t('settings.bookorbit.libraries.unnamed', { id })
+  const choices: BookOrbitLibrary[] = libraries ?? draft.libraryIds.map(id => ({ id, name: libraryName(id), folders: [] }))
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -191,6 +230,19 @@ export default function BookOrbitTab() {
             placeholder="http://bookorbit:3000"
             className={inputCls}
           />
+        </div>
+        <div>
+          <label htmlFor={`${fid}-public`} className="block text-xs font-medium mb-1">{t('settings.bookorbit.fields.publicUrl')}</label>
+          <input id={`${fid}-public`}
+            {...urlInputAttrs}
+            type="text"
+            value={draft.publicUrl}
+            onChange={e => setDraft(prev => ({ ...prev, publicUrl: e.target.value }))}
+            placeholder="https://books.example.com"
+            aria-describedby={`${fid}-public-hint`}
+            className={inputCls}
+          />
+          <p id={`${fid}-public-hint`} className="mt-1 text-[11px] text-fg-muted">{t('settings.bookorbit.fields.publicUrlHint')}</p>
         </div>
         <div>
           <label htmlFor={`${fid}-key`} className="block text-xs font-medium mb-1">

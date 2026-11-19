@@ -51,6 +51,14 @@ type reorganizeSummary struct {
 	Errored   int `json:"errored"`
 	Moved     int `json:"moved"`
 	Failed    int `json:"failed"`
+	// metadata.opf counts (#4008), only present when import.write_opf_sidecar
+	// produced an action. ToWrite is the preview, the rest are apply results.
+	SidecarToWrite   int `json:"sidecarToWrite,omitempty"`
+	SidecarWritten   int `json:"sidecarWritten,omitempty"`
+	SidecarUnchanged int `json:"sidecarUnchanged,omitempty"`
+	SidecarForeign   int `json:"sidecarForeign,omitempty"`
+	SidecarFailed    int `json:"sidecarFailed,omitempty"`
+	SidecarShared    int `json:"sidecarShared,omitempty"`
 }
 
 type reorganizeResponse struct {
@@ -78,6 +86,20 @@ func newReorganizeResponse(moves []importer.ReorganizeMove) reorganizeResponse {
 func summarize(moves []importer.ReorganizeMove) reorganizeSummary {
 	s := reorganizeSummary{Total: len(moves)}
 	for _, m := range moves {
+		switch m.Sidecar {
+		case importer.ReorgSidecarWrite:
+			s.SidecarToWrite++
+		case importer.ReorgSidecarWritten:
+			s.SidecarWritten++
+		case importer.ReorgSidecarUnchanged:
+			s.SidecarUnchanged++
+		case importer.ReorgSidecarForeign:
+			s.SidecarForeign++
+		case importer.ReorgSidecarFailed:
+			s.SidecarFailed++
+		case importer.ReorgSidecarShared:
+			s.SidecarShared++
+		}
 		switch m.Status {
 		case importer.ReorgStatusMove:
 			s.ToMove++
@@ -132,9 +154,14 @@ func (h *ReorganizeHandler) Preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := newReorganizeResponse(moves)
+	// Only rows that would move count: those are the fileIds the dialog
+	// submits to Apply, so a format whose files are all already in place, or
+	// missing, or blocked by a collision, is not one Reorganize would touch.
 	var present []string
 	for _, m := range moves {
-		present = append(present, m.Format)
+		if m.Status == importer.ReorgStatusMove {
+			present = append(present, m.Format)
+		}
 	}
 	if ext := intersectFormats(h.scanner.ExternalImportFormats(ctx), present); len(ext) > 0 {
 		resp.ExternalMode = true

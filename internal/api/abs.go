@@ -12,6 +12,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/abs"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 const (
@@ -140,7 +141,7 @@ func (h *ABSHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	if req.APIKey != nil {
 		apiKey = strings.TrimSpace(*req.APIKey)
 		if apiKey != "" {
-			if _, err := abs.NormalizeAPIKey(apiKey); err != nil {
+			if _, err := httpsec.NormalizeAPIKey(apiKey); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
@@ -348,7 +349,7 @@ func (h *ABSHandler) newConfiguredClient(baseURL, apiKey string) (absClient, err
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, errors.New("base_url is required")
 	}
-	apiKey, err := abs.NormalizeAPIKey(apiKey)
+	apiKey, err := httpsec.NormalizeAPIKey(apiKey)
 	if err != nil {
 		return nil, err
 	}

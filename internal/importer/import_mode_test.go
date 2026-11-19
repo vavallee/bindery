@@ -40,7 +40,7 @@ func TestHardlinkFile(t *testing.T) {
 	}
 }
 
-// TestCopyFileMode verifies that CopyFile duplicates the file and leaves the source intact.
+// TestCopyFileMode verifies that CopyFileCtx duplicates the file and leaves the source intact.
 func TestCopyFileMode(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.epub")
@@ -51,8 +51,8 @@ func TestCopyFileMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := CopyFile(src, dst); err != nil {
-		t.Fatalf("CopyFile: %v", err)
+	if err := CopyFileCtx(t.Context(), src, dst); err != nil {
+		t.Fatalf("CopyFileCtx: %v", err)
 	}
 
 	if _, err := os.Stat(src); err != nil {
@@ -122,7 +122,7 @@ func TestHardlinkDir(t *testing.T) {
 	}
 }
 
-// TestCopyDirMode verifies that CopyDir duplicates a directory tree and leaves
+// TestCopyDirMode verifies that CopyDirCtx duplicates a directory tree and leaves
 // the source intact.
 func TestCopyDirMode(t *testing.T) {
 	dir := t.TempDir()
@@ -137,12 +137,12 @@ func TestCopyDirMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := CopyDir(src, dst); err != nil {
-		t.Fatalf("CopyDir: %v", err)
+	if err := CopyDirCtx(t.Context(), src, dst); err != nil {
+		t.Fatalf("CopyDirCtx: %v", err)
 	}
 
 	if _, err := os.Stat(srcFile); err != nil {
-		t.Error("source removed after CopyDir — source must survive")
+		t.Error("source removed after CopyDirCtx — source must survive")
 	}
 
 	dstFile := filepath.Join(dst, "part1.mp3")
@@ -387,8 +387,8 @@ func TestDirectoryPlacementSkipsDownloadArtifacts(t *testing.T) {
 	})
 	t.Run("copy", func(t *testing.T) {
 		src, dst := mkSrc(t), filepath.Join(t.TempDir(), "lib")
-		if err := CopyDir(src, dst); err != nil {
-			t.Fatalf("CopyDir: %v", err)
+		if err := CopyDirCtx(t.Context(), src, dst); err != nil {
+			t.Fatalf("CopyDirCtx: %v", err)
 		}
 		check(t, dst)
 		// Copy mode must leave the source intact, artifacts included.
@@ -397,7 +397,7 @@ func TestDirectoryPlacementSkipsDownloadArtifacts(t *testing.T) {
 		}
 	})
 	t.Run("move-rename-fastpath", func(t *testing.T) {
-		// src and dst share t.TempDir's filesystem, so MoveDir takes the
+		// src and dst share t.TempDir's filesystem, so MoveDirCtx takes the
 		// os.Rename fast path; artifacts ride along and must be swept after.
 		base := t.TempDir()
 		src := filepath.Join(base, "job")
@@ -414,8 +414,8 @@ func TestDirectoryPlacementSkipsDownloadArtifacts(t *testing.T) {
 			}
 		}
 		dst := filepath.Join(base, "lib", "job")
-		if err := MoveDir(src, dst); err != nil {
-			t.Fatalf("MoveDir: %v", err)
+		if err := MoveDirCtx(t.Context(), src, dst); err != nil {
+			t.Fatalf("MoveDirCtx: %v", err)
 		}
 		check(t, dst)
 		if _, err := os.Stat(src); err == nil {

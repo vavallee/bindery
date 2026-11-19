@@ -271,32 +271,6 @@ func (c *Client) Test(ctx context.Context) error {
 	return nil
 }
 
-// SetShareLimits applies a per-torrent seed-ratio limit via
-// POST /api/v2/torrents/setShareLimits. ratioLimit follows qBittorrent's own
-// convention: a positive float is the target ratio, -1 means "no limit"
-// (seed forever) and -2 means "use the global limit". seedingTimeLimit and
-// inactiveSeedingTimeLimit are left at -2 (use global) so this call only ever
-// touches the ratio rule; SetShareLimitsDetailed sets those as well (#2206).
-//
-// qBittorrent 5.2.0 made shareLimitAction a required parameter of this
-// endpoint; without it the whole call is rejected with HTTP 400 and the
-// torrent silently keeps the global limit (#2205). The value is the
-// enumerator NAME, parsed server side by QMetaEnum::keyToValue. The enum
-// (src/base/bittorrent/sharelimits.h) is Default = -1, Stop = 0, Remove = 1,
-// EnableSuperSeeding = 2, RemoveWithContent = 3; "Default" means "apply the
-// client's configured default action when the limit is reached", which is
-// what the old five-field call effectively did, so behaviour is unchanged.
-// shareLimitsMode (Default = -1, MatchAny = 0, MatchAll = 1) is not yet
-// required by any release but is by qBittorrent master; sending
-// "Default" now avoids repeating this bug when that ships. Releases that do
-// not know a field ignore it: requireParams (webui/api/apicontroller.cpp)
-// only checks that the listed keys are present, never that extras are
-// absent, so both fields are safe to send unconditionally to 5.1.x and
-// older.
-func (c *Client) SetShareLimits(ctx context.Context, hash string, ratioLimit float64) error {
-	return c.SetShareLimitsDetailed(ctx, hash, ShareLimits{Ratio: &ratioLimit})
-}
-
 // ShareLimits is the set of per-torrent overrides SetShareLimitsDetailed
 // applies. A nil field is sent as -2, qBittorrent's "use the global rule", so
 // only the limits that carry a value change anything.
@@ -320,9 +294,24 @@ func (l ShareLimits) IsZero() bool {
 	return l.Ratio == nil && l.SeedingTimeMinutes == nil && l.InactiveSeedingTimeMinutes == nil
 }
 
-// SetShareLimitsDetailed is SetShareLimits for all three limits (#2206). The
-// request shape, including the required shareLimitAction and shareLimitsMode,
-// is the one documented on SetShareLimits.
+// SetShareLimitsDetailed applies per-torrent share limits via
+// POST /api/v2/torrents/setShareLimits (#2206). Values follow qBittorrent's
+// own convention: a positive value is the limit, -1 means "no limit" and -2
+// means "use the global limit"; a nil field in limits is sent as -2.
+//
+// qBittorrent 5.2.0 made shareLimitAction a required parameter of this
+// endpoint; without it the whole call is rejected with HTTP 400 and the
+// torrent silently keeps the global limit (#2205). The value is the
+// enumerator NAME, parsed server side by QMetaEnum::keyToValue. The enum
+// (src/base/bittorrent/sharelimits.h) is Default = -1, Stop = 0, Remove = 1,
+// EnableSuperSeeding = 2, RemoveWithContent = 3; "Default" means "apply the
+// client's configured default action when the limit is reached".
+// shareLimitsMode (Default = -1, MatchAny = 0, MatchAll = 1) is not yet
+// required by any release but is by qBittorrent master; sending "Default" now
+// avoids repeating this bug when that ships. Releases that do not know a field
+// ignore it: requireParams (webui/api/apicontroller.cpp) only checks that the
+// listed keys are present, never that extras are absent, so both fields are
+// safe to send unconditionally to 5.1.x and older.
 func (c *Client) SetShareLimitsDetailed(ctx context.Context, hash string, limits ShareLimits) error {
 	if err := c.ensureLoggedIn(ctx); err != nil {
 		return err

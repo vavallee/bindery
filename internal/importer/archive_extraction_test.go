@@ -339,7 +339,7 @@ func TestMoveDirMerge_KeepsArchiveVolumes(t *testing.T) {
 func TestCopyDir_StillSkipsArchiveVolumes(t *testing.T) {
 	src := archiveMoveSource(t)
 	dst := filepath.Join(t.TempDir(), "lib", "Fjellvinden")
-	if err := CopyDir(src, dst); err != nil {
+	if err := CopyDirCtx(t.Context(), src, dst); err != nil {
 		t.Fatal(err)
 	}
 	placed := relFiles(t, dst)

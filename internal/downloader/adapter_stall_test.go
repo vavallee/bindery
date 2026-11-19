@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
+
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -14,10 +16,8 @@ import (
 // in the stalledDL state are reported as stalled and that their hashes are
 // lower-cased in the returned map.
 func TestGetStalledTorrents_QBittorrent_StalledDL(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"hash": "ABCDEF", "state": "stalledDL"},
@@ -27,8 +27,7 @@ func TestGetStalledTorrents_QBittorrent_StalledDL(t *testing.T) {
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{
@@ -60,15 +59,12 @@ func TestGetStalledTorrents_QBittorrent_StalledDL(t *testing.T) {
 // TestGetStalledTorrents_QBittorrent_EmptyList verifies a well-formed response
 // with no torrents returns an empty (non-nil) map.
 func TestGetStalledTorrents_QBittorrent_EmptyList(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		}
-	}))
-	defer srv.Close()
+	})
 
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{
@@ -155,15 +151,12 @@ func TestGetStalledTorrents_Sabnzbd_NotSupported(t *testing.T) {
 
 // TestGetStalledTorrents_QBittorrent_ServerError surfaces the transport error.
 func TestGetStalledTorrents_QBittorrent_ServerError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			http.Error(w, "boom", http.StatusInternalServerError)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{

@@ -358,21 +358,23 @@ func (r *ABSImportRunEntityRepo) Record(ctx context.Context, entity *models.ABSI
 	}
 	outcome = mergeABSRunEntityOutcome(existingOutcome, outcome)
 	metadataJSON = mergeABSRunEntityMetadata(existingMetadataJSON, metadataJSON)
-	result, err := r.db.ExecContext(ctx, `
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO abs_import_run_entities (run_id, source_id, library_id, item_id, entity_type, external_id, local_id, outcome, metadata_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(run_id, entity_type, external_id, local_id) DO UPDATE SET
 			item_id = excluded.item_id,
 			outcome = excluded.outcome,
-			metadata_json = excluded.metadata_json`,
-		entity.RunID, sourceID, entity.LibraryID, entity.ItemID, entity.EntityType, entity.ExternalID, entity.LocalID, outcome, metadataJSON)
+			metadata_json = excluded.metadata_json
+		RETURNING id`,
+		entity.RunID, sourceID, entity.LibraryID, entity.ItemID, entity.EntityType, entity.ExternalID, entity.LocalID, outcome, metadataJSON).Scan(&id)
 	if err != nil {
 		return fmt.Errorf("record abs import run entity %d/%s/%s: %w", entity.RunID, entity.EntityType, entity.ExternalID, err)
 	}
+	// RETURNING, not LastInsertId: a conflict update leaves the connection's
+	// last insert id on an unrelated row (#3978).
 	if entity.ID == 0 {
-		if id, err := result.LastInsertId(); err == nil && id > 0 {
-			entity.ID = id
-		}
+		entity.ID = id
 	}
 	entity.SourceID = sourceID
 	entity.Outcome = outcome

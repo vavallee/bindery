@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
 )
 
 // sampleInfoDict is a realistic single-file bencoded "info" dictionary, and
@@ -66,16 +68,13 @@ func TestAddTorrent_Duplicate409_Magnet(t *testing.T) {
 	const hash = "abcdef0123456789abcdef0123456789abcdef01"
 	magnet := "magnet:?xt=urn:btih:" + hash + "&dn=Book"
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			w.WriteHeader(http.StatusConflict)
 			_, _ = w.Write([]byte("Conflict"))
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	c.loggedIn = true
@@ -104,15 +103,12 @@ func TestAddTorrent_Duplicate409_File(t *testing.T) {
 	}))
 	defer indexer.Close()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			w.WriteHeader(http.StatusConflict)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	allowTorrentFetch(c)
@@ -130,15 +126,12 @@ func TestAddTorrent_Duplicate409_File(t *testing.T) {
 // TestAddTorrent_NonConflictErrorStillFails confirms the 409 handling did not
 // soften other non-200 responses — a real failure must still surface.
 func TestAddTorrent_NonConflictErrorStillFails(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			w.WriteHeader(http.StatusInternalServerError)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	c := newTestClient(srv.URL, "admin", "pass")
 	c.loggedIn = true

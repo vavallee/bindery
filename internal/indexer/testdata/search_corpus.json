@@ -622,9 +622,7 @@
   "wantedAuthor": "Antoine de Saint-Exupéry",
   "mediaType": "ebook",
   "release": "Antoine de Saint-Exupery - Le Petit Prince (epub)",
-  "expect": "keep",
-  "knownGap": true,
-  "gapReason": "False drop. The unaccented spelling of the author does not match the accented author tokens; the accented control case below passes."
+  "expect": "keep"
  },
  {
   "source": "falsedrop",

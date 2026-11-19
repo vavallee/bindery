@@ -34,6 +34,8 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    // A book approval shows none of these choices, so it does not fetch them.
+    if (!isAuthor) return
     let cancelled = false
     loadAuthorAddDefaults().then(d => {
       if (cancelled) return
@@ -42,7 +44,7 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
       setQualityProfileId(d.qualityProfileId)
       setRootFolderId(d.rootFolderId)
       setMonitorMode(d.monitorMode)
-      if (!request.mediaType && isAuthor) setMediaType(d.mediaType)
+      if (!request.mediaType) setMediaType(d.mediaType)
     })
     return () => { cancelled = true }
   }, [isAuthor, request.mediaType])

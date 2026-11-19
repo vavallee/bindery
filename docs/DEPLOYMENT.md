@@ -58,6 +58,31 @@ Every ingress template is gated on `ingress.enabled`, which defaults to false, s
 
 For GitOps, [`argocd/application.example.yaml`](../argocd/application.example.yaml) is a starting point for an ArgoCD `Application`. Copy it into your own repo and replace the placeholder host, NFS server and media path. It uses `ingress.type: standard`, because the default Traefik `IngressRoute` carries a hardcoded `traefik-internal` ingress class annotation.
 
+### Sharing a volume with another app
+
+`extraVolumes`, `extraVolumeMounts` and `affinity` take plain Kubernetes syntax and are empty by default, so the rendered manifests are unchanged unless you set them. Use the first two to mount an existing claim that another app also mounts, for example one tree holding downloads, a drop folder and the library, so hardlinks and atomic renames work across all three:
+
+```yaml
+extraVolumes:
+  - name: shared
+    persistentVolumeClaim:
+      claimName: bookorbit-shared
+extraVolumeMounts:
+  - name: shared
+    mountPath: /data
+affinity:
+  podAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: bookorbit
+        topologyKey: kubernetes.io/hostname
+```
+
+A ReadWriteOnce claim only attaches on one node, so when another pod mounts the same claim, set `affinity` (here a pod affinity) so both pods land on the same node. Point the matching Bindery paths at the mount with `env`, for example `BINDERY_LIBRARY_DIR: /data/books` and `BINDERY_DOWNLOAD_DIR: /data/downloads`.
+
+For a worked BookOrbit setup that uses this, see [BookOrbit integration](BookOrbit-Integration-Wiki.md#on-kubernetes).
+
 ### Health checks
 
 Bindery answers `GET /api/v1/health` with 200 once it is serving. The container image declares its own Docker `HEALTHCHECK` that calls the binary's `healthcheck` subcommand against that endpoint, so `docker ps` shows a health column and Compose `depends_on: { bindery: { condition: service_healthy } }` works with no extra configuration. `GET /api/v1/health/ready` also runs a trivial query on Bindery's database connection and returns 503 when the connection is closed or unusable or the driver returns an error. It does not detect a damaged, deleted or unreadable database file, because that query does not read any table, so it cannot see truncation or deletion. Results are cached for one second. A database that is just busy (a library scan, a large import or a VACUUM holding Bindery's single connection past the two second check) still answers 200, with `"busy":true` in the body, so a long job never takes the pod out of the Service. Both routes need no credentials, and `/health/ready` returns only a status word, never the cause. The Helm chart's readiness probe uses `/health/ready`, so a pod whose database connection is broken drops out of the Service without being restarted. Its liveness probe stays on the static `/api/v1/health` (and its startup probe on a TCP check), because restarting the pod on a slow disk fixes nothing. The Docker `HEALTHCHECK` stays on `/api/v1/health` for the same reason. `hooks.postsyncSmoke` adds an ArgoCD PostSync job that fails the sync if the endpoint does not answer. Under `BINDERY_URL_BASE` the path moves under the prefix. The built in Docker `HEALTHCHECK` follows it, but update any probe you configure yourself.
@@ -496,11 +521,13 @@ Covers are one extra mount. When the bridge supports them Bindery sends a cover 
 
 Ebooks and audiobooks do not have to share this. **Audiobook import mode** (`import.audiobook.mode`, default **Same as ebooks**) gives audiobooks their own mode, and **Audiobook drop folder** (`import.audiobook.drop_folder`, empty uses the drop folder above) gives them their own folder when that mode is External. For Calibre-Web-Automated plus Audiobookshelf, set Import Mode `External` with the CWA ingest folder as the drop folder, and the audiobook import mode to `Copy` (works on any storage, including mergerfs) or `Hardlink`: ebooks go to CWA, audiobooks go to `BINDERY_AUDIOBOOK_DIR` and Bindery triggers the Audiobookshelf scan. See [Storage and hardlinks](Storage-And-Hardlinks-Wiki.md#a-different-mode-for-audiobooks).
 
-Before anything is placed in the drop folder, Bindery runs the same language check and content check (`import.ebook.content_check`, `import.audiobook.content_check`) a managed import runs, with the same policy (#3945). In `warn` mode, the default, the file is still dropped and the finding is logged and shown on the drop's History row. In `block` mode, or when the file's language is not allowed by the author's metadata profile, nothing is dropped: the download is parked as blocked with the same message, the release is blocklisted and the book stays Wanted. With no drop folder (hand off in place) nothing is placed and the checks do not run. Before this fix, External mode skipped both checks.
+Before anything is placed in the drop folder, Bindery runs the same language check and content check (`import.ebook.content_check`, `import.audiobook.content_check`) a managed import runs, with the same policy (#3945). In `warn` mode, the default, the file is still dropped and the finding is logged and shown on the drop's History row. In `block` mode, or when the file's language is not allowed by the author's metadata profile, nothing is dropped: the download is parked as blocked with the same message, the release is blocklisted and the book stays Wanted. A manual import (Match to book, Import from a folder) is never refused by these checks, as in a managed import. With no drop folder (hand off in place) nothing is placed and the checks do not run. Before this fix, External mode skipped both checks.
 
 Bindery parks the download as *handed off* and reconciles the managed copy the external tool lands in `BINDERY_LIBRARY_DIR` on the next **library scan** (so the library dir must still point at where the external tool ultimately writes). For a book wanted in both formats, `import.drop_pair_gating` (off by default, `import.drop_pair_gating_timeout_hours` as the escape hatch) holds the first format until its sibling arrives so a paired reader such as Storyteller ingests them together (#942). Gating only holds a format when its sibling is also handed off; with audiobooks imported into the library, ebooks drop straight away.
 
 ## Environment variables
+
+The OIDC and reverse proxy variables (`BINDERY_LOCAL_AUTH_ENABLED`, `BINDERY_OIDC_REDIRECT_BASE_URL`, `BINDERY_OIDC_AUTO_PROVISION`, `BINDERY_OIDC_DEFAULT_ROLE`, `BINDERY_OIDC_EMAIL_LINK`, `BINDERY_OIDC_ADMIN_GROUP`, `BINDERY_OIDC_GROUP_CLAIM`, `BINDERY_PROXY_AUTH_HEADER`, `BINDERY_PROXY_AUTO_PROVISION`) are documented in [OIDC](auth-oidc.md) and [proxy auth](auth-proxy.md).
 
 Several variables below have a database equivalent that overrides them once it is set. **Settings, Advanced tab** lists every setting Bindery stores, with its type, its default, the values it accepts and whether a change needs a restart, so you can see which keys an install actually has a row for. It is admin only, it never shows a credential's value, and the keys most installs need still have their own tab.
 
@@ -713,6 +740,16 @@ If your instance runs somewhere with unreliable power and you would rather have 
 This has no bearing on backups. Take a copy of `bindery.db` on your own schedule as before, with the instance stopped or via `sqlite3 bindery.db ".backup"`.
 
 ## Upgrading
+
+### Upgrading to v1.52.0
+
+Take a backup first (see [Backup before upgrade](#backup-before-upgrade)). The release adds three schema migrations, all applied once at startup:
+
+- **Migration 131** adds `users.requests_auto_approve_override`, a nullable column, and copies each account's old `requests_auto_approve` value into it as an explicit 0 or 1. Every existing account keeps what it had (on becomes **Always**, off becomes **Never**); only accounts created afterwards start unset and follow `requests.auto_approve_default`. The old column is left in place and is no longer read or written.
+- **Migration 132** adds `downloads.import_manual` (default 0), which records whether a download held by drop folder pair gating was a manual import. Rows held before the upgrade read 0.
+- **Migration 133** repoints Audiobookshelf edition provenance (`abs_provenance.local_id` for `edition` rows) at the edition named by its foreign id, repairing rows an earlier bug could point at the wrong edition. Rows that are already right, or whose edition no longer exists, are left alone, and it is safe to run again.
+
+**Rolling back.** Bindery has no downgrade guard. It does not compare the database against the binary, and the `Down` sections of the migration files are never run. An older binary starts on the upgraded database and ignores the extra column and the extra migration records. Two things then differ. v1.51.1 reads the old `requests_auto_approve` column, which v1.52.0 never writes. An account that existed at the upgrade keeps the value it had at that moment, so an Always or Never you set on v1.52.0 is not seen after a rollback, and an account created on v1.52.0 reads off because the column defaults to 0. Migration 133's repair is not undone, which is fine because the ids it repaired are the correct ones. A download that handed off several files, or one whose file name is not valid UTF-8, records its sources in `downloads.import_path` as a JSON array, with `{"b64":...}` entries for the odd names (a single path stays a plain string), and v1.51.1 does not read that form. If you roll back, restore the backup you took before upgrading rather than keeping the newer database.
 
 ### Legacy migration-marker repair
 

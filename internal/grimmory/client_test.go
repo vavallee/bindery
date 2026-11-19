@@ -92,62 +92,6 @@ func TestNormalizeBaseURL(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// NormalizeAPIKey
-// ---------------------------------------------------------------------------
-
-func TestNormalizeAPIKey(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		want    string
-		wantErr bool
-	}{
-		{
-			name:  "empty string ok",
-			input: "",
-			want:  "",
-		},
-		{
-			name:  "whitespace trimmed",
-			input: "  mykey  ",
-			want:  "mykey",
-		},
-		{
-			name:    "control character 0x01",
-			input:   "key\x01bad",
-			wantErr: true,
-		},
-		{
-			name:    "control character 0x7f",
-			input:   "key\x7fbad",
-			wantErr: true,
-		},
-		{
-			name:  "clean key ok",
-			input: "abc123-XYZ_valid.key",
-			want:  "abc123-XYZ_valid.key",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := NormalizeAPIKey(tt.input)
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("NormalizeAPIKey(%q): want error, got nil", tt.input)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("NormalizeAPIKey(%q): unexpected error: %v", tt.input, err)
-			}
-			if got != tt.want {
-				t.Errorf("NormalizeAPIKey(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
 // UserAgent
 // ---------------------------------------------------------------------------
 
