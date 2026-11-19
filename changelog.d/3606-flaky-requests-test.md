@@ -1,0 +1,2 @@
+### Fixed
+- **Requests page tests no longer time out on a busy CI runner** (#3606). The test's translation stub handed out a new function on every render, which made the page fetch its queue again and could put an approved row back on screen. The tests now use cheaper label queries and wait for the approve form to finish loading, and an approval of a single book no longer fetches the author defaults it never shows. Frontend tests also get a longer timeout as a backstop.

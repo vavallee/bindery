@@ -1,6 +1,12 @@
 import '@testing-library/jest-dom'
+import { configure } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll } from 'vitest'
 import { server } from './test/msw'
+
+// findBy* and waitFor give up after 1 s by default, which a loaded CI runner
+// can spend on a single render (#3606). Three seconds still fails a query that
+// will never match well inside the 15 s test timeout in vite.config.ts.
+configure({ asyncUtilTimeout: 3000 })
 
 const originalFetch = globalThis.fetch
 let mswFetch = originalFetch
