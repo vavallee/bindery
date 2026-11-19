@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAutoSave } from './useAutoSave'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, AuthorMonitorMode, MetadataProfile, MonitorNewItems } from '../../api/client'
 import { inputCls } from './formStyles'
@@ -100,6 +101,7 @@ function formatLanguageList(csv: string, any: string, lng?: string): string {
 export default function MetadataTab() {
   const fid = useId()
   const { t, i18n } = useTranslation()
+  const autoSave = useAutoSave()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [profiles, setProfiles] = useState<MetadataProfile[]>([])
   const [editing, setEditing] = useState<MetadataProfile | null>(null)
@@ -133,7 +135,7 @@ export default function MetadataTab() {
     setSourcesError(false)
     setSettings(s => ({ ...s, [ENRICHERS_DISABLED_KEY]: value }))
     try {
-      await api.setSetting(ENRICHERS_DISABLED_KEY, value)
+      await autoSave(ENRICHERS_DISABLED_KEY, () => api.setSetting(ENRICHERS_DISABLED_KEY, value), undefined, true)
     } catch (err) {
       console.error(err)
       setSettings(s => ({ ...s, [ENRICHERS_DISABLED_KEY]: previous }))
@@ -177,7 +179,7 @@ export default function MetadataTab() {
             onChange={async e => {
               const next = e.target.value
               setSettings(s => ({ ...s, 'metadata.primary_provider': next }))
-              await api.setSetting('metadata.primary_provider', next).catch(console.error)
+              await autoSave('metadata.primary_provider', () => api.setSetting('metadata.primary_provider', next))
             }}
             className="w-full max-w-md bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
           >
@@ -278,7 +280,7 @@ export default function MetadataTab() {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'metadata.audnex_region': next }))
-                await api.setSetting('metadata.audnex_region', next).catch(console.error)
+                await autoSave('metadata.audnex_region', () => api.setSetting('metadata.audnex_region', next))
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -308,7 +310,7 @@ export default function MetadataTab() {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'default.media_type': next }))
-                await api.setSetting('default.media_type', next).catch(console.error)
+                await autoSave('default.media_type', () => api.setSetting('default.media_type', next))
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -325,7 +327,7 @@ export default function MetadataTab() {
                   onChange={async e => {
                     const next = e.target.checked ? 'true' : 'false'
                     setSettings(s => ({ ...s, 'default.media_type_strict': next }))
-                    await api.setSetting('default.media_type_strict', next).catch(console.error)
+                    await autoSave('default.media_type_strict', () => api.setSetting('default.media_type_strict', next))
                   }}
                 />
                 <span>
@@ -349,7 +351,7 @@ export default function MetadataTab() {
               onChange={async e => {
                 const next = e.target.value as AuthorMonitorMode
                 setSettings(s => ({ ...s, 'author.default_monitor_mode': next }))
-                await api.setSetting('author.default_monitor_mode', next).catch(console.error)
+                await autoSave('author.default_monitor_mode', () => api.setSetting('author.default_monitor_mode', next))
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -372,7 +374,7 @@ export default function MetadataTab() {
                   const next = e.target.value
                   setSettings(s => ({ ...s, 'author.default_monitor_latest_count': next }))
                   if (/^[1-9]\d*$/.test(next)) {
-                    await api.setSetting('author.default_monitor_latest_count', next).catch(console.error)
+                    await autoSave('author.default_monitor_latest_count', () => api.setSetting('author.default_monitor_latest_count', next))
                   }
                 }}
                 className="w-28 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -391,7 +393,7 @@ export default function MetadataTab() {
               onChange={async e => {
                 const next = e.target.value as MonitorNewItems
                 setSettings(s => ({ ...s, 'author.default_monitor_new_items': next }))
-                await api.setSetting('author.default_monitor_new_items', next).catch(console.error)
+                await autoSave('author.default_monitor_new_items', () => api.setSetting('author.default_monitor_new_items', next))
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -414,7 +416,7 @@ export default function MetadataTab() {
                 const current = (settings['autoGrab.enabled'] ?? 'true').toLowerCase()
                 const next = current === 'false' ? 'true' : 'false'
                 setSettings(s => ({ ...s, 'autoGrab.enabled': next }))
-                await api.setSetting('autoGrab.enabled', next).catch(console.error)
+                await autoSave('autoGrab.enabled', () => api.setSetting('autoGrab.enabled', next))
               }}
               title={(settings['autoGrab.enabled'] ?? 'true') !== 'false' ? t('common.disable') : t('common.enable')}
             />
@@ -434,7 +436,7 @@ export default function MetadataTab() {
                 const current = (settings['recommendations.enabled'] ?? 'false').toLowerCase()
                 const next = current === 'true' ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'recommendations.enabled': next }))
-                await api.setSetting('recommendations.enabled', next).catch(console.error)
+                await autoSave('recommendations.enabled', () => api.setSetting('recommendations.enabled', next))
               }}
               title={(settings['recommendations.enabled'] ?? 'false') === 'true' ? t('common.disable') : t('common.enable')}
             />
@@ -455,7 +457,7 @@ export default function MetadataTab() {
                 const current = (settings['metadata.author_enrichment.wikidata'] ?? 'false').toLowerCase()
                 const next = current === 'true' ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'metadata.author_enrichment.wikidata': next }))
-                await api.setSetting('metadata.author_enrichment.wikidata', next).catch(console.error)
+                await autoSave('metadata.author_enrichment.wikidata', () => api.setSetting('metadata.author_enrichment.wikidata', next))
               }}
               title={(settings['metadata.author_enrichment.wikidata'] ?? 'false') === 'true' ? t('common.disable') : t('common.enable')}
             />

@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAutoSave } from './useAutoSave'
 import type { TFunction } from 'i18next'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, LogEntry, LogQuery } from '../../api/client'
@@ -38,6 +39,7 @@ function formatRelativeTime(t: TFunction, iso: string): string {
 export default function LogsTab() {
   const fid = useId()
   const { t, i18n } = useTranslation()
+  const autoSave = useAutoSave()
   const narrow = useMediaQuery(BELOW_SM)
   const { confirm, confirmDialog } = useConfirmDialog()
   const [logEntries, setLogEntries] = useState<LogEntry[]>([])
@@ -494,7 +496,7 @@ export default function LogsTab() {
                 const current = (settings['telemetry.enabled'] ?? 'true').toLowerCase()
                 const next = current !== 'false' ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'telemetry.enabled': next }))
-                await api.setSetting('telemetry.enabled', next).catch(console.error)
+                await autoSave('telemetry.enabled', () => api.setSetting('telemetry.enabled', next))
               }}
               title={(settings['telemetry.enabled'] ?? 'true') !== 'false' ? t('common.disable') : t('common.enable')}
             />
