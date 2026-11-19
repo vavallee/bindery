@@ -41,6 +41,7 @@ var requesterDeniedRoutes = []struct{ method, path string }{
 	{http.MethodDelete, "/api/v1/book/7"},
 	{http.MethodDelete, "/api/v1/book/7/file"},
 	{http.MethodPut, "/api/v1/book/7"},
+	{http.MethodPut, "/api/v1/book/7/edition/8"},
 	{http.MethodPost, "/api/v1/book/bulk"},
 	{http.MethodPost, "/api/v1/book/7/rebind"},
 	{http.MethodPost, "/api/v1/wanted/bulk"},

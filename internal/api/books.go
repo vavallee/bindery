@@ -454,7 +454,8 @@ func (h *BookHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // prepareBookDetail shapes a book as the book page expects it: description
-// cleaned, tracked files, provider identifiers and the import flag attached.
+// cleaned, tracked files, provider identifiers, the import flag and the
+// editions with their locks attached.
 // GET /book/{id} and every response the page swaps in for its book use it, so
 // a mutation cannot answer with less than the page already had.
 func (h *BookHandler) prepareBookDetail(ctx context.Context, book *models.Book) {
@@ -462,6 +463,7 @@ func (h *BookHandler) prepareBookDetail(ctx context.Context, book *models.Book) 
 	h.attachBookFiles(ctx, book)
 	h.attachBookIdentifiers(ctx, book)
 	h.attachImportInFlight(ctx, book)
+	h.attachEditions(ctx, book)
 	h.attachRecording(ctx, book)
 	h.attachBookOrbitLink(ctx, book)
 }
@@ -508,19 +510,39 @@ func (h *BookHandler) attachBookOrbitLink(ctx context.Context, book *models.Book
 	book.BookOrbitURL = bookorbit.BookURL(get(SettingBookOrbitPublicURL), get(SettingBookOrbitBaseURL), best.ExternalID)
 }
 
-// attachRecording fills the book's narrator list and edition type for the
-// detail view (#1358). The audiobook edition that states a narrator list or an
-// edition type supplies them; otherwise the list is the book's narrator string
-// split into names and the type stays unknown. Best effort, read only.
-func (h *BookHandler) attachRecording(ctx context.Context, book *models.Book) {
-	book.Narrators = models.SplitNarrators(book.Narrator)
+// attachEditions lists the book's editions with their lockedFields, which is
+// how a client finds the editionId PUT /book/{id}/edition/{editionId} takes.
+// Best effort like the other attachments.
+func (h *BookHandler) attachEditions(ctx context.Context, book *models.Book) {
 	if h.editions == nil {
 		return
 	}
-	eds, err := h.editions.ListByBook(ctx, book.ID)
+	editions, err := h.editions.ListByBook(ctx, book.ID)
 	if err != nil {
 		slog.Debug("book get: edition lookup failed", "book_id", book.ID, "error", err)
 		return
+	}
+	book.Editions = editions
+}
+
+// attachRecording fills the book's narrator list and edition type for the
+// detail view (#1358). The audiobook edition that states a narrator list or an
+// edition type supplies them; otherwise the list is the book's narrator string
+// split into names and the type stays unknown. It reuses the editions
+// attachEditions read when there are any. Best effort, read only.
+func (h *BookHandler) attachRecording(ctx context.Context, book *models.Book) {
+	book.Narrators = models.SplitNarrators(book.Narrator)
+	eds := book.Editions
+	if eds == nil {
+		if h.editions == nil {
+			return
+		}
+		var err error
+		eds, err = h.editions.ListByBook(ctx, book.ID)
+		if err != nil {
+			slog.Debug("book get: edition lookup failed", "book_id", book.ID, "error", err)
+			return
+		}
 	}
 	for _, ed := range eds {
 		if ed.IsEbook || (len(ed.Narrators) == 0 && ed.EditionType == "") {
