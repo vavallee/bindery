@@ -64,7 +64,7 @@ export default function DuplicateGroupCard({ group, busyBooks, onToggle, onExclu
       neutral: 'bg-slate-200 text-slate-600 dark:bg-zinc-800 dark:text-zinc-400',
       good: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
       warn: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
-      keep: 'bg-emerald-600 text-white',
+      keep: 'bg-emerald-700 text-white',
     }
     return <span key={key ?? text} className={`rounded px-1.5 py-0.5 text-[11px] ${tones[tone]}`}>{text}</span>
   }

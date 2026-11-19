@@ -223,7 +223,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
                 type="button"
                 onClick={apply}
                 disabled={applying || actionable === 0 || (externalMode && !confirmExternal)}
-                className="px-4 py-1.5 text-sm rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-40 font-medium text-white"
+                className="px-4 py-1.5 text-sm rounded bg-sky-700 hover:bg-sky-800 disabled:opacity-40 font-medium text-white"
               >
                 {applying
                   ? t('renameFiles.renaming', 'Renaming…')

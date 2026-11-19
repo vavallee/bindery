@@ -158,7 +158,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
           <button
             onClick={retryFailed}
             disabled={busy !== null || summary.failed === 0}
-            className={`${btn} bg-sky-600 hover:bg-sky-500 text-white`}
+            className={`${btn} bg-sky-700 hover:bg-sky-800 text-white`}
           >
             {busy === 'retry' ? t('settings.calibre.deliveries.retrying') : t('settings.calibre.deliveries.retryFailed')}
           </button>
@@ -172,7 +172,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
           <button
             onClick={() => setConfirmReset(true)}
             disabled={busy !== null}
-            className={`${btn} bg-amber-600 hover:bg-amber-500 text-white`}
+            className={`${btn} bg-amber-700 hover:bg-amber-800 text-white`}
           >
             {t('settings.calibre.deliveries.reset')}
           </button>
@@ -254,7 +254,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
               <button
                 onClick={reset}
                 disabled={busy === 'reset'}
-                className={`${btn} bg-amber-600 hover:bg-amber-500 text-white`}
+                className={`${btn} bg-amber-700 hover:bg-amber-800 text-white`}
               >
                 {busy === 'reset' ? t('settings.calibre.deliveries.resetting') : t('settings.calibre.deliveries.resetConfirm')}
               </button>

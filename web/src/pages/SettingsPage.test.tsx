@@ -754,8 +754,8 @@ describe('SettingsPage', () => {
 
     const autoBtn = fileNaming.getByRole('button', { name: 'Auto' })
     const moveBtn = fileNaming.getByRole('button', { name: 'Move' })
-    expect(autoBtn.className).toContain('bg-emerald-600')
-    expect(moveBtn.className).not.toContain('bg-emerald-600')
+    expect(autoBtn.className).toContain('bg-emerald-700')
+    expect(moveBtn.className).not.toContain('bg-emerald-700')
 
     // Clicking Auto writes the explicit value so the choice round-trips through
     // the settings table rather than relying on an absent key.
