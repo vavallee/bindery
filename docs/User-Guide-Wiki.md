@@ -903,7 +903,15 @@ book** (attach a failed import to the right book and import it from disk), and
 per-row error detail. An `imported` row leaves the Queue after 7 days (it stays on History), failed and blocked rows stay until you deal with them, and Bindery deletes finished download rows older than `BINDERY_DOWNLOAD_RETENTION_DAYS` (90 by default, `0` keeps them). Once a row is trimmed, Bindery no longer remembers that exact release was grabbed, so if you later delete the file and the book is wanted again, the same release can be grabbed again. Tick rows for **Retry selected**, or use **Retry all
 failed** to cover every failed row at once. If a download client does not answer
 in time the page says so above the list, so a short Queue is never mistaken for
-lost downloads. History records every grab/import/failure and can
+lost downloads. The chips above the list filter by state, each with a count:
+**All**, **Active** (everything that has not failed), **Downloading**,
+**Importing**, **Held** (parked for pair gating), **Handed off** (waiting on your
+External import tool), **Needs attention** (an import that failed or is blocked
+and waits for Match to book or Retry import) and **Failed**. A state chip with
+nothing in it is hidden. Failed also holds the rows Needs attention shows, plus
+downloads that never produced a file. The chosen chip is kept in the address
+(`/queue?view=held`), and the older `?view=active` and `?view=failed` links work
+as before. History records every grab/import/failure and can
 blocklist a bad release in one click. A release NZBGet or SABnzbd fails as
 broken (missing articles, a failed repair or unpack, a corrupt archive) is
 blocklisted for you, with the client's verdict as the reason, so the next
