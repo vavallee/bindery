@@ -11,15 +11,16 @@ import (
 // through to the openlibrary default.
 func TestProviderNameForForeignIDMatchesModels(t *testing.T) {
 	cases := map[string]string{
-		"calibre:author:5": "calibre",
-		"abs:author:abc":   "audiobookshelf",
-		"hc:brandon":       "hardcover",
-		"gb:zyTCAlFPjgYC":  "googlebooks",
-		"dnb:118540238":    "dnb",
-		"nb:author:1":      "nb",
-		"bnf:cb48780493c":  "bnf",
-		"OL26320A":         "openlibrary",
-		"":                 "openlibrary",
+		"calibre:author:5":     "calibre",
+		"abs:author:abc":       "audiobookshelf",
+		"manual:book:17000000": "manual",
+		"hc:brandon":           "hardcover",
+		"gb:zyTCAlFPjgYC":      "googlebooks",
+		"dnb:118540238":        "dnb",
+		"nb:author:1":          "nb",
+		"bnf:cb48780493c":      "bnf",
+		"OL26320A":             "openlibrary",
+		"":                     "openlibrary",
 	}
 	for id, want := range cases {
 		if got := providerNameForForeignID(id); got != want {
@@ -37,7 +38,7 @@ func TestProviderForForeignIDRefusesImporterIDs(t *testing.T) {
 	hc := &mockProvider{name: "hardcover"}
 	agg := newTestAggregator(ol, hc)
 
-	for _, id := range []string{"calibre:author:5", "abs:author:abc"} {
+	for _, id := range []string{"calibre:author:5", "abs:author:abc", "manual:author:dan-abnett", "manual:book:17000000"} {
 		if provider := agg.providerForForeignID(id); provider != nil {
 			t.Errorf("providerForForeignID(%q) routed to %q, want nil", id, providerName(provider))
 		}
@@ -56,6 +57,13 @@ func TestProviderForForeignIDRefusesImporterIDs(t *testing.T) {
 	author, err := agg.GetAuthor(context.Background(), "calibre:author:5")
 	if err != nil || author != nil {
 		t.Errorf("GetAuthor(calibre stub) = (%v, %v), want (nil, nil)", author, err)
+	}
+
+	// A book made by hand (#3840) is never sent to a provider either, which
+	// is what keeps a refresh from replacing what the user typed.
+	book, err := agg.GetBook(context.Background(), "manual:book:17000000")
+	if err != nil || book != nil {
+		t.Errorf("GetBook(manual book) = (%v, %v), want (nil, nil)", book, err)
 	}
 }
 

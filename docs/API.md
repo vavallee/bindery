@@ -79,6 +79,7 @@ Outside these trees the format differs on purpose. The Calibre bridge adds a mac
 GET    /api/v1/author                             list authors (paginated, filterable)
 POST   /api/v1/author                             add an author (triggers async book fetch)
 POST   /api/v1/author/book                        add one book by foreign id (creates its author if needed); with `searchOnAdd` the book in the response carries `searchRunId` (see search runs)
+POST   /api/v1/author/book/manual                 add a book no metadata provider knows, exactly as typed (#3840); see below
 POST   /api/v1/author/bulk                        bulk add/update
 GET    /api/v1/author/{id}                        author detail
 PUT    /api/v1/author/{id}                        update monitored / metadata profile, or the bio: `description` set by hand is kept as the user's own and no refresh replaces it; an empty string clears it for the provider to fill again (#3287). 409 when the author changed since it was read, such as a scheduled refresh in between: reload and save again
@@ -133,6 +134,45 @@ the Add Author conflict:
   "existingBook": { "id": 42, "foreignBookId": "OL27448W", "title": "The Hobbit", "monitored": false }
 }
 ```
+
+`POST /api/v1/author/book/manual` adds a book that no metadata provider knows,
+or knows too badly to use, without asking any provider (#3840):
+
+```json
+{
+  "title": "The Last Church",
+  "authorName": "Graham McNeill",
+  "seriesTitle": "The Horus Heresy",
+  "seriesPosition": "9.5",
+  "mediaType": "ebook",
+  "searchOnAdd": false
+}
+```
+
+`title` is required, and so is one of `authorId` (a library author the caller
+can see) or `authorName`. A name is matched against the authors in the caller's
+library first; any other name becomes a new, unmonitored author with a
+`manual:author:<slug>` id, and the same spelling later reuses it. The book gets
+a `manual:book:<n>` id and `metadataProvider: "manual"`, is monitored and
+wanted, and takes the `default.media_type` setting when `mediaType` is empty.
+`seriesTitle` joins the series of that title the author is already in, else any
+series of that title in the caller's library, else a new hand-made series;
+`seriesPosition` needs a `seriesTitle`. A file already in the library for the
+title is bound to the book as for any added book, and then `searchOnAdd` does
+not search.
+
+No provider owns the `manual:` prefix, so nothing refreshes these rows: the
+scheduled profile refresh skips such authors, and an author catalogue sync that
+lists a work with the same title leaves the book alone rather than recording
+the work's ids on it or creating a second row. `POST /book/{id}/rebind` binds
+one to a provider work, and Add Author or `relink-upstream` relinks such an
+author in place, as for a Calibre or Audiobookshelf placeholder.
+
+It answers **201** with the book, **409** with the body above when the author
+already has a book with that title (a different `seriesPosition` in the same
+series is a different book), **404** when `authorId` names no author the caller
+can see, and **400** for a missing or invalid field or one longer than 500
+bytes. Requesters cannot call it.
 
 To change the format or monitoring of a book you already have (for example an
 imported ebook you now also want as an audiobook), update it through

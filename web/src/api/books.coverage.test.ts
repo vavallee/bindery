@@ -46,12 +46,14 @@ describe('booksApi request shapes', () => {
     ])
   })
 
-  it('posts addBook and reassignFile with their JSON bodies', async () => {
+  it('posts addBook, addManualBook and reassignFile with their JSON bodies', async () => {
     const seen = record()
     await booksApi.addBook({ foreignBookId: 'OL1W', foreignAuthorId: 'OL1A', searchOnAdd: true, mediaType: 'audiobook' })
+    await booksApi.addManualBook({ title: 'The Last Church', authorName: 'Graham McNeill', seriesTitle: 'The Horus Heresy', seriesPosition: '9.5' })
     await booksApi.reassignFile({ path: '/dl/x.epub', targetBookId: 3, format: 'ebook' })
     expect(seen.map(s => [s.method, s.path, s.body])).toEqual([
       ['POST', '/author/book', { foreignBookId: 'OL1W', foreignAuthorId: 'OL1A', searchOnAdd: true, mediaType: 'audiobook' }],
+      ['POST', '/author/book/manual', { title: 'The Last Church', authorName: 'Graham McNeill', seriesTitle: 'The Horus Heresy', seriesPosition: '9.5' }],
       ['POST', '/queue/manual-import/reassign', { path: '/dl/x.epub', targetBookId: 3, format: 'ebook' }],
     ])
   })

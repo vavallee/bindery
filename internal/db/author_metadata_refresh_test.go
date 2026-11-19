@@ -9,8 +9,8 @@ import (
 )
 
 // TestListMetadataRefreshDue_FiltersAndOrder pins who the staggered profile
-// refresh visits (#2595): monitored authors only, never Calibre shells, never
-// refreshed authors first, then the oldest refresh, nobody refreshed more
+// refresh visits (#2595): monitored authors only, never Calibre shells or
+// authors made by hand (#3840), never refreshed authors first, then the oldest refresh, nobody refreshed more
 // recently than the cutoff, and the limit applies after that ordering.
 func TestListMetadataRefreshDue_FiltersAndOrder(t *testing.T) {
 	database, err := OpenMemory()
@@ -31,6 +31,7 @@ func TestListMetadataRefreshDue_FiltersAndOrder(t *testing.T) {
 	neverB := newDiscoveryTestAuthor(t, repo, "OL5A", nil)
 	newDiscoveryTestAuthor(t, repo, "OL6A", func(a *models.Author) { a.Monitored = false })
 	newDiscoveryTestAuthor(t, repo, "calibre:author:9", nil)
+	newDiscoveryTestAuthor(t, repo, "manual:author:dan-abnett", nil)
 	// An author the user told Bindery to add no new items for still has a
 	// profile worth keeping fresh: profile refresh is not discovery.
 	noNew := newDiscoveryTestAuthor(t, repo, "OL7A", func(a *models.Author) { a.MonitorNewItems = models.AuthorMonitorNewItemsNone })
@@ -77,7 +78,7 @@ func TestListMetadataRefreshDue_FiltersAndOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n != 6 {
-		t.Errorf("eligible = %d, want 6 (monitored, not calibre)", n)
+		t.Errorf("eligible = %d, want 6 (monitored, not calibre or manual)", n)
 	}
 }
 

@@ -99,8 +99,9 @@ export interface Book {
   author?: Author
 }
 
-// Body of the 409 that POST /author/book answers when the book is already in
-// the current user's library (#1227). Mirrors AuthorConflictBody.
+// Body of the 409 that POST /author/book (and /author/book/manual) answers when
+// the book is already in the current user's library (#1227). Mirrors
+// AuthorConflictBody.
 export interface BookConflictBody {
   error?: string
   existingBookId?: number
@@ -244,6 +245,13 @@ export const booksApi = {
   // default.media_type setting (#1397).
   addBook: (data: { foreignBookId: string; foreignAuthorId: string; authorName?: string; searchOnAdd?: boolean; mediaType?: string }) =>
     request<Book>('/author/book', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Add a book no metadata provider knows, exactly as typed (#3840). The
+  // author is the library author authorId names, else a library author with
+  // authorName, else a new author made by hand. A 409 carries the existing
+  // row, as addBook's does.
+  addManualBook: (data: { title: string; authorId?: number; authorName?: string; seriesTitle?: string; seriesPosition?: string; mediaType?: string; searchOnAdd?: boolean }) =>
+    request<Book>('/author/book/manual', { method: 'POST', body: JSON.stringify(data) }),
 
   // Fix Match (#1238): move a mis-matched file to a different book. The file is
   // detached from its current book and re-imported into the target's folder.

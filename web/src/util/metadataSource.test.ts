@@ -142,6 +142,7 @@ describe('providerFromBookForeignId', () => {
     expect(providerFromBookForeignId('bnf:cb48780493c')).toBe('bnf')
     expect(providerFromBookForeignId('calibre:7')).toBe('calibre')
     expect(providerFromBookForeignId('abs:lib:item')).toBe('audiobookshelf')
+    expect(providerFromBookForeignId('manual:book:1700000000000000000')).toBe('manual')
   })
 
   it('treats an unprefixed id as OpenLibrary', () => {

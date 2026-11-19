@@ -273,6 +273,7 @@ monitored.
 |---|---|
 | **Add to library → an author row** (the **Add Author** button on Authors) | The author **plus their full catalogue** (up to 2,000 titles, after deduplication and the metadata profile's filters), monitored per the monitor mode you pick |
 | **Add to library → a book row** (the **Add Book** button on Books or Authors) | One book, and only that book, silently creating its author if needed. Select a search result to review its cover and identifiers before confirming; ISBN lookups show the searched ISBN separately from identifiers reported by the metadata source |
+| **Add to library → Add by hand** | One book exactly as you type it, for a book no metadata source knows. See [Adding a book by hand](#adding-a-book-by-hand) |
 | **Discover → Add to Wanted** | One recommended book |
 | **Series → Fill gaps** | The missing books of a linked series, wanted + monitored |
 | **Import lists** (Settings → Import / Migrate, Hardcover reading lists) | Every list item, re-synced on the Hardcover list sync interval (Settings → General, 24h by default). Whether the items are also marked wanted is the per-list **Download books from this list** checkbox: on (the default) creates them monitored and queues downloads; off catalogues them unmonitored, so you can browse a Want to Read shelf in Bindery and fetch books one at a time. Authors created by a list never pull their back-catalogue in — only the listed books are added. **Sync now** starts the sync in the background and the row reports its progress, so a large shelf isn't cut short by a request timeout |
@@ -307,6 +308,39 @@ still lets another provider's record through.
 Searches run against the metadata providers only
 when you press Enter or Search, never as you type; the header library search is
 the one that reacts to keystrokes, because it only reads your own catalogue.
+
+#### Adding a book by hand
+
+Some books have no usable record anywhere: short stories, anthology pieces, fan
+translations, self published work. **Add by hand**, at the bottom of the Add to
+library dialog, adds one anyway without asking any metadata source. Type the
+title (what you searched for is filled in) and the author, and optionally a
+series with the book's position in it, the format, and whether to search
+indexers straight away (off by default, since a book like this is usually one
+you already have the file for).
+
+- **Author.** An author already in your library with that name is reused.
+  Any other name becomes a new author with no metadata, unmonitored like any
+  author Add Book brings in. **Link metadata** on that author's page, or adding
+  the real author with Add Author, connects it to a metadata source later and
+  keeps its books.
+- **Series.** The book joins the series of that title its author is already
+  in, otherwise any series of that title in your library, so a story added to
+  *The Horus Heresy* lands in the series the other books are in. If there is
+  none, a new series is made.
+- **Files.** A file already in your library that matches the title and author
+  is attached right away, the same as for any added book, and the indexer
+  search is then skipped. Otherwise import or hardlink the file as usual;
+  Manual Import and **Fix match** find the book by its title.
+- **Refreshes leave it alone.** The book has no metadata source, so a metadata
+  refresh never changes it, and when an author refresh finds a work with the
+  same title it does not attach that record to your book or add a second copy.
+  Edit the book as usual to fill in the rest. To link it to a real record
+  later, use **Re-bind** on the book page.
+
+If the author already has a book with that title, the add is refused with a
+link to the existing one. The same title at a different position in the same
+series counts as a different book.
 
 Two settings decide whether an author add stays a trickle or becomes a flood:
 
