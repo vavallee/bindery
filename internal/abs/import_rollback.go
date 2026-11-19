@@ -779,6 +779,19 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 	return result, nil
 }
 
+// restoreTimePtr is importrollback.RestoreTimePtr plus the UTC normalisation
+// ABS always applied to a restored time. The shared clone keeps the zone, so
+// without this a snapshot carrying an offset would write back a differently
+// zoned value than before the extraction. A value left alone (edited after the
+// run) is not touched.
+func restoreTimePtr(target **time.Time, before, after *time.Time, changed *bool) {
+	restored := importrollback.EqualTimePtr(*target, after)
+	importrollback.RestoreTimePtr(target, before, after, changed)
+	if restored {
+		*target = cloneTimePtr(*target)
+	}
+}
+
 func restoreBookFromSnapshot(book *models.Book, before, after *bookRollbackSnapshot) bool {
 	if book == nil || before == nil || after == nil {
 		return false
@@ -797,7 +810,7 @@ func restoreBookFromSnapshot(book *models.Book, before, after *bookRollbackSnaps
 	importrollback.RestoreString(&book.OriginalTitle, before.OriginalTitle, after.OriginalTitle, &changed)
 	importrollback.RestoreString(&book.Description, before.Description, after.Description, &changed)
 	importrollback.RestoreString(&book.ImageURL, before.ImageURL, after.ImageURL, &changed)
-	importrollback.RestoreTimePtr(&book.ReleaseDate, before.ReleaseDate, after.ReleaseDate, &changed)
+	restoreTimePtr(&book.ReleaseDate, before.ReleaseDate, after.ReleaseDate, &changed)
 	importrollback.RestoreStrings(&book.Genres, before.Genres, after.Genres, &changed)
 	importrollback.RestoreFloat64(&book.AverageRating, before.AverageRating, after.AverageRating, &changed)
 	importrollback.RestoreInt(&book.RatingsCount, before.RatingsCount, after.RatingsCount, &changed)
@@ -818,7 +831,7 @@ func restoreBookFromSnapshot(book *models.Book, before, after *bookRollbackSnaps
 	}
 	importrollback.RestoreInt64Ptr(&book.CalibreID, before.CalibreID, after.CalibreID, &changed)
 	importrollback.RestoreString(&book.MetadataProvider, before.MetadataProvider, after.MetadataProvider, &changed)
-	importrollback.RestoreTimePtr(&book.LastMetadataRefreshAt, before.LastMetadataRefreshAt, after.LastMetadataRefreshAt, &changed)
+	restoreTimePtr(&book.LastMetadataRefreshAt, before.LastMetadataRefreshAt, after.LastMetadataRefreshAt, &changed)
 	return changed
 }
 
@@ -837,7 +850,7 @@ func restoreAuthorFromSnapshot(author *models.Author, before, after *authorRollb
 	importrollback.RestoreString(&author.ImageURL, before.ImageURL, after.ImageURL, &changed)
 	importrollback.RestoreString(&author.Disambiguation, before.Disambiguation, after.Disambiguation, &changed)
 	importrollback.RestoreString(&author.MetadataProvider, before.MetadataProvider, after.MetadataProvider, &changed)
-	importrollback.RestoreTimePtr(&author.LastMetadataRefreshAt, before.LastMetadataRefreshAt, after.LastMetadataRefreshAt, &changed)
+	restoreTimePtr(&author.LastMetadataRefreshAt, before.LastMetadataRefreshAt, after.LastMetadataRefreshAt, &changed)
 	return changed
 }
 
