@@ -159,15 +159,38 @@ func IsNZBGetClient(clientType string) bool {
 	return clientType == "nzbget"
 }
 
+// ClientTypeSlskd is the download client type for slskd, the Soulseek daemon
+// (#1717). It is the only client of the soulseek protocol.
+const ClientTypeSlskd = "slskd"
+
+// ProtocolSoulseek is the release protocol served by slskd.
+const ProtocolSoulseek = "soulseek"
+
+// IsSlskdClient reports whether the given client type is slskd.
+func IsSlskdClient(clientType string) bool {
+	return clientType == ClientTypeSlskd
+}
+
+// ErrSlskdNotSupported is returned where a slskd client reaches an operation
+// that is not built yet: grabbing, polling and removal land in a later change
+// (#1717). It exists so slskd never falls through to the SABnzbd code that
+// handles unknown types.
+var ErrSlskdNotSupported = errors.New("slskd downloads are not supported yet: this version can add and test a slskd client, but cannot send it downloads")
+
 func ProtocolForClient(clientType string) string {
-	if IsTorrentClient(clientType) {
+	switch {
+	case IsTorrentClient(clientType):
 		return "torrent"
+	case IsSlskdClient(clientType):
+		return ProtocolSoulseek
 	}
 	return "usenet"
 }
 
 func TestClient(ctx context.Context, client *models.DownloadClient) error {
 	switch client.Type {
+	case ClientTypeSlskd:
+		return SlskdFor(client).Test(ctx)
 	case "transmission":
 		trans := TransmissionFor(client)
 		return trans.Test(ctx)
@@ -224,6 +247,10 @@ func sendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 	}
 
 	switch client.Type {
+	case ClientTypeSlskd:
+		// Grabbing lands with the search source. Refuse rather than let the
+		// default arm hand a Soulseek release to SABnzbd.
+		return nil, ErrSlskdNotSupported
 	case "transmission":
 		trans := TransmissionFor(client)
 		// Transmission's download-dir must be an absolute path. The Category
@@ -405,6 +432,8 @@ func RemoveTransmissionTorrent(ctx context.Context, trans *transmission.Client, 
 // remap as fallback. Pass "" when there is no global remap configured.
 func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *models.Download, deleteFiles bool, globalRemap string) error {
 	switch client.Type {
+	case ClientTypeSlskd:
+		return ErrSlskdNotSupported
 	case "transmission":
 		if dl.TorrentID == nil || *dl.TorrentID == "" {
 			return nil
@@ -576,6 +605,9 @@ func GetStalledTorrents(ctx context.Context, client *models.DownloadClient) (Sta
 }
 
 func GetLiveStatuses(ctx context.Context, client *models.DownloadClient) (map[string]LiveStatus, bool, error) {
+	if IsSlskdClient(client.Type) {
+		return nil, false, ErrSlskdNotSupported
+	}
 	if IsTorrentClient(client.Type) {
 		statuses, err := getTorrentLiveStatuses(ctx, client)
 		return statuses, true, err

@@ -27,13 +27,14 @@ const downloadClientSelectColumns = `
 // client type has to be added here or it will never be picked for a grab even
 // though the rest of the stack supports it.
 var (
-	torrentClientTypes = []string{"qbittorrent", "transmission", "deluge", "rtorrent"}
-	usenetClientTypes  = []string{"sabnzbd", "nzbget"}
+	torrentClientTypes  = []string{"qbittorrent", "transmission", "deluge", "rtorrent"}
+	usenetClientTypes   = []string{"sabnzbd", "nzbget"}
+	soulseekClientTypes = []string{"slskd"}
 )
 
 // clientTypesForProtocol returns the SQL placeholder list and bound arguments
-// for the given protocol. Anything that is not "torrent" is usenet, matching
-// selectClient's default.
+// for the given protocol. "torrent" and "soulseek" have their own lists;
+// anything else is usenet, matching selectClient's default.
 //
 // The returned string is only ever "?" repeated — the type names themselves are
 // bound as query arguments and never interpolated — so splicing it into the
@@ -42,8 +43,11 @@ var (
 // place and not the other.
 func clientTypesForProtocol(protocol string) (string, []any) {
 	types := usenetClientTypes
-	if protocol == "torrent" {
+	switch protocol {
+	case "torrent":
 		types = torrentClientTypes
+	case "soulseek":
+		types = soulseekClientTypes
 	}
 	args := make([]any, 0, len(types))
 	for _, t := range types {
@@ -106,7 +110,7 @@ func hydrateClientCredentials(c *models.DownloadClient) {
 		// (Deluge only has a password; rTorrent authenticates with HTTP basic
 		// auth on the RPC endpoint, so both fields are meaningful.)
 	default:
-		// SABnzbd authenticates via api_key, not username/password.
+		// SABnzbd and slskd authenticate via api_key, not username/password.
 		c.Username = ""
 		c.Password = ""
 	}

@@ -159,7 +159,7 @@ func TestDownloadClientMetrics_LabelsStayBounded(t *testing.T) {
 
 // TestClientCache_InstrumentsEveryClientType runs TestClient for each client
 // type against a server that answers 500, and checks every type's requests
-// land under its own client_type label: the cache wraps all six builders.
+// land under its own client_type label: the cache wraps all seven builders.
 func TestClientCache_InstrumentsEveryClientType(t *testing.T) {
 	defer httpsec.AllowLoopbackForTests()()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -167,7 +167,7 @@ func TestClientCache_InstrumentsEveryClientType(t *testing.T) {
 	}))
 	defer srv.Close()
 	host, port := serverHostPort(t, srv.URL)
-	for i, typ := range []string{"sabnzbd", "nzbget", "transmission", "qbittorrent", "deluge", "rtorrent"} {
+	for i, typ := range []string{"sabnzbd", "nzbget", "transmission", "qbittorrent", "deluge", "rtorrent", "slskd"} {
 		client := &models.DownloadClient{ID: int64(913860 + i), Type: typ, Host: host, Port: port,
 			APIKey: "k", Username: "u", Password: "p"}
 		before := clientRequests(t, typ, "error")
