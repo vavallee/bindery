@@ -743,7 +743,7 @@ function AudiobookshelfSection() {
                   onClick={() => startImport(importDryRun)}
                   disabled={!canStartImport}
                   title={hasUnsavedABSConfig ? t('settings.abs.import.saveFirst', 'Save Audiobookshelf settings before starting an import') : undefined}
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-sm font-medium disabled:opacity-50"
+                  className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded text-sm font-medium disabled:opacity-50"
                 >
                   {importProgress?.running ? t('settings.abs.import.running', 'Running…') : importDryRun ? t('settings.abs.import.runSelected', 'Run selected mode') : t('settings.abs.import.run', 'Import libraries')}
                 </button>
@@ -904,7 +904,7 @@ function AudiobookshelfSection() {
                       <button
                         onClick={() => applyRollback(run.id)}
                         disabled={rolledBack || rollbackApplyingRunId === run.id || rollbackPreviewingRunId === run.id}
-                        className={`px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50 ${rolledBack ? 'bg-slate-500 text-white cursor-not-allowed' : 'bg-amber-600 hover:bg-amber-500'}`}
+                        className={`px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50 ${rolledBack ? 'bg-slate-500 text-white cursor-not-allowed' : 'bg-amber-700 hover:bg-amber-800 text-white'}`}
                       >
                         {rolledBack ? t('settings.abs.rollback.rolledBack', 'Rolled back') : rollbackApplyingRunId === run.id ? t('settings.abs.rollback.applying', 'Rolling back…') : t('settings.abs.rollback.apply', 'Apply rollback')}
                       </button>
@@ -1049,7 +1049,7 @@ function AudiobookshelfSection() {
                         type="button"
                         onClick={() => dismissReviewRun(group.runId as number, group.items.length)}
                         disabled={dismissingRunId === group.runId || reviewActionId !== null}
-                        className="px-2 py-1 bg-amber-600 hover:bg-amber-500 rounded text-[11px] font-medium disabled:opacity-50"
+                        className="px-2 py-1 bg-amber-700 hover:bg-amber-800 text-white rounded text-[11px] font-medium disabled:opacity-50"
                       >
                         {dismissingRunId === group.runId
                           ? t('settings.abs.review.dismissingRun', { defaultValue: 'Dismissing…' })
@@ -1158,7 +1158,7 @@ function AudiobookshelfSection() {
                     <button
                       onClick={() => approveReviewItem(item.id)}
                       disabled={reviewActionId === item.id}
-                      className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 rounded text-xs font-medium disabled:opacity-50"
+                      className="px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white rounded text-xs font-medium disabled:opacity-50"
                     >
                       {reviewActionId === item.id ? t('settings.abs.review.importing', 'Importing…') : t('settings.abs.review.import', 'Import')}
                     </button>

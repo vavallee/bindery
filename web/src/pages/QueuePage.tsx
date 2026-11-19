@@ -463,7 +463,7 @@ export default function QueuePage() {
                       <button
                         onClick={retryAllFailed}
                         disabled={bulkBusy}
-                        className="touch-target px-2.5 py-1 text-xs rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium"
+                        className="touch-target px-2.5 py-1 text-xs rounded bg-sky-700 hover:bg-sky-800 disabled:opacity-50 text-white font-medium"
                       >
                         {t('queue.retryAllFailed', 'Retry all failed')}
                       </button>
@@ -647,7 +647,7 @@ export default function QueuePage() {
                         onClick={() => item.book ? handleMatch(item.id, item.book.id) : handleRetryImport(item.id)}
                         disabled={retryingImportIds.has(item.id)}
                         title={t('queue.retryImportHint')}
-                        className="px-3 py-2 text-xs bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded font-medium touch-manipulation"
+                        className="px-3 py-2 text-xs bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 rounded font-medium touch-manipulation"
                       >
                         {retryingImportIds.has(item.id) ? t('queue.retryingImport') : t('queue.retryImport')}
                       </button>
@@ -657,7 +657,7 @@ export default function QueuePage() {
                         onClick={() => handleRetryDownload(item.id)}
                         disabled={retryingImportIds.has(item.id)}
                         title={t('queue.retryDownloadHint')}
-                        className="px-3 py-2 text-xs bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded font-medium touch-manipulation"
+                        className="px-3 py-2 text-xs bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 rounded font-medium touch-manipulation"
                       >
                         {retryingImportIds.has(item.id) ? t('queue.retryingDownload') : t('queue.retryDownload')}
                       </button>
@@ -762,7 +762,7 @@ export default function QueuePage() {
               <button
                 onClick={confirmDelete}
                 disabled={deleting}
-                className="px-3 py-2 text-xs rounded font-medium bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
+                className="px-3 py-2 text-xs rounded font-medium bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
               >
                 {t('queue.removeConfirm')}
               </button>
