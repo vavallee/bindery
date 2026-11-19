@@ -162,7 +162,7 @@ export default function RequestsPage() {
                     />
                   </label>
                   <button type="button" onClick={() => setDeclining(null)} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel')}</button>
-                  <button type="submit" className="px-3 py-1.5 rounded text-sm font-medium bg-red-600 hover:bg-red-500 text-white">{t('requests.admin.confirmDecline')}</button>
+                  <button type="submit" className="px-3 py-1.5 rounded text-sm font-medium bg-red-600 hover:bg-red-700 text-white">{t('requests.admin.confirmDecline')}</button>
                 </form>
               )}
             </li>

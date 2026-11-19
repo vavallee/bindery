@@ -389,7 +389,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   }}
                   className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
                     importMode === m
-                      ? 'bg-emerald-600 border-emerald-600 text-white'
+                      ? 'bg-emerald-700 border-emerald-700 text-white'
                       : 'border-slate-300 dark:border-zinc-700 text-fg-muted hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
