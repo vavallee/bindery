@@ -347,7 +347,7 @@ func deriveAudiobookMetadataFromEdition(book *models.Book, edition models.Editio
 			changed = true
 		}
 	}
-	if bookAcceptsAudiobookASIN(book) && book.DurationSeconds <= 0 && edition.DurationSeconds > 0 {
+	if bookAcceptsAudiobookASIN(book) && book.DurationSeconds <= 0 && edition.DurationSeconds > 0 && book.CanWrite(models.BookFieldDurationSeconds) {
 		book.DurationSeconds = edition.DurationSeconds
 		changed = true
 	}
@@ -356,7 +356,8 @@ func deriveAudiobookMetadataFromEdition(book *models.Book, edition models.Editio
 }
 
 func maybePromoteASIN(book *models.Book, editions []models.Edition) bool {
-	if book == nil || strings.TrimSpace(book.ASIN) != "" || !bookAcceptsAudiobookASIN(book) {
+	// A locked ASIN is the user's, so the edition's cannot replace or fill it.
+	if book == nil || strings.TrimSpace(book.ASIN) != "" || !bookAcceptsAudiobookASIN(book) || !book.CanWrite(models.BookFieldASIN) {
 		return false
 	}
 	asin := preferredEditionASIN(editions)

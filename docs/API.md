@@ -397,7 +397,7 @@ GET    /api/v1/book/languages                     the languages of the books the
 POST   /api/v1/book/bulk                          bulk monitor / status flip / exclude / unexclude (`"expectNoFiles": true` skips books that have files on `exclude`)
 GET    /api/v1/library/export?limit=&cursor=      paged read only export for companion tools: books with files, editions and series memberships (see Library export)
 GET    /api/v1/book/{id}                          book detail (with editions, history, formats; `importInFlight: true` while a download for it is still on its way into the library; `bookOrbitUrl`, a link to the book in BookOrbit, only for an admin and only for a book a BookOrbit import matched or created, see BookOrbit below)
-PUT    /api/v1/book/{id}                          update monitor / status / metadata; when the write starts a search, the book in the response carries `searchRunId` (see search runs)
+PUT    /api/v1/book/{id}                          update monitor / status / metadata (edited fields lock, incl. narrator, durationSeconds, asin); when the write starts a search, the book in the response carries `searchRunId` (see search runs)
 DELETE /api/v1/book/{id}                          remove from library
 DELETE /api/v1/book/{id}/file                     delete imported file(s) on disk (`?format=ebook|audiobook` scopes to one format; `?path=…` deregisters one tracked path WITHOUT deleting anything on disk)
 PUT    /api/v1/book/{id}/exclude                  exclude from future searches

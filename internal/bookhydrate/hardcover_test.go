@@ -1285,3 +1285,46 @@ func TestHydrateHardcoverEditionsNoMetadataReloadFailure(t *testing.T) {
 		})
 	}
 }
+
+// TestHydrateHardcoverEditionsRespectsRecordingLocks pins that hydration
+// neither fills a locked empty duration nor promotes an ASIN over a locked
+// one, while an unlocked book still gets both.
+func TestHydrateHardcoverEditionsRespectsRecordingLocks(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		locks        []string
+		wantDuration int
+		wantASIN     string
+	}{
+		{name: "unlocked takes both", wantDuration: 36000, wantASIN: "B000AUDIO1"},
+		{name: "locked duration stays empty", locks: []string{models.BookFieldDurationSeconds}, wantDuration: 0, wantASIN: "B000AUDIO1"},
+		{name: "locked asin is not promoted", locks: []string{models.BookFieldASIN}, wantDuration: 36000, wantASIN: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			books, editions, book, ctx := newHydrateBook(t, "hc:recording-locks", "hardcover", models.MediaTypeAudiobook)
+			book.LockedFields = tc.locks
+			if err := books.Update(ctx, book); err != nil {
+				t.Fatal(err)
+			}
+			asin := "B000AUDIO1"
+			HydrateHardcoverEditions(ctx, Options{
+				Book: book, Provider: "hardcover", Editions: editions, Books: books,
+				FetchEditions: func(context.Context, string) ([]models.Edition, error) {
+					return []models.Edition{{ForeignID: "hc:audio-locks", Format: "Audiobook", ASIN: &asin, DurationSeconds: 36000}}, nil
+				},
+			})
+			stored, err := books.GetByID(ctx, book.ID)
+			if err != nil || stored == nil {
+				t.Fatalf("reload: %v", err)
+			}
+			if stored.DurationSeconds != tc.wantDuration || stored.ASIN != tc.wantASIN {
+				t.Fatalf("duration=%d asin=%q, want %d %q (locks %v)", stored.DurationSeconds, stored.ASIN, tc.wantDuration, tc.wantASIN, tc.locks)
+			}
+			for _, f := range tc.locks {
+				if !stored.IsFieldLocked(f) {
+					t.Fatalf("hydration dropped lock %q: %v", f, stored.LockedFields)
+				}
+			}
+		})
+	}
+}
