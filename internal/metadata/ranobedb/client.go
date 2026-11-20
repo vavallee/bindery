@@ -82,12 +82,26 @@ type Client struct {
 func New() *Client {
 	return &Client{
 		http: &http.Client{
-			Timeout:   requestTimeout,
-			Transport: &pacedTransport{base: httpsec.DefaultProxyTransport(), pacer: defaultPacer},
+			Timeout:       requestTimeout,
+			CheckRedirect: sameHostRedirect,
+			Transport:     &pacedTransport{base: httpsec.DefaultProxyTransport(), pacer: defaultPacer},
 		},
 		gate: defaultGate,
 		base: apiBase,
 	}
+}
+
+// sameHostRedirect follows a redirect only within the host the request went
+// to. The API root is a fixed public host, so a redirect elsewhere (a private
+// address in particular) is never something Bindery should chase.
+func sameHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 3 {
+		return errors.New("ranobedb: too many redirects")
+	}
+	if req.URL.Host != via[0].URL.Host {
+		return fmt.Errorf("ranobedb: refusing a redirect to another host (%s)", req.URL.Host)
+	}
+	return nil
 }
 
 // Name implements metadata.Provider.

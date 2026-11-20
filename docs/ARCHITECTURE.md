@@ -41,8 +41,12 @@ RanobeDB is the one enricher that is opt in rather than opt out:
 `metadata.book_enrichment.ranobedb` adds it after every other enricher
 (#2012). It is also the only enricher that writes a book's title, and only the
 official English title of a match with a clear best score, the same volume
-numbers and a matching author, never over a locked title (see
-[third-party-data.md](third-party-data.md#ranobedb)).
+numbers and a matching author, never over a locked title and never for a book
+with no author name, which it is not even asked about (see
+[third-party-data.md](third-party-data.md#ranobedb)). It runs only where
+enrichment runs: on a freshly fetched book that is missing a description or a
+cover, so it titles books added after it is switched on. A book already in the
+library and an author refresh keep their titles.
 
 `metadata.audnex_region` picks the Audible marketplace audnex is asked (`us` by
 default; `ca`, `uk`, `au`, `fr`, `de`, `jp`, `it`, `in` and `es` are accepted). The

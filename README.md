@@ -230,6 +230,7 @@ All public APIs, no scraping. Audible's catalogue endpoint and Audnex are open b
 | [Audnex](https://api.audnex.us) | None | Audiobook narrator, duration and cover by ASIN |
 | [Audible](https://audible.com) | None | Audiobook ASINs the others miss |
 | [Wikidata](https://www.wikidata.org) | None | Author photos and bios, found by authority ID; off by default |
+| [RanobeDB](https://ranobedb.org) | None | Official English titles for light novels added after it is switched on; off by default. Data under the ODbL, API for non commercial use ([credit and terms](docs/third-party-data.md#ranobedb)) |
 
 Each enricher can be switched off in **Settings, Metadata**. Covers are fetched and cached by the server, so your browser never contacts third party image hosts, and a book no provider has a cover for takes one from its own file.
 

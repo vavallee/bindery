@@ -280,6 +280,11 @@ type enrichmentSnapshot struct {
 	title string
 }
 
+// bookHasAuthorName reports whether the book carries a non blank author name.
+func bookHasAuthorName(book *models.Book) bool {
+	return book.Author != nil && strings.TrimSpace(book.Author.Name) != ""
+}
+
 // enrichBookCacheKey is keyed on (MetadataProvider, ForeignID) because that
 // pair uniquely identifies the book across our provider universe and is
 // what callers route by. When ForeignID is empty (e.g. an audnex-sourced
@@ -367,6 +372,14 @@ func (a *aggregatorCore) enrichBook(ctx context.Context, book *models.Book) bool
 	// what the enrichers after it are asked.
 	enrichedTitle := ""
 	for i, enricher := range enrichers {
+		// RanobeDB's title is only trusted with an author to check it against.
+		// pickEnrichmentMatch skips its author check when the book has no
+		// author name, and a work from OpenLibrary can arrive with an author
+		// ID and no name, so without this a title match alone would rewrite
+		// the title. Skipping also means no request is sent for such a book.
+		if enricher.Name() == "ranobedb" && !bookHasAuthorName(book) {
+			continue
+		}
 		enriched, err := a.searchBoundProviderBooks(ctx, enricher, scopes[i], book.Title)
 		if err != nil {
 			// An enricher with no credentials (Hardcover without a token is
@@ -510,9 +523,13 @@ func applyEnrichmentSnapshot(book *models.Book, snap enrichmentSnapshot) {
 	if len(snap.genres) > 0 && book.CanWrite(models.BookFieldGenres) {
 		book.Genres = slices.Clone(snap.genres)
 	}
-	// The cache key includes the input title, so a hit replays the title the
-	// live call produced for this same input: the RanobeDB title when one was
-	// written, else the input title itself, which changes nothing (#2012).
+	// The cache key carries the input title (inside enrichmentInputKey) and the
+	// provider scope, which lists every wired provider. A hit therefore replays
+	// the title the live call produced for this same input under this same
+	// provider set: the RanobeDB title when one was written, else the input
+	// title itself, which changes nothing (#2012). Switching RanobeDB off
+	// removes it from the scope, so a title cached while it was on is never
+	// replayed once it is off.
 	if snap.title != "" && snap.title != book.Title && book.CanWrite(models.BookFieldTitle) {
 		setEnrichedTitle(book, snap.title)
 	}

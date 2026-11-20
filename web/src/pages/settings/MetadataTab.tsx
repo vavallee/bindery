@@ -513,10 +513,11 @@ export default function MetadataTab() {
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
           <div id="metadata.book_enrichment.ranobedb" className="flex items-center justify-between gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.bookRanobeDBLabel', 'Light novel titles from RanobeDB')}</label>
-              <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.bookRanobeDBHint', 'Gives light novels their official English title from RanobeDB (ranobedb.org, data under the ODbL). A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a title you locked. Lookups are paced to RanobeDB\'s 60 requests a minute. While this is off, RanobeDB is sent no request.')}</p>
+              <label htmlFor="ranobedb-title-toggle" className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.bookRanobeDBLabel', 'Light novel titles from RanobeDB')}</label>
+              <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.bookRanobeDBHint', 'Gives light novels their official English title from RanobeDB (ranobedb.org, data under the ODbL). A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a title you locked. It applies to books added after you switch it on, not to books already in your library. Lookups are paced to RanobeDB\'s 60 requests a minute. While this is off, RanobeDB is sent no request.')}</p>
             </div>
             <Toggle
+              id="ranobedb-title-toggle"
               checked={(settings['metadata.book_enrichment.ranobedb'] ?? 'false') === 'true'}
               onChange={async () => {
                 const current = (settings['metadata.book_enrichment.ranobedb'] ?? 'false').toLowerCase()
