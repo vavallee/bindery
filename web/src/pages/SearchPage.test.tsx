@@ -304,3 +304,50 @@ describe('SearchPage ?q=', () => {
     expect(screen.getByText('Emma release')).toBeInTheDocument()
   })
 })
+
+describe('SearchPage Soulseek results', () => {
+  const soulseekResult = makeResult({
+    guid: 'slskd:abc',
+    title: 'Frank Herbert - Dune [EPUB]',
+    indexerId: null,
+    indexerName: 'my slskd',
+    protocol: 'soulseek',
+    nzbUrl: '',
+    grabs: 0,
+    soulseek: { username: 'peer1', freeSlot: false, queueLength: 4, uploadSpeed: 1000, fileCount: 1, format: 'epub' },
+  })
+
+  it('marks the result with a source badge, the peer and the queue', async () => {
+    vi.mocked(api.searchIndexers).mockResolvedValue([soulseekResult])
+    renderSearchPage()
+    fireEvent.change(screen.getByPlaceholderText(en.search.placeholder), { target: { value: 'dune' } })
+    fireEvent.submit(screen.getByPlaceholderText(en.search.placeholder).closest('form')!)
+
+    expect(await screen.findByTestId('soulseek-badge')).toHaveTextContent(en.search.soulseek.badge)
+    expect(screen.getByTestId('soulseek-user')).toHaveTextContent('peer1')
+    expect(screen.getByTestId('soulseek-slot')).toHaveTextContent('queue 4')
+  })
+
+  it('disables Grab with a tooltip and never sends a grab', async () => {
+    vi.mocked(api.searchIndexers).mockResolvedValue([soulseekResult])
+    renderSearchPage()
+    fireEvent.change(screen.getByPlaceholderText(en.search.placeholder), { target: { value: 'dune' } })
+    fireEvent.submit(screen.getByPlaceholderText(en.search.placeholder).closest('form')!)
+
+    const grab = await screen.findByRole('button', { name: en.search.grab })
+    expect(grab).toBeDisabled()
+    expect(grab).toHaveAttribute('title', en.search.soulseek.grabUnavailable)
+    fireEvent.click(grab)
+    expect(api.grab).not.toHaveBeenCalled()
+  })
+
+  it('leaves an indexer result alone: no badge, Grab enabled', async () => {
+    vi.mocked(api.searchIndexers).mockResolvedValue([makeResult({ guid: 'g1', title: 'Some Book EPUB' })])
+    renderSearchPage()
+    fireEvent.change(screen.getByPlaceholderText(en.search.placeholder), { target: { value: 'x' } })
+    fireEvent.submit(screen.getByPlaceholderText(en.search.placeholder).closest('form')!)
+    const grab = await screen.findByRole('button', { name: en.search.grab })
+    expect(grab).toBeEnabled()
+    expect(screen.queryByTestId('soulseek-badge')).not.toBeInTheDocument()
+  })
+})

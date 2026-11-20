@@ -112,7 +112,7 @@ func newRegrabFixture(t *testing.T) *regrabFixture {
 	s := &Scheduler{
 		searcher: &fixedResultsSearcher{results: []newznab.SearchResult{{
 			GUID: regrabGUID, Title: "Regrab Book.epub", NZBURL: indexerSrv.URL + "/new.nzb",
-			Protocol: "usenet", IndexerID: idx.ID,
+			Protocol: "usenet", IndexerID: &idx.ID,
 		}}},
 		indexers:  indexers,
 		authors:   authors,

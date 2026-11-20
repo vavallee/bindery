@@ -8,6 +8,7 @@ import { calendarYear, formatCalendarDate } from '../util/calendarDate'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
 import ReleaseSwarm from '../components/ReleaseSwarm'
+import { SoulseekBadge, SoulseekDetail, isSoulseek, useSoulseekGrabTitle } from '../components/SoulseekRelease'
 import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -51,6 +52,7 @@ const UPCOMING_FILTERS = ['', 'only', 'hide'] as const
 
 export default function WantedPage() {
   const { t } = useTranslation()
+  const soulseekGrabTitle = useSoulseekGrabTitle()
   const { confirm, confirmDialog } = useConfirmDialog()
 
   // The current page of wanted books, and how many match the search in all.
@@ -217,7 +219,7 @@ export default function WantedPage() {
         nzbUrl: result.nzbUrl,
         size: result.size,
         bookId: book.id,
-        indexerId: result.indexerId,
+        indexerId: result.indexerId ?? undefined,
         protocol: result.protocol,
         // The result's own media type wins over the book's 'both' (#2933).
         mediaType: result.mediaType || book.mediaType,
@@ -562,6 +564,7 @@ export default function WantedPage() {
                       <div key={r.guid} className="flex items-center justify-between p-2 bg-slate-200/50 dark:bg-zinc-800/50 rounded text-xs">
                         <div className="min-w-0 mr-3">
                           <span className="flex items-center gap-1.5 min-w-0">
+                            {isSoulseek(r) && <SoulseekBadge />}
                             <PackLabel marker={r.pack} />
                             <ReleaseNarration narrators={r.narrators} editionType={r.editionType} />
                             <span className="truncate block">{r.title}</span>
@@ -569,6 +572,7 @@ export default function WantedPage() {
                           <span className="text-fg-muted truncate block">
                             {r.indexerName} &middot; {formatBytes(r.size)} &middot; {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
                             <ReleaseSwarm seeders={r.seeders} peers={r.peers} />
+                            {isSoulseek(r) && <SoulseekDetail r={r} />}
                             {safeHref(r.infoUrl) && (
                               <>
                                 {' '}&middot;{' '}
@@ -590,7 +594,8 @@ export default function WantedPage() {
                         <button
                           type="button"
                           onClick={() => grab(r, book)}
-                          disabled={grabbingGuid === r.guid || grabbedGuid === r.guid}
+                          disabled={grabbingGuid === r.guid || grabbedGuid === r.guid || isSoulseek(r)}
+                          title={isSoulseek(r) ? soulseekGrabTitle : undefined}
                           className={`px-2 py-2 rounded text-[10px] font-medium flex-shrink-0 touch-manipulation transition-colors disabled:cursor-default ${
                             grabbedGuid === r.guid
                               ? 'bg-emerald-700 text-white'

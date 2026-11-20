@@ -13,7 +13,7 @@ import (
 func TestSearchResultRegistry_RecordsWhatWasReturned(t *testing.T) {
 	r := NewSearchResultRegistry()
 	r.remember([]newznab.SearchResult{
-		{GUID: "g1", IndexerID: 3, Title: "T", Size: 9, Protocol: "torrent", NZBURL: "http://idx/dl?apikey=K&id=1"},
+		{GUID: "g1", IndexerID: idPtr(3), Title: "T", Size: 9, Protocol: "torrent", NZBURL: "http://idx/dl?apikey=K&id=1"},
 		{GUID: "", NZBURL: "http://idx/dl?id=2"},
 	})
 	e, ok := r.lookup("g1")
