@@ -387,7 +387,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   key={m}
                   onClick={async () => {
                     setSettings(s => ({ ...s, 'import.mode': m }))
-                    await autoSave('import.mode', () => api.setSetting('import.mode', m), { value: importModeLabel(m), revert: () => restoreSetting(setSettings, 'import.mode', settings['import.mode']) })
+                    await autoSave('import.mode', () => api.setSetting('import.mode', m), { value: importModeLabel(m), previous: settings['import.mode'], next: m, revert: to => restoreSetting(setSettings, 'import.mode', to) })
                   }}
                   className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
                     importMode === m
@@ -427,7 +427,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const v = e.target.value
                 setSettings(s => ({ ...s, 'import.audiobook.mode': v }))
-                await autoSave('import.audiobook.mode', () => api.setSetting('import.audiobook.mode', v), { revert: () => restoreSetting(setSettings, 'import.audiobook.mode', settings['import.audiobook.mode']) })
+                await autoSave('import.audiobook.mode', () => api.setSetting('import.audiobook.mode', v), { previous: settings['import.audiobook.mode'], next: v, revert: to => restoreSetting(setSettings, 'import.audiobook.mode', to) })
               }}
               className={inputCls}
             >
@@ -447,7 +447,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   onChange={async e => {
                     const v = e.target.checked ? 'true' : 'false'
                     setSettings(s => ({ ...s, 'import.audiobook.flatten_multi_disc': v }))
-                    await autoSave('import.audiobook.flatten_multi_disc', () => api.setSetting('import.audiobook.flatten_multi_disc', v), { revert: () => restoreSetting(setSettings, 'import.audiobook.flatten_multi_disc', settings['import.audiobook.flatten_multi_disc']) })
+                    await autoSave('import.audiobook.flatten_multi_disc', () => api.setSetting('import.audiobook.flatten_multi_disc', v), { previous: settings['import.audiobook.flatten_multi_disc'], next: v, revert: to => restoreSetting(setSettings, 'import.audiobook.flatten_multi_disc', to) })
                   }}
                 />
                 <span>
@@ -475,7 +475,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const v = e.target.value
                 setSettings(s => ({ ...s, 'import.ebook.content_check': v }))
-                await autoSave('import.ebook.content_check', () => api.setSetting('import.ebook.content_check', v), { revert: () => restoreSetting(setSettings, 'import.ebook.content_check', settings['import.ebook.content_check']) })
+                await autoSave('import.ebook.content_check', () => api.setSetting('import.ebook.content_check', v), { previous: settings['import.ebook.content_check'], next: v, revert: to => restoreSetting(setSettings, 'import.ebook.content_check', to) })
               }}
               className={inputCls}
             >
@@ -498,7 +498,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const v = e.target.value
                 setSettings(s => ({ ...s, 'import.audiobook.content_check': v }))
-                await autoSave('import.audiobook.content_check', () => api.setSetting('import.audiobook.content_check', v), { revert: () => restoreSetting(setSettings, 'import.audiobook.content_check', settings['import.audiobook.content_check']) })
+                await autoSave('import.audiobook.content_check', () => api.setSetting('import.audiobook.content_check', v), { previous: settings['import.audiobook.content_check'], next: v, revert: to => restoreSetting(setSettings, 'import.audiobook.content_check', to) })
               }}
               className={inputCls}
             >
@@ -563,7 +563,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                     onChange={async e => {
                       const v = e.target.value
                       setSettings(s => ({ ...s, 'import.drop_layout': v }))
-                      await autoSave('import.drop_layout', () => api.setSetting('import.drop_layout', v), { revert: () => restoreSetting(setSettings, 'import.drop_layout', settings['import.drop_layout']) })
+                      await autoSave('import.drop_layout', () => api.setSetting('import.drop_layout', v), { previous: settings['import.drop_layout'], next: v, revert: to => restoreSetting(setSettings, 'import.drop_layout', to) })
                     }}
                     className={inputCls}
                   >
@@ -578,7 +578,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                     onChange={async e => {
                       const v = e.target.value
                       setSettings(s => ({ ...s, 'import.drop_link_mode': v }))
-                      await autoSave('import.drop_link_mode', () => api.setSetting('import.drop_link_mode', v), { revert: () => restoreSetting(setSettings, 'import.drop_link_mode', settings['import.drop_link_mode']) })
+                      await autoSave('import.drop_link_mode', () => api.setSetting('import.drop_link_mode', v), { previous: settings['import.drop_link_mode'], next: v, revert: to => restoreSetting(setSettings, 'import.drop_link_mode', to) })
                     }}
                     className={inputCls}
                   >
@@ -621,7 +621,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 onChange={async e => {
                   const v = e.target.checked ? 'true' : 'false'
                   setSettings(s => ({ ...s, 'import.write_opf_sidecar': v }))
-                  await autoSave('import.write_opf_sidecar', () => api.setSetting('import.write_opf_sidecar', v), { revert: () => restoreSetting(setSettings, 'import.write_opf_sidecar', settings['import.write_opf_sidecar']) })
+                  await autoSave('import.write_opf_sidecar', () => api.setSetting('import.write_opf_sidecar', v), { previous: settings['import.write_opf_sidecar'], next: v, revert: to => restoreSetting(setSettings, 'import.write_opf_sidecar', to) })
                 }}
               />
               <span>
@@ -927,7 +927,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'search.interval': next }))
-                await autoSave('search.interval', () => api.setSetting('search.interval', next), { revert: () => restoreSetting(setSettings, 'search.interval', settings['search.interval']) })
+                await autoSave('search.interval', () => api.setSetting('search.interval', next), { previous: settings['search.interval'], next, revert: to => restoreSetting(setSettings, 'search.interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -964,7 +964,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'hardcover.sync_interval': next }))
-                await autoSave('hardcover.sync_interval', () => api.setSetting('hardcover.sync_interval', next), { revert: () => restoreSetting(setSettings, 'hardcover.sync_interval', settings['hardcover.sync_interval']) })
+                await autoSave('hardcover.sync_interval', () => api.setSetting('hardcover.sync_interval', next), { previous: settings['hardcover.sync_interval'], next, revert: to => restoreSetting(setSettings, 'hardcover.sync_interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -1008,7 +1008,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'library.scan_interval': next }))
-                await autoSave('library.scan_interval', () => api.setSetting('library.scan_interval', next), { revert: () => restoreSetting(setSettings, 'library.scan_interval', settings['library.scan_interval']) })
+                await autoSave('library.scan_interval', () => api.setSetting('library.scan_interval', next), { previous: settings['library.scan_interval'], next, revert: to => restoreSetting(setSettings, 'library.scan_interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -1051,7 +1051,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'authors.discovery.interval': next }))
-                await autoSave('authors.discovery.interval', () => api.setSetting('authors.discovery.interval', next), { revert: () => restoreSetting(setSettings, 'authors.discovery.interval', settings['authors.discovery.interval']) })
+                await autoSave('authors.discovery.interval', () => api.setSetting('authors.discovery.interval', next), { previous: settings['authors.discovery.interval'], next, revert: to => restoreSetting(setSettings, 'authors.discovery.interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -1086,7 +1086,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'series.monitoring.interval': next }))
-                await autoSave('series.monitoring.interval', () => api.setSetting('series.monitoring.interval', next), { revert: () => restoreSetting(setSettings, 'series.monitoring.interval', settings['series.monitoring.interval']) })
+                await autoSave('series.monitoring.interval', () => api.setSetting('series.monitoring.interval', next), { previous: settings['series.monitoring.interval'], next, revert: to => restoreSetting(setSettings, 'series.monitoring.interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >

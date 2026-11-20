@@ -19,7 +19,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { listeners, type Listener, type ToastMessage } from './toastBus'
+import { listeners, TOAST_FILL, type Listener, type ToastMessage } from './toastBus'
 
 const SUCCESS_MS = 4000
 const ERROR_MS = 8000
@@ -43,7 +43,7 @@ function Toast({ msg, onDismiss }: { msg: ToastMessage; onDismiss: (id: number) 
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
-      className={`pointer-events-auto flex items-center gap-3 px-4 py-2.5 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in ${error ? 'bg-red-600' : 'bg-emerald-700'}`}
+      className={`pointer-events-auto flex items-center gap-3 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium ${TOAST_FILL[msg.kind]}`}
     >
       <span>{msg.text}</span>
       <button

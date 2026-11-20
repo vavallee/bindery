@@ -118,7 +118,9 @@ export default function ApiKeysTab() {
     try {
       await autoSave('hardcover.enhanced_series_enabled', () => api.setSetting('hardcover.enhanced_series_enabled', next), {
         rethrow: true,
-        revert: () => restoreSetting(setSettings, 'hardcover.enhanced_series_enabled', settings['hardcover.enhanced_series_enabled']),
+        previous: settings['hardcover.enhanced_series_enabled'],
+        next,
+        revert: to => restoreSetting(setSettings, 'hardcover.enhanced_series_enabled', to),
       })
       await refreshSystemStatus()
     } catch (err) {

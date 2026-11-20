@@ -39,10 +39,11 @@ describe('useAutoSave', () => {
   it('toasts an alert and calls revert when the save fails', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const revert = vi.fn()
-    render(<><SettingsToastHost /><Probe request={() => Promise.reject(new Error('boom'))} options={{ revert }} /></>)
+    render(<><SettingsToastHost /><Probe request={() => Promise.reject(new Error('boom'))} options={{ previous: 'a', next: 'b', revert }} /></>)
     fireEvent.click(screen.getByText('go'))
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't save")
     expect(revert).toHaveBeenCalledTimes(1)
+    expect(revert).toHaveBeenCalledWith('a')
     spy.mockRestore()
   })
 
@@ -99,5 +100,93 @@ describe('useAutoSave', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(8100) })
     expect(screen.queryByTestId('settings-toast')).toBeNull()
     spy.mockRestore()
+  })
+
+  describe('rapid changes to one key', () => {
+    function deferred() {
+      let resolve!: () => void
+      let reject!: (e: Error) => void
+      const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej })
+      return { promise, resolve, reject }
+    }
+    function Rapid({ calls }: { calls: Array<{ req: () => Promise<unknown>; previous: string; next: string; revert: (s: string | undefined) => void }> }) {
+      const autoSave = useAutoSave()
+      return <>{calls.map((c, i) => (
+        <button key={i} onClick={() => { void autoSave('import.mode', c.req, { previous: c.previous, next: c.next, revert: c.revert }) }}>c{i}</button>
+      ))}</>
+    }
+
+    it('A to B failing after B to C succeeded leaves C alone', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const ab = deferred(); const bc = deferred()
+      const revertAB = vi.fn(); const revertBC = vi.fn()
+      render(<><SettingsToastHost /><Rapid calls={[
+        { req: () => ab.promise, previous: 'A', next: 'B', revert: revertAB },
+        { req: () => bc.promise, previous: 'B', next: 'C', revert: revertBC },
+      ]} /></>)
+      fireEvent.click(screen.getByText('c0'))
+      fireEvent.click(screen.getByText('c1'))
+      await act(async () => { bc.resolve() })
+      await act(async () => { ab.reject(new Error('x')) })
+      expect(await screen.findByRole('alert')).toBeInTheDocument()
+      expect(revertAB).not.toHaveBeenCalled()
+      expect(revertBC).not.toHaveBeenCalled()
+      spy.mockRestore()
+    })
+
+    it('both failing restores the last SAVED value, not the unsaved B', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const ab = deferred(); const bc = deferred()
+      const revertAB = vi.fn(); const revertBC = vi.fn()
+      render(<Rapid calls={[
+        { req: () => ab.promise, previous: 'A', next: 'B', revert: revertAB },
+        { req: () => bc.promise, previous: 'B', next: 'C', revert: revertBC },
+      ]} />)
+      fireEvent.click(screen.getByText('c0'))
+      fireEvent.click(screen.getByText('c1'))
+      await act(async () => { ab.reject(new Error('x')) })
+      await act(async () => { bc.reject(new Error('x')) })
+      expect(revertAB).not.toHaveBeenCalled()
+      expect(revertBC).toHaveBeenCalledWith('A')
+      spy.mockRestore()
+    })
+
+    it('a failure after a success restores the value that success saved', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const ab = deferred(); const bc = deferred()
+      const revertBC = vi.fn()
+      render(<Rapid calls={[
+        { req: () => ab.promise, previous: 'A', next: 'B', revert: vi.fn() },
+        { req: () => bc.promise, previous: 'B', next: 'C', revert: revertBC },
+      ]} />)
+      fireEvent.click(screen.getByText('c0'))
+      fireEvent.click(screen.getByText('c1'))
+      await act(async () => { ab.resolve() })
+      await act(async () => { bc.reject(new Error('x')) })
+      expect(revertBC).toHaveBeenCalledWith('B')
+      spy.mockRestore()
+    })
+  })
+
+  it('toasts but does not revert when the component unmounted during the save', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let reject!: (e: Error) => void
+    const revert = vi.fn()
+    const host = render(<SettingsToastHost />)
+    const probe = render(<Probe request={() => new Promise((_, rej) => { reject = rej })} options={{ previous: 'a', next: 'b', revert }} />)
+    fireEvent.click(screen.getByText('go'))
+    probe.unmount()
+    await act(async () => { reject(new Error('x')) })
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't save")
+    expect(revert).not.toHaveBeenCalled()
+    host.unmount()
+    spy.mockRestore()
+  })
+
+  it('toasts have no animation class, so reduced motion has nothing to disable', async () => {
+    render(<><SettingsToastHost /><Probe request={() => Promise.resolve()} /></>)
+    fireEvent.click(screen.getByText('go'))
+    const toast = await screen.findByTestId('settings-toast')
+    expect(toast.className).not.toMatch(/animate-|\btransition/)
   })
 })
