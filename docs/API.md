@@ -2074,7 +2074,7 @@ an id with no account `422`. Answers:
 | `201` | the request, as below |
 | `403` | `forUser` sent by anyone but an admin session or the API key |
 | `400`, `422` | `forUser` is not a user id, or no account has that id |
-| `409` | already in the library with the requested format on disk or monitored (a book the library holds without it can still be requested, #3898), or, with `BINDERY_ENFORCE_TENANCY` on, held by another account whether or not it has the format (same `error` sentence as a covered book); already requested by this user (pending or declined); the `error` field says which |
+| `409` | already in the library with the requested format on disk or monitored (a book the library holds without it can still be requested, #3898), or, with `BINDERY_ENFORCE_TENANCY` on, held by another account, or shared with no owner when the caller is not an admin, and it lacks the requested format (the `error` then says to ask an admin to add that format); already requested by this user (pending or declined); the `error` field says which |
 | `429` | this user already has `requests.max_pending_per_user` requests waiting (default 25), or a requester made creates or searches faster than the per user allowance (burst of 20, then one every 3 seconds; `Retry-After` says when). The cap is checked in the same statement as the insert, so concurrent creates cannot pass it |
 | `502`, `404` | the provider did not answer, or has no such id |
 

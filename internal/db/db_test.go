@@ -1181,9 +1181,10 @@ func TestDownloadClientRepoGetEnabledByProtocol_AllTypes(t *testing.T) {
 
 	wantTorrent := map[string]bool{"qbittorrent": true, "transmission": true, "deluge": true, "rtorrent": true}
 	wantUsenet := map[string]bool{"sabnzbd": true, "nzbget": true}
+	wantSoulseek := map[string]bool{"slskd": true}
 
 	port := 1
-	for _, set := range []map[string]bool{wantTorrent, wantUsenet} {
+	for _, set := range []map[string]bool{wantTorrent, wantUsenet, wantSoulseek} {
 		for clientType := range set {
 			port++
 			if err := repo.Create(ctx, &models.DownloadClient{
@@ -1194,7 +1195,7 @@ func TestDownloadClientRepoGetEnabledByProtocol_AllTypes(t *testing.T) {
 		}
 	}
 
-	for protocol, want := range map[string]map[string]bool{"torrent": wantTorrent, "usenet": wantUsenet} {
+	for protocol, want := range map[string]map[string]bool{"torrent": wantTorrent, "usenet": wantUsenet, "soulseek": wantSoulseek} {
 		got, err := repo.GetEnabledByProtocol(ctx, protocol)
 		if err != nil {
 			t.Fatalf("%s: %v", protocol, err)

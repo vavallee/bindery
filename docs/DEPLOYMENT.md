@@ -619,6 +619,22 @@ Open the qBittorrent client form, expand **Proxy login (optional)** and fill in 
 
 The proxy password is stored like the other client passwords and is never sent back to the browser. Leave it blank when editing to keep the stored one, or empty the proxy username to remove the proxy login. The header is only sent to the scheme and host you configured, never to a redirect target on another host or from `https` down to `http`, and `user:pass@` in the Host field still does not work. The section only exists for qBittorrent.
 
+### slskd (Soulseek)
+
+Soulseek is opt in. Bindery does nothing with it until you add a slskd client, and it never speaks the Soulseek protocol itself: slskd does, and Bindery talks to slskd's REST API ([#1717](https://github.com/vavallee/bindery/issues/1717)). In this release you can add the client, test it and run Diagnose on it. Searching it and sending it downloads come in later releases, so a slskd client does not download anything yet.
+
+What you need:
+
+- **slskd 0.26.0 or newer.** Bindery uses the batch download endpoint that first appears in 0.26.0, and Diagnose tells you to update when slskd is older.
+- **An API key with a write role.** slskd's default API keys are read only. In slskd's settings, create a key with the `readwrite` (or `administrator`) role and put it in the client's API Key field. Diagnose checks the role and says so when the key is read only. Bindery sends the key only in the `X-API-Key` header, never in a URL.
+- **slskd logged in to Soulseek.** The slskd Soulseek username and password are set in slskd, not in Bindery.
+- **A VPN and a forwarded port.** Peers connect to you to send files. Without a forwarded port most peers cannot reach slskd, and downloads stall or fail. Forward slskd's listen port (50300 by default) on your router, or use slskd's VPN port forwarding. slskd reports a forwarded port only with its VPN integration, so Diagnose cannot detect a router port forward. It shows that row as informational when no port is reported, and it never counts against the client.
+- **A path remap if the folders differ.** Set the client's path remap from slskd's downloads folder to the folder Bindery sees, for example `/app/downloads:/media/soulseek`. Diagnose reads slskd's downloads folder and checks it through the remap.
+
+Fill in the client like any other: host, port (slskd listens on 5030 by default), URL base if slskd sits behind a reverse proxy, and the API key. There is no category field because slskd has no categories.
+
+Privacy, so you can decide with the facts: once searching is built, the titles you want leave your machine as search text on the Soulseek network, where other users can see search terms. Downloading shows your IP address to the peers you download from. Run slskd behind a VPN, and keep it on a network you are comfortable exposing this way.
+
 ### Running Bindery behind a VPN (network_mode: service:*)
 
 When Bindery shares a VPN container's network namespace (for example `network_mode: service:gluetun`), all of Bindery's outbound traffic egresses through the VPN. gluetun's killswitch firewall blocks LAN bound traffic by default, so "Test connection" to on LAN services (Audiobookshelf, Calibre, download clients) times out with `Client.Timeout exceeded while awaiting headers`, even though those same services load fine from a browser on the LAN. That contrast is the tell: the browser reaches the service directly because it is on the LAN, but Bindery is inside the VPN namespace and its LAN bound requests are dropped by the killswitch.

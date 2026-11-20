@@ -643,9 +643,10 @@ func TestRequestsCreate_ExplicitMediaTypeAgainstExistingBook(t *testing.T) {
 }
 
 // Under tenancy a book another account holds without the requested format
-// refuses a create with the same status and sentence as a covered book, so the
-// answer does not tell the requester which of the two it is.
-func TestRequestsCreate_HeldElsewhereAnswersLikeCovered(t *testing.T) {
+// refuses a create with the same status as a covered book but its own
+// sentence, which tells the requester to ask an admin instead of claiming the
+// format is in the library.
+func TestRequestsCreate_HeldElsewhereAnswersWithItsOwnSentence(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	f := newRequestsFixture(t, wellsRequestStub(), nil)
 	ctx := context.Background()
@@ -665,8 +666,11 @@ func TestRequestsCreate_HeldElsewhereAnswersLikeCovered(t *testing.T) {
 	if heldElsewhere.Code != http.StatusConflict || covered.Code != http.StatusConflict {
 		t.Fatalf("held elsewhere %d, covered %d, want 409 for both", heldElsewhere.Code, covered.Code)
 	}
-	if got, want := requestErrorBody(heldElsewhere), requestErrorBody(covered); got != want || got != "This book is already in the library." {
-		t.Fatalf("held elsewhere said %q, covered said %q", got, want)
+	if got := requestErrorBody(heldElsewhere); got != bookHeldCreateMessage {
+		t.Fatalf("held elsewhere said %q, want %q", got, bookHeldCreateMessage)
+	}
+	if got := requestErrorBody(covered); got != "This book is already in the library." {
+		t.Fatalf("covered said %q", got)
 	}
 }
 
