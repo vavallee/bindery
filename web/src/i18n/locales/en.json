@@ -2805,6 +2805,23 @@
       "set": "{{name}} set to {{value}}",
       "failed": "Couldn't save {{name}}",
       "genericName": "Setting"
+    },
+    "currentValue": {
+      "current": "Current: {{value}}",
+      "notSet": "Not set",
+      "set": "Set",
+      "default": "Default ({{value}})",
+      "enabled": "On",
+      "disabled": "Off",
+      "seriesSelected_one": "{{count}} series selected",
+      "seriesSelected_other": "{{count}} series selected",
+      "provider": {
+        "openlibrary": "OpenLibrary",
+        "dnb": "DNB (Deutsche Nationalbibliothek)",
+        "nb": "Nasjonalbiblioteket",
+        "bnf": "BnF (Bibliothèque nationale de France)",
+        "hardcover": "Hardcover"
+      }
     }
   },
   "addToLibrary": {

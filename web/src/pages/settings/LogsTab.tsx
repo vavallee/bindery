@@ -6,6 +6,8 @@ import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, LogEntry, LogQuery } from '../../api/client'
 import { formatBytesZero } from '../../util/format'
 import SaveButton from './SaveButton'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import Toggle from './Toggle'
 import { useSaveResult } from './useSaveResult'
 import { usePolling } from '../../components/usePolling'
@@ -185,8 +187,10 @@ export default function LogsTab() {
         {/* Runtime log level */}
         <div className="flex items-center gap-2 text-xs">
           <label htmlFor={`${fid}-level`} className="text-fg-muted font-medium">{t('settings.logs.runtimeLevel', 'Runtime level')}</label>
+          <FieldValue for={`${fid}-level`} value={logLevel.toUpperCase()} flush />
           <select
             id={`${fid}-level`}
+            aria-describedby={fieldValueId(`${fid}-level`)}
             value={logLevel}
             onChange={async e => {
               const l = e.target.value
@@ -490,9 +494,11 @@ export default function LogsTab() {
           <div id="telemetry.enabled" className="flex items-start justify-between gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.telemetryLabel')}</label>
+              <FieldValue for="telemetry-enabled" value={(settings['telemetry.enabled'] ?? 'true') !== 'false' ? t('settings.currentValue.enabled', 'On') : t('settings.currentValue.disabled', 'Off')} flush />
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.telemetryHint')}</p>
             </div>
             <Toggle
+              describedBy={fieldValueId('telemetry-enabled')}
               checked={(settings['telemetry.enabled'] ?? 'true') !== 'false'}
               onChange={async () => {
                 const current = (settings['telemetry.enabled'] ?? 'true').toLowerCase()

@@ -1904,6 +1904,26 @@ wanted books never uses it.
   Soulseek network. See the privacy note in the
   [deployment guide](DEPLOYMENT.md#slskd-soulseek).
 
+## Reading a setting without opening it
+
+Under the label of each setting that holds a choice, a switch or a value, a
+quiet line starts with "Current:" and shows what is set right now, for example
+"Current: Hardlink" under Import Mode or "Current: Default (12 hours)" under the
+wanted search interval. You can read your setup down the page without touching
+a control. The line is the same state the control shows, so it changes the
+moment a save lands and goes back with the control if a save fails. When
+nothing is stored it says "Not set", or "Default (...)" with the value Bindery
+uses instead. Choices show their name and not the stored key, a long folder
+path is cut to one line (hover it to read the whole path), and a secret such as
+an API key or token never shows its value, only "Set" or "Not set". Fields with
+their own Save button are left out on purpose, because what you have typed is
+not saved yet and the line would otherwise show something that is not true. A saved
+URL never shows a user name or password, only its host and path. The Edit Author
+dialog has the same line under its profile, root folder and monitor fields, but
+it shows what is saved for that author, not what you are picking: it stays put
+while you change a field and shows the new value the next time you open the
+dialog after pressing Save.
+
 ## Finding a setting when you do not know its tab
 
 The search box at the top of Settings matches tab names, section headings and
