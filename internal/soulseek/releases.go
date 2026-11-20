@@ -33,6 +33,9 @@ const (
 	maxReleases   = 150
 	maxTitleRunes = 240
 	maxUserRunes  = 64
+	// maxFileBytes is the largest single file kept. Peers report sizes and can
+	// lie; nothing a book or audiobook folder holds is anywhere near this.
+	maxFileBytes = 50 << 30
 )
 
 // ebookFormats and audioFormats are the extensions that make a file part of a
@@ -66,10 +69,17 @@ func Releases(name string, responses []slskd.SearchResponse, mediaType string) [
 		if user == "" {
 			continue
 		}
+		seen := map[string]bool{}
 		for _, f := range resp.Files {
-			if f.Size <= 0 {
+			if f.Size <= 0 || f.Size > maxFileBytes {
 				continue
 			}
+			// A peer listing one file twice would count it twice in the size
+			// and the file count.
+			if seen[f.Filename] {
+				continue
+			}
+			seen[f.Filename] = true
 			p := strings.ReplaceAll(f.Filename, `\`, "/")
 			ext := fileExt(f, p)
 			if !wantFormat(ext, mediaType) {

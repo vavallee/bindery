@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // searchFake is a slskd that serves the search endpoints.
@@ -28,6 +29,8 @@ type searchFake struct {
 	rawFinal   string // when set, the body of the includeResponses read
 	postStatus int    // 0 means 200
 	postDelay  time.Duration
+	dropPost   bool // close the connection after recording the POST
+	order      []string
 
 	active, maxActive atomic.Int32
 }
@@ -59,6 +62,11 @@ func (f *searchFake) handler() http.Handler {
 		f.posts = append(f.posts, req)
 		f.mu.Unlock()
 		time.Sleep(f.postDelay)
+		if f.dropPost {
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			_ = conn.Close()
+			return
+		}
 		if f.postStatus != 0 {
 			w.WriteHeader(f.postStatus)
 			return
@@ -74,9 +82,11 @@ func (f *searchFake) handler() http.Handler {
 		defer f.mu.Unlock()
 		switch r.Method {
 		case http.MethodDelete:
+			f.order = append(f.order, "DELETE")
 			f.deletes++
 			w.WriteHeader(http.StatusNoContent)
 		case http.MethodPut:
+			f.order = append(f.order, "PUT")
 			f.cancels++
 			w.WriteHeader(http.StatusNoContent)
 		case http.MethodGet:
@@ -191,8 +201,65 @@ func TestSearchContextCancelStillDeletes(t *testing.T) {
 	if _, err := c.Search(ctx, "cancelled"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
-	if f.deletes != 1 {
-		t.Errorf("a cancelled search was left in slskd (deletes=%d)", f.deletes)
+	// DELETE alone leaves the search running in slskd for its whole timeout, so
+	// a search that did not finish is cancelled (PUT) first, then removed.
+	if got := strings.Join(f.order, ","); got != "PUT,DELETE" {
+		t.Errorf("cleanup calls = %q, want PUT,DELETE", got)
+	}
+}
+
+func TestSearchStateReadErrorCancelsThenDeletes(t *testing.T) {
+	f := &searchFake{completeAt: -1}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Get("includeResponses") == "" && strings.Count(r.URL.Path, "/") == 4 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		f.handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	port, _ := strconv.Atoi(u.Port())
+	c := New(u.Hostname(), port, testKey, "", false)
+	c.pollInterval = 5 * time.Millisecond
+	if _, err := c.Search(context.Background(), "state error"); err == nil {
+		t.Fatal("state error not reported")
+	}
+	if got := strings.Join(f.order, ","); got != "PUT,DELETE" {
+		t.Errorf("cleanup calls = %q, want PUT,DELETE", got)
+	}
+}
+
+func TestSearchCompletedIsDeletedWithoutCancel(t *testing.T) {
+	f := &searchFake{completeAt: 1, responses: `[]`}
+	c := newSearchClient(t, f)
+	if _, err := c.Search(context.Background(), "done"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(f.order, ","); got != "DELETE" {
+		t.Errorf("cleanup calls = %q, want DELETE only", got)
+	}
+}
+
+func TestSearchPostLostOnTheWireIsStillCleanedUp(t *testing.T) {
+	f := &searchFake{completeAt: 1, dropPost: true}
+	c := newSearchClient(t, f)
+	if _, err := c.Search(context.Background(), "lost post"); err == nil {
+		t.Fatal("expected an error")
+	}
+	if got := strings.Join(f.order, ","); got != "PUT,DELETE" {
+		t.Errorf("cleanup calls = %q, want PUT,DELETE for a search slskd may have started", got)
+	}
+}
+
+func TestTruncateRunesKeepsRunesWhole(t *testing.T) {
+	s := strings.Repeat("é", 150) // 2 bytes each
+	got := truncateRunes(s, 201)
+	if !utf8.ValidString(got) || len(got) > 201 || len(got) != 200 {
+		t.Errorf("len %d valid %v", len(got), utf8.ValidString(got))
+	}
+	if truncateRunes("short", 200) != "short" {
+		t.Error("short string changed")
 	}
 }
 

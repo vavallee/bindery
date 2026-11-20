@@ -23,7 +23,7 @@ import { confirmPackGrab, grabErrorText, grabWithForceConfirm } from '../util/fo
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
 import ReleaseSwarm from '../components/ReleaseSwarm'
-import { SoulseekBadge, SoulseekDetail, isSoulseek, useSoulseekGrabTitle } from '../components/SoulseekRelease'
+import { SoulseekBadge, SoulseekDetail, SoulseekGrabNote, isSoulseek, soulseekGrabAria, useSoulseekGrabTitle } from '../components/SoulseekRelease'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { formatCalendarDate } from '../util/calendarDate'
 import { useClipboardCopy } from '../components/useClipboardCopy'
@@ -266,13 +266,15 @@ function ReleaseRow({
         </span>
       </div>
       <button
-        onClick={() => onGrab(r)}
-        disabled={grabbing !== null || soulseek}
+        onClick={() => { if (!soulseek) onGrab(r) }}
+        disabled={grabbing !== null}
         title={soulseek ? soulseekTitle : undefined}
-        className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0`}
+        {...soulseekGrabAria(r)}
+        className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0 ${soulseek ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
         {grabbing === r.guid ? t('search.grabbing', 'Grabbing…') : t('search.grab', 'Grab')}
       </button>
+      <SoulseekGrabNote r={r} />
     </div>
   )
 }

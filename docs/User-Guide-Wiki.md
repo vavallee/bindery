@@ -1856,9 +1856,11 @@ wanted books never uses it.
 - **Grab is disabled** on these results, with a tooltip saying so. Grabbing from
   Soulseek arrives in a later release, so for now you can see what is out there
   but not download it through Bindery.
-- A search takes up to about 15 seconds longer while slskd waits for peers, and
-  slskd runs only one search at a time. If it is busy, you still get your
-  indexer results.
+- A search usually takes about 15 seconds longer while slskd waits for peers,
+  and slskd runs only one search at a time. Bindery waits at most 20 seconds
+  for slskd, so the worst case is 20 extra seconds. After that you get your
+  indexer results without Soulseek, and the search debug view lists slskd as
+  timed out.
 - The title and the author's last name leave your machine as search text on the
   Soulseek network. See the privacy note in the
   [deployment guide](DEPLOYMENT.md#slskd-soulseek).

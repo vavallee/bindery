@@ -335,8 +335,10 @@ describe('SearchPage Soulseek results', () => {
     fireEvent.submit(screen.getByPlaceholderText(en.search.placeholder).closest('form')!)
 
     const grab = await screen.findByRole('button', { name: en.search.grab })
-    expect(grab).toBeDisabled()
+    expect(grab).toHaveAttribute('aria-disabled', 'true')
     expect(grab).toHaveAttribute('title', en.search.soulseek.grabUnavailable)
+    expect(grab).not.toBeDisabled() // stays focusable so the explanation is reachable
+    expect(grab).toHaveAccessibleDescription(en.search.soulseek.grabUnavailable)
     fireEvent.click(grab)
     expect(api.grab).not.toHaveBeenCalled()
   })

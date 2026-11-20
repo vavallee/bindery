@@ -3,8 +3,10 @@ package indexer
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
@@ -107,5 +109,36 @@ func TestWithSourcesNoneIsIdentity(t *testing.T) {
 	ctx := context.Background()
 	if WithSources(ctx) != ctx {
 		t.Error("WithSources with no sources changed the context")
+	}
+}
+
+type slowSource struct{ honourContext bool }
+
+func (s slowSource) Name() string { return "Slow" }
+func (s slowSource) Search(ctx context.Context, _ SourceQuery) ([]newznab.SearchResult, error) {
+	if s.honourContext {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	time.Sleep(3 * time.Second) // ignores ctx
+	return nil, nil
+}
+
+func TestSlowSourceCannotHoldBackTheSearch(t *testing.T) {
+	old := sourceBudget
+	sourceBudget = 100 * time.Millisecond
+	t.Cleanup(func() { sourceBudget = old })
+
+	for _, honour := range []bool{true, false} {
+		s := NewSearcher()
+		start := time.Now()
+		_, dbg := s.SearchBookWithDebug(WithSources(context.Background(), slowSource{honourContext: honour}), nil,
+			MatchCriteria{Title: "Dune", Author: "Frank Herbert", MediaType: models.MediaTypeEbook})
+		if d := time.Since(start); d > 2500*time.Millisecond {
+			t.Errorf("honour=%v: search took %s, the source was not capped", honour, d)
+		}
+		if len(dbg.Sources) != 1 || !strings.Contains(dbg.Sources[0].Error, "timed out") {
+			t.Errorf("honour=%v: sources = %+v, want a timed out row", honour, dbg.Sources)
+		}
 	}
 }

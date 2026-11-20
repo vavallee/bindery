@@ -7,7 +7,7 @@ import { useConfirmDialog } from '../components/useConfirmDialog'
 import { grabErrorText, grabWithForceConfirm } from '../util/forceGrab'
 import { primaryFill } from '../components/buttons'
 import ReleaseSwarm from '../components/ReleaseSwarm'
-import { SoulseekBadge, SoulseekDetail, isSoulseek, useSoulseekGrabTitle } from '../components/SoulseekRelease'
+import { SoulseekBadge, SoulseekDetail, SoulseekGrabNote, isSoulseek, soulseekGrabAria, useSoulseekGrabTitle } from '../components/SoulseekRelease'
 import { errorText } from '../util/errorText'
 
 export default function SearchPage() {
@@ -205,14 +205,16 @@ export default function SearchPage() {
                   </span>
                 ) : (
                   <button
-                    onClick={() => grab(r)}
-                    disabled={grabbing !== null || isSoulseek(r)}
+                    onClick={() => { if (!isSoulseek(r)) grab(r) }}
+                    disabled={grabbing !== null}
                     title={isSoulseek(r) ? soulseekGrabTitle : undefined}
-                    className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0`}
+                    {...soulseekGrabAria(r)}
+                    className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0 ${isSoulseek(r) ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     {grabbing === r.guid ? t('search.grabbing') : t('search.grab')}
                   </button>
                 )}
+                <SoulseekGrabNote r={r} />
               </div>
             ))}
           </div>

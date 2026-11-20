@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Search limits. A search sends the wanted title to the Soulseek network and
@@ -81,9 +82,7 @@ func (c *Client) Search(ctx context.Context, text string) ([]SearchResponse, err
 	if text == "" {
 		return nil, errors.New("slskd search text is empty")
 	}
-	if len(text) > maxSearchText {
-		text = text[:maxSearchText]
-	}
+	text = truncateRunes(text, maxSearchText)
 
 	wait := c.searchWait
 	if wait <= 0 {
@@ -115,20 +114,27 @@ func (c *Client) Search(ctx context.Context, text string) ([]SearchResponse, err
 		ResponseLimit: maxResponses,
 		FileLimit:     maxFiles,
 	}, maxStateBytes, &searchState{})
+	path := "/api/v0/searches/" + url.PathEscape(id)
 	if status == http.StatusTooManyRequests {
 		return nil, ErrSearchBusy
 	}
 	if err != nil {
+		// Bindery picked the id, so a request that failed on the wire (no
+		// status: a timeout, a reset after slskd already accepted it) can still
+		// be stopped and removed. An answered error means slskd refused it and
+		// there is nothing to clean up.
+		var se *StatusError
+		if !errors.As(err, &se) {
+			c.cleanup(path, true)
+		}
 		return nil, fmt.Errorf("start slskd search: %w", err)
 	}
-	path := "/api/v0/searches/" + url.PathEscape(id)
-	// Whatever happens next, remove the search. The caller's context may be
-	// the reason we are leaving, so cleanup gets its own short one.
-	defer func() {
-		cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = c.do(cctx, http.MethodDelete, path, 1<<10, nil)
-	}()
+	// Whatever happens next, remove the search. DELETE only removes the row:
+	// slskd's DeleteAsync does not stop a running search (PUT does), so a
+	// search that did not finish is cancelled first, or it keeps running for
+	// its whole timeout after Bindery has gone.
+	finished := false
+	defer func() { c.cleanup(path, !finished) }()
 
 	interval := c.pollInterval
 	if interval <= 0 {
@@ -152,6 +158,7 @@ poll:
 			cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			_, _ = c.do(cctx, http.MethodPut, path, 1<<10, nil)
 			cancel()
+			finished = true // already cancelled just now
 			break poll
 		case <-tick.C:
 			var st searchState
@@ -159,6 +166,7 @@ poll:
 				return nil, fmt.Errorf("read slskd search state: %w", err)
 			}
 			if st.IsComplete {
+				finished = true
 				break poll
 			}
 		}
@@ -169,6 +177,29 @@ poll:
 		return nil, fmt.Errorf("read slskd search responses: %w", err)
 	}
 	return capResponses(final.Responses), nil
+}
+
+// cleanup stops (optionally) and removes a search, best effort. It uses a short
+// context detached from the caller's, because the caller's being cancelled is
+// the usual reason to be here.
+func (c *Client) cleanup(path string, stop bool) {
+	cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if stop {
+		_, _ = c.do(cctx, http.MethodPut, path, 1<<10, nil)
+	}
+	_, _ = c.do(cctx, http.MethodDelete, path, 1<<10, nil)
+}
+
+// truncateRunes cuts s to at most n bytes without splitting a rune.
+func truncateRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // capResponses enforces maxResponses and maxFiles and drops responses with no

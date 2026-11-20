@@ -3,6 +3,7 @@ package soulseek
 import (
 	"context"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/vavallee/bindery/internal/downloader/slskd"
@@ -19,6 +20,16 @@ type searcher interface {
 type Source struct {
 	name   string
 	client searcher
+
+	mu       sync.Mutex
+	inflight map[string]*flight
+}
+
+// flight is one Soulseek search that several callers are waiting on.
+type flight struct {
+	done chan struct{}
+	resp []slskd.SearchResponse
+	err  error
 }
 
 // NewSource builds the search source for an slskd client. name is shown on the
@@ -37,11 +48,42 @@ func (s *Source) Search(ctx context.Context, q indexer.SourceQuery) ([]newznab.S
 	if text == "" {
 		return nil, nil
 	}
-	resp, err := s.client.Search(ctx, text)
+	resp, err := s.search(ctx, text)
 	if err != nil {
 		return nil, err
 	}
 	return Releases(s.name, resp, q.MediaType), nil
+}
+
+// search shares one slskd search between concurrent callers with the same
+// text. A book wanted as both ebook and audiobook searches once per format at
+// the same moment with the same words, and slskd runs one search at a time, so
+// without this the second would queue behind the first and miss the search
+// budget. The media type is applied afterwards by Releases, per caller.
+func (s *Source) search(ctx context.Context, text string) ([]slskd.SearchResponse, error) {
+	s.mu.Lock()
+	if f, ok := s.inflight[text]; ok {
+		s.mu.Unlock()
+		select {
+		case <-f.done:
+			return f.resp, f.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	f := &flight{done: make(chan struct{})}
+	if s.inflight == nil {
+		s.inflight = map[string]*flight{}
+	}
+	s.inflight[text] = f
+	s.mu.Unlock()
+
+	f.resp, f.err = s.client.Search(ctx, text)
+	s.mu.Lock()
+	delete(s.inflight, text)
+	s.mu.Unlock()
+	close(f.done)
+	return f.resp, f.err
 }
 
 // maxTitleWords bounds the title part of a query. Soulseek matches every word,

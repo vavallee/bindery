@@ -42,6 +42,27 @@ export function SoulseekDetail({ r }: { r: SearchResult }) {
   )
 }
 
+// soulseekGrabAria are the attributes of a Grab button that cannot be used on a
+// Soulseek result. The button stays focusable (aria-disabled, not disabled) so a
+// keyboard or screen reader user reaches the explanation, which is the visually
+// hidden SoulseekGrabNote it points at. The caller must also ignore its click.
+export function soulseekGrabAria(r: Pick<SearchResult, 'guid' | 'protocol'>) {
+  if (!isSoulseek(r)) return {}
+  return { 'aria-disabled': true as const, 'aria-describedby': `slskd-grab-${r.guid}` }
+}
+
+// SoulseekGrabNote is the text soulseekGrabAria points at. Render it next to
+// the button.
+export function SoulseekGrabNote({ r }: { r: Pick<SearchResult, 'guid' | 'protocol'> }) {
+  const { t } = useTranslation()
+  if (!isSoulseek(r)) return null
+  return (
+    <span id={`slskd-grab-${r.guid}`} className="sr-only">
+      {t('search.soulseek.grabUnavailable')}
+    </span>
+  )
+}
+
 // useSoulseekGrabTitle is the tooltip of the disabled Grab button.
 export function useSoulseekGrabTitle(): string {
   const { t } = useTranslation()

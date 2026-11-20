@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -42,6 +43,12 @@ type SourceDebug struct {
 	Error       string `json:"error,omitempty"`
 }
 
+// sourceBudget is the most a search waits for any one source. A slow or hung
+// source (slskd waiting on peers, or queued behind another search) must not
+// hold the indexer results back, so past this the search goes on without it and
+// the debug trail says it timed out. A var so tests can shorten it.
+var sourceBudget = 20 * time.Second
+
 type sourcesKey struct{}
 
 // WithSources returns a context that makes the searches run under it also ask
@@ -56,6 +63,35 @@ func WithSources(ctx context.Context, srcs ...Source) context.Context {
 func sourcesFrom(ctx context.Context) []Source {
 	srcs, _ := ctx.Value(sourcesKey{}).([]Source)
 	return srcs
+}
+
+// askSource runs one source under sourceBudget. The source is given a context
+// that ends at the budget and is expected to honour it; a source that does not
+// is abandoned shortly after, so one that ignores its context cannot hold the
+// search either.
+func askSource(ctx context.Context, src Source, q SourceQuery) ([]newznab.SearchResult, error) {
+	sctx, cancel := context.WithTimeout(ctx, sourceBudget)
+	defer cancel()
+	type answer struct {
+		hits []newznab.SearchResult
+		err  error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		hits, err := src.Search(sctx, q)
+		done <- answer{hits, err}
+	}()
+	grace := time.NewTimer(sourceBudget + 2*time.Second)
+	defer grace.Stop()
+	select {
+	case a := <-done:
+		if a.err != nil && sctx.Err() != nil && ctx.Err() == nil {
+			return nil, fmt.Errorf("timed out after %s", sourceBudget)
+		}
+		return a.hits, a.err
+	case <-grace.C:
+		return nil, fmt.Errorf("timed out after %s", sourceBudget)
+	}
 }
 
 // startSources asks every source in ctx concurrently and returns a function
@@ -77,7 +113,7 @@ func startSources(ctx context.Context, q SourceQuery) func() ([]newznab.SearchRe
 		go func() {
 			defer wg.Done()
 			start := time.Now()
-			hits, err := src.Search(ctx, q)
+			hits, err := askSource(ctx, src, q)
 			row := SourceDebug{Name: src.Name(), DurationMs: time.Since(start).Milliseconds()}
 			if err != nil {
 				row.Error = err.Error()

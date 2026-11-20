@@ -8,7 +8,7 @@ import { calendarYear, formatCalendarDate } from '../util/calendarDate'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
 import ReleaseSwarm from '../components/ReleaseSwarm'
-import { SoulseekBadge, SoulseekDetail, isSoulseek, useSoulseekGrabTitle } from '../components/SoulseekRelease'
+import { SoulseekBadge, SoulseekDetail, SoulseekGrabNote, isSoulseek, soulseekGrabAria, useSoulseekGrabTitle } from '../components/SoulseekRelease'
 import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -570,7 +570,7 @@ export default function WantedPage() {
                             <span className="truncate block">{r.title}</span>
                           </span>
                           <span className="text-fg-muted truncate block">
-                            {r.indexerName} &middot; {formatBytes(r.size)} &middot; {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
+                            {r.indexerName} &middot; {formatBytes(r.size)}{!isSoulseek(r) && <> &middot; {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}</>}
                             <ReleaseSwarm seeders={r.seeders} peers={r.peers} />
                             {isSoulseek(r) && <SoulseekDetail r={r} />}
                             {safeHref(r.infoUrl) && (
@@ -593,10 +593,13 @@ export default function WantedPage() {
                         </div>
                         <button
                           type="button"
-                          onClick={() => grab(r, book)}
-                          disabled={grabbingGuid === r.guid || grabbedGuid === r.guid || isSoulseek(r)}
+                          onClick={() => { if (!isSoulseek(r)) grab(r, book) }}
+                          disabled={grabbingGuid === r.guid || grabbedGuid === r.guid}
                           title={isSoulseek(r) ? soulseekGrabTitle : undefined}
+                          {...soulseekGrabAria(r)}
                           className={`px-2 py-2 rounded text-[10px] font-medium flex-shrink-0 touch-manipulation transition-colors disabled:cursor-default ${
+                            isSoulseek(r) ? 'opacity-50 cursor-not-allowed ' : ''
+                          }${
                             grabbedGuid === r.guid
                               ? 'bg-emerald-700 text-white'
                               : grabbingGuid === r.guid
@@ -606,6 +609,7 @@ export default function WantedPage() {
                         >
                           {grabbedGuid === r.guid ? t('wanted.grabbed') : grabbingGuid === r.guid ? t('wanted.grabbing') : t('wanted.grab')}
                         </button>
+                        <SoulseekGrabNote r={r} />
                       </div>
                     ))}
                   </div>
