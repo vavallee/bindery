@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vavallee/bindery/internal/importrollback"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -97,7 +98,7 @@ func TestBookSnapshotRestore_RoundTrip(t *testing.T) {
 	if live.SortTitle != original.SortTitle {
 		t.Errorf("SortTitle = %q, want %q", live.SortTitle, original.SortTitle)
 	}
-	if !equalTimePtr(live.ReleaseDate, original.ReleaseDate) {
+	if !importrollback.EqualTimePtr(live.ReleaseDate, original.ReleaseDate) {
 		t.Errorf("ReleaseDate = %v, want %v", live.ReleaseDate, original.ReleaseDate)
 	}
 	if live.Language != original.Language {
@@ -112,7 +113,7 @@ func TestBookSnapshotRestore_RoundTrip(t *testing.T) {
 	if live.MetadataProvider != original.MetadataProvider {
 		t.Errorf("MetadataProvider = %q, want %q", live.MetadataProvider, original.MetadataProvider)
 	}
-	if !equalInt64Ptr(live.CalibreID, original.CalibreID) {
+	if !importrollback.EqualInt64Ptr(live.CalibreID, original.CalibreID) {
 		t.Errorf("CalibreID = %v, want %v", live.CalibreID, original.CalibreID)
 	}
 	if live.MediaType != original.MediaType {
@@ -176,7 +177,7 @@ func TestRestoreBookFromSnapshot_PreservesPostImportEdit(t *testing.T) {
 	if live.Title != "User Rename" {
 		t.Errorf("Title = %q, want preserved %q", live.Title, "User Rename")
 	}
-	if !equalInt64Ptr(live.CalibreID, int64Ptr(1)) {
+	if !importrollback.EqualInt64Ptr(live.CalibreID, int64Ptr(1)) {
 		t.Errorf("CalibreID = %v, want restored to 1", live.CalibreID)
 	}
 }
@@ -210,7 +211,7 @@ func TestRestorePtr_PreservesPostImportEdit(t *testing.T) {
 	if !live.ReleaseDate.Equal(userRel) {
 		t.Errorf("ReleaseDate = %v, want preserved %v", live.ReleaseDate, userRel)
 	}
-	if !equalInt64Ptr(live.CalibreID, int64Ptr(9)) {
+	if !importrollback.EqualInt64Ptr(live.CalibreID, int64Ptr(9)) {
 		t.Errorf("CalibreID = %v, want preserved 9", live.CalibreID)
 	}
 }
@@ -380,10 +381,10 @@ func TestBookSnapshotMetadata_RoundTrip(t *testing.T) {
 	if gotBefore.Title != "Before" || gotAfter.Title != "After" {
 		t.Errorf("titles = %q/%q, want Before/After", gotBefore.Title, gotAfter.Title)
 	}
-	if !equalInt64Ptr(gotBefore.CalibreID, int64Ptr(1)) {
+	if !importrollback.EqualInt64Ptr(gotBefore.CalibreID, int64Ptr(1)) {
 		t.Errorf("before CalibreID = %v, want 1", gotBefore.CalibreID)
 	}
-	if !equalTimePtr(gotBefore.ReleaseDate, before.ReleaseDate) {
+	if !importrollback.EqualTimePtr(gotBefore.ReleaseDate, before.ReleaseDate) {
 		t.Errorf("before ReleaseDate = %v, want %v", gotBefore.ReleaseDate, before.ReleaseDate)
 	}
 	if !gotBefore.Monitored {
@@ -550,87 +551,6 @@ func TestAuthorRollbackSnapshotFromMetadata_RoundTrip(t *testing.T) {
 	}
 	if gotAfter.Name != "After" {
 		t.Errorf("after = %+v", gotAfter)
-	}
-}
-
-// ----------------------------------------------------------------------------
-// clone* helpers, direct.
-// ----------------------------------------------------------------------------
-
-func TestClonePtrHelpers(t *testing.T) {
-	if cloneInt64Ptr(nil) != nil {
-		t.Error("cloneInt64Ptr(nil) != nil")
-	}
-	if cloneStringPtr(nil) != nil {
-		t.Error("cloneStringPtr(nil) != nil")
-	}
-	if cloneTimePtr(nil) != nil {
-		t.Error("cloneTimePtr(nil) != nil")
-	}
-	i := int64(7)
-	ci := cloneInt64Ptr(&i)
-	if ci == &i || *ci != 7 {
-		t.Errorf("cloneInt64Ptr aliased or wrong: %v", ci)
-	}
-	s := "hi"
-	cs := cloneStringPtr(&s)
-	if cs == &s || *cs != "hi" {
-		t.Errorf("cloneStringPtr aliased or wrong: %v", cs)
-	}
-	now := time.Now()
-	ct := cloneTimePtr(&now)
-	if ct == &now || !ct.Equal(now) {
-		t.Errorf("cloneTimePtr aliased or wrong: %v", ct)
-	}
-}
-
-// ----------------------------------------------------------------------------
-// equalInt64Ptr / equalTimePtr edge cases, direct.
-// ----------------------------------------------------------------------------
-
-func TestEqualInt64Ptr(t *testing.T) {
-	a, b := int64(5), int64(5)
-	c := int64(6)
-	cases := []struct {
-		name string
-		x, y *int64
-		want bool
-	}{
-		{"both nil", nil, nil, true},
-		{"x nil", nil, &a, false},
-		{"y nil", &a, nil, false},
-		{"equal", &a, &b, true},
-		{"unequal", &a, &c, false},
-	}
-	for _, tc := range cases {
-		if got := equalInt64Ptr(tc.x, tc.y); got != tc.want {
-			t.Errorf("%s: equalInt64Ptr = %v, want %v", tc.name, got, tc.want)
-		}
-	}
-}
-
-func TestEqualTimePtr(t *testing.T) {
-	t1 := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	t1same := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	// Same instant, different zone: Equal must treat these as equal.
-	t1other := t1.In(time.FixedZone("X", 3600))
-	t2 := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
-	cases := []struct {
-		name string
-		x, y *time.Time
-		want bool
-	}{
-		{"both nil", nil, nil, true},
-		{"x nil", nil, &t1, false},
-		{"y nil", &t1, nil, false},
-		{"equal same zone", &t1, &t1same, true},
-		{"equal diff zone", &t1, &t1other, true},
-		{"unequal", &t1, &t2, false},
-	}
-	for _, tc := range cases {
-		if got := equalTimePtr(tc.x, tc.y); got != tc.want {
-			t.Errorf("%s: equalTimePtr = %v, want %v", tc.name, got, tc.want)
-		}
 	}
 }
 
