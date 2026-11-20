@@ -23,11 +23,13 @@ const discoveryTimeLayout = "2006-01-02T15:04:05Z"
 //
 // Monitored authors only, and not those whose monitor_new_items is "none":
 // that setting means "do not add new books from this author", which is the
-// only thing a discovery run exists to do. Calibre shells carry a synthetic
-// foreign id no provider answers for.
+// only thing a discovery run exists to do. Calibre shells and
+// hand-made authors (#3840) carry a synthetic foreign id no provider answers
+// for.
 const discoveryEligibleWhere = `monitored = 1
 	  AND COALESCE(monitor_new_items, 'all') != 'none'
-	  AND foreign_id NOT LIKE 'calibre:%'`
+	  AND foreign_id NOT LIKE 'calibre:%'
+	  AND foreign_id NOT LIKE 'manual:%'`
 
 // ListDiscoveryDue returns up to limit authors eligible for scheduled release
 // discovery whose last check is older than cutoff, never checked authors

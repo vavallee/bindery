@@ -2902,6 +2902,18 @@
       "alreadyInLibrary": "Already in your library. Change its format or monitoring from the book page.",
       "formatWidenedInLibrary": "Already in your library, and now tracked as both ebook and audiobook.",
       "openExisting": "Open existing book"
+    },
+    "manual": {
+      "open": "Add by hand",
+      "openHint": "Add a book no metadata source knows, typed in yourself",
+      "heading": "Add a book by hand",
+      "hint": "Nothing is looked up. The book is added exactly as you type it, and metadata refreshes leave it alone. Use Re-bind on the book page to link it to a metadata record later.",
+      "titleLabel": "Title",
+      "authorLabel": "Author",
+      "authorHint": "An author already in your library is reused. Any other name becomes a new author with no metadata, which Link metadata on the author page can connect later.",
+      "seriesLabel": "Series (optional)",
+      "positionLabel": "Position",
+      "alreadyInLibrary": "This author already has a book with this title in your library."
     }
   },
   "authorMetadataLink": {
@@ -3330,6 +3342,7 @@
       "heading": "Metadata source",
       "current": "Current",
       "unknownProvider": "Unknown provider",
+      "manual": "Added by hand",
       "copyId": "Copy {{id}}",
       "hint": "Re-bind this book if the record above is the wrong one."
     },

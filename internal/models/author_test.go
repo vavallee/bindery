@@ -53,6 +53,7 @@ func TestAuthorProviderFromForeignID(t *testing.T) {
 		{id: "gb:volume", want: "googlebooks"},
 		{id: "calibre:author:1", want: "calibre"},
 		{id: "abs:author:lib:author", want: "audiobookshelf"},
+		{id: "manual:author:dan-abnett", want: "manual"},
 	}
 	for _, tc := range cases {
 		if got := AuthorProviderFromForeignID(tc.id); got != tc.want {
@@ -75,6 +76,8 @@ func TestCanReplaceAuthorIdentity(t *testing.T) {
 		{name: "calibre id", author: &Author{ForeignID: "calibre:author:1"}, want: true},
 		{name: "audiobookshelf provider", author: &Author{ForeignID: "legacy", MetadataProvider: "audiobookshelf"}, want: true},
 		{name: "calibre provider", author: &Author{ForeignID: "legacy", MetadataProvider: "calibre"}, want: true},
+		{name: "manual id", author: &Author{ForeignID: "manual:author:dan-abnett"}, want: true},
+		{name: "manual provider", author: &Author{ForeignID: "legacy", MetadataProvider: "manual"}, want: true},
 		{name: "openlibrary", author: &Author{ForeignID: "OL13200512A", MetadataProvider: "openlibrary"}, want: false},
 		{name: "hardcover", author: &Author{ForeignID: "hc:emilia-jae", MetadataProvider: "hardcover"}, want: false},
 		{name: "dnb", author: &Author{ForeignID: "dnb:123456789", MetadataProvider: "dnb"}, want: false},

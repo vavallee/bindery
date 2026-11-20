@@ -306,6 +306,8 @@ func AuthorProviderFromForeignID(foreignID string) string {
 		return "calibre"
 	case strings.HasPrefix(foreignID, "abs:"):
 		return "audiobookshelf"
+	case strings.HasPrefix(foreignID, ManualForeignIDPrefix):
+		return ManualMetadataProvider
 	default:
 		return "openlibrary"
 	}
@@ -322,8 +324,10 @@ func CanReplaceAuthorIdentity(author *Author) bool {
 	return foreignID == "" ||
 		strings.HasPrefix(foreignID, "abs:") ||
 		strings.HasPrefix(foreignID, "calibre:") ||
+		strings.HasPrefix(foreignID, ManualForeignIDPrefix) ||
 		provider == "audiobookshelf" ||
-		provider == "calibre"
+		provider == "calibre" ||
+		provider == ManualMetadataProvider
 }
 
 const (
