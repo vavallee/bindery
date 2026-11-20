@@ -874,6 +874,17 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 				"title", b.Title, "foreignId", b.ForeignID, "bookId", titled.ID, "bookForeignId", titled.ForeignID)
 			seen = false
 		}
+		if seen && titled != nil && models.IsManualForeignID(titled.ForeignID) {
+			// A book made by hand (#3840) already stands for this work, and
+			// the user made it precisely so that no provider record would be
+			// attached: no ids are recorded on it, no format is widened, no
+			// series written. Nor is a second row created beside it. Re-bind
+			// is how the user binds it to a provider work if they want.
+			slog.Debug("leaving a book made by hand alone; a provider work has the same title",
+				"title", b.Title, "foreignId", b.ForeignID, "bookId", titled.ID)
+			matched++
+			continue
+		}
 		if seen && titled != nil {
 			existing := titled
 			// existing is the row as this sync first saw it, and the

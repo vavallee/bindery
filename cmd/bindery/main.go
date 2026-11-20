@@ -1046,6 +1046,8 @@ func main() {
 		r.Get("/author", authorHandler.List)
 		r.Post("/author", authorHandler.Create)
 		r.Post("/author/book", authorHandler.AddBook)
+		// A book no metadata provider knows, typed in by hand (#3840).
+		r.Post("/author/book/manual", authorHandler.AddManualBook)
 		r.Post("/author/bulk", bulkHandler.AuthorsBulk)
 		r.Get("/author/{id}", authorHandler.Get)
 		r.Put("/author/{id}", authorHandler.Update)

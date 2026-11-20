@@ -374,9 +374,9 @@ func (s *Scheduler) persistRefreshedAuthor(ctx context.Context, author, updated 
 	return true
 }
 
-// hasCalibrePrefix reports a Calibre-imported author. Those have synthetic
-// "calibre:author:N" IDs with no counterpart in OL/Hardcover; skipping them
-// avoids noisy 404 errors.
+// hasCalibrePrefix reports a Calibre-imported or hand-made author. Those have
+// synthetic "calibre:author:N" or "manual:author:..." IDs with no counterpart
+// in OL/Hardcover; skipping them avoids noisy 404 errors.
 func hasCalibrePrefix(foreignID string) bool {
-	return strings.HasPrefix(foreignID, "calibre:")
+	return strings.HasPrefix(foreignID, "calibre:") || models.IsManualForeignID(foreignID)
 }

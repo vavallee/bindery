@@ -647,6 +647,14 @@ func (i *Importer) enrichBook(ctx context.Context, cfg ImportConfig, item Normal
 	if i.meta == nil || book == nil {
 		return metadataMergeResult{}, nil
 	}
+	// A book added by hand (#3840) is not a placeholder waiting for a
+	// provider: the user typed it because no provider has it, or has it badly.
+	// A title match from an import must not relink it to whatever the lookup
+	// finds. Re-bind does that when the user wants it.
+	if models.IsManualForeignID(book.ForeignID) || strings.EqualFold(strings.TrimSpace(book.MetadataProvider), models.ManualMetadataProvider) {
+		slog.Debug("abs import: book was added by hand, left on its own identity", "title", item.Title, "bookId", book.ID)
+		return metadataMergeResult{}, nil
+	}
 
 	full, matchedBy, ambiguous, err := i.lookupUpstreamBook(ctx, author, item)
 	if err != nil {

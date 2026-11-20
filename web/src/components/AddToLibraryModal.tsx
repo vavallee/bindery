@@ -11,6 +11,7 @@ import type { AddResultFilter } from './addToLibraryGrouping'
 import AddAuthorConfirm from './AddAuthorConfirm'
 import { AuthorAddDefaults, loadAuthorAddDefaults } from './authorAddDefaults'
 import AddBookConfirm from './AddBookConfirm'
+import AddManualBook from './AddManualBook'
 import { authorProviderKey } from '../util/authorMetadata'
 import { calendarYear } from '../util/calendarDate'
 import { providerDisplayName } from '../util/metadataSource'
@@ -43,9 +44,11 @@ interface Props {
   standalone?: boolean
 }
 
+// manual is the "add by hand" form for a book no provider knows (#3840).
 type Selected =
   | { kind: 'author'; author: Author }
   | { kind: 'book'; book: Book }
+  | { kind: 'manual' }
 
 // An Audible/Amazon ASIN: 10 characters starting with B. Mirrors the check in
 // resolveBookQuery, which owns the dispatch; this only decides whether the
@@ -327,6 +330,16 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
             onAdded={book => { onAdded({ kind: 'book', book }); onClose() }}
             onRequested={r => { onRequested?.(r); onClose() }}
           />
+        ) : selected?.kind === 'manual' ? (
+          // An author search names the author; an ISBN, ASIN or Hardcover
+          // link is no title.
+          <AddManualBook
+            initialTitle={mode === 'author' || isIdentifierQuery(query.trim()) ? '' : query.trim()}
+            initialAuthor={mode === 'author' ? query.trim() : ''}
+            onBack={() => setSelected(null)}
+            onClose={onClose}
+            onAdded={book => { onAdded({ kind: 'book', book }); onClose() }}
+          />
         ) : <>
           <div className="p-4 flex-1 overflow-y-auto">
             <div className="flex gap-2">
@@ -399,6 +412,18 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
           </div>
 
           <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
+            {/* A requester asks for books the admin adds, so has no book of
+                their own to type in. */}
+            {!isRequester && (
+              <button
+                type="button"
+                onClick={() => setSelected({ kind: 'manual' })}
+                title={t('addToLibrary.manual.openHint')}
+                className="mr-auto px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white"
+              >
+                {t('addToLibrary.manual.open')}
+              </button>
+            )}
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-fg-muted hover:text-slate-900 dark:hover:text-white">{t('common.cancel')}</button>
           </div>
         </>}

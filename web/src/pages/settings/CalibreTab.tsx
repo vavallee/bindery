@@ -12,6 +12,8 @@ import {
   type SettingSaveResult,
 } from '../../api/client'
 import Toggle from './Toggle'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import SaveButton from './SaveButton'
 import CalibreDeliveryPanel from './CalibreDeliveryPanel'
 import { useSaveResult } from './useSaveResult'
@@ -384,7 +386,8 @@ function CalibreSection({
 
         <div id="calibre.mode" className="pt-1 border-t border-slate-200 dark:border-zinc-800">
           <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-2 mt-3">{t('settings.calibre.mode.heading', 'Write integration')}</label>
-          <div className="space-y-1.5">
+          <FieldValue for="calibre-mode" value={mode === 'calibredb' ? t('settings.calibre.mode.calibredb', 'calibredb CLI') : mode === 'plugin' ? t('settings.calibre.mode.plugin', 'Calibre Bridge plugin') : t('settings.calibre.mode.off', 'Off')} />
+          <div role="radiogroup" aria-label={t('settings.calibre.mode.heading', 'Write integration')} aria-describedby={fieldValueId('calibre-mode')} className="space-y-1.5">
             {([
               { v: 'off', label: t('settings.calibre.mode.off', 'Off'), desc: t('settings.calibre.mode.offDesc', 'No Calibre call on import. The file lands in the Bindery library only.') },
               { v: 'calibredb', label: t('settings.calibre.mode.calibredb', 'calibredb CLI'), desc: t('settings.calibre.mode.calibredbDesc', 'Run calibredb add --with-library after each import. Calibre copies the file into its own library, so it exists twice. Needs calibredb inside the Bindery container or process; the official distroless image does not ship it.') },
@@ -448,7 +451,8 @@ function CalibreSection({
         {mode === 'plugin' && (
           <div id="calibre.plugin_transport" data-testid="calibre-transport">
             <label className="block text-xs text-fg-muted mb-1">{t('settings.calibre.transport.label')}</label>
-            <div className="space-y-1.5">
+            <FieldValue for="calibre-transport" value={transport === 'pull' ? t('settings.calibre.transport.pull') : t('settings.calibre.transport.push')} />
+            <div role="radiogroup" aria-label={t('settings.calibre.transport.label')} aria-describedby={fieldValueId('calibre-transport')} className="space-y-1.5">
               {([
                 { v: 'push', label: t('settings.calibre.transport.push'), desc: t('settings.calibre.transport.pushDesc') },
                 { v: 'pull', label: t('settings.calibre.transport.pull'), desc: t('settings.calibre.transport.pullDesc') },
@@ -617,11 +621,13 @@ function CalibreSection({
           <div id="calibre.library_import_enabled" className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.calibre.import.heading', 'Library import')}</label>
+              <FieldValue for="calibre-library-import" value={libraryImportEnabled ? t('settings.currentValue.enabled', 'On') : t('settings.currentValue.disabled', 'Off')} flush />
               <p className="text-xs text-fg-muted mt-0.5">
                 {t('settings.calibre.import.hint', 'Read your existing Calibre library and import books, authors, and editions into Bindery. Works independently of the write mode above.')}
               </p>
             </div>
             <Toggle
+              describedBy={fieldValueId('calibre-library-import')}
               checked={libraryImportEnabled}
               onChange={async () => {
                 const next = libraryImportEnabled ? 'false' : 'true'
@@ -637,9 +643,11 @@ function CalibreSection({
               <div id="calibre.sync_on_startup" className="flex items-center justify-between">
                 <div>
                   <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.calibre.import.syncOnStartup', 'Sync on startup')}</label>
+                  <FieldValue for="calibre-sync-on-startup" value={syncOnStartup ? t('settings.currentValue.enabled', 'On') : t('settings.currentValue.disabled', 'Off')} flush />
                   <p className="text-xs text-fg-muted mt-0.5">{t('settings.calibre.import.syncOnStartupHint', 'Re-import each time Bindery starts. Safe to leave on — imports are incremental and idempotent.')}</p>
                 </div>
                 <Toggle
+                  describedBy={fieldValueId('calibre-sync-on-startup')}
                   checked={syncOnStartup}
                   onChange={async () => {
                     const next = syncOnStartup ? 'false' : 'true'
