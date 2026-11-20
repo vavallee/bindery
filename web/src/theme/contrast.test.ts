@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { COVER_COLORS, COVER_FG, coverColorFor } from '../components/coverPalette'
 import { SELECTED_HOVER_DARK } from '../components/DataTable'
+import { TOAST_FILL } from '../pages/settings/toastBus'
 import dataTableSource from '../components/DataTable.tsx?raw'
 import postcss from 'postcss'
 import tailwindcss from '@tailwindcss/postcss'
@@ -503,5 +504,31 @@ describe('DataTable selected row hover', () => {
   it('keeps muted text AA in dark mode', () => {
     expect(dataTableSource).toContain(`dark:hover:bg-[${SELECTED_HOVER_DARK}]`)
     expect(contrast(token('fg-muted', 'dark'), SELECTED_HOVER_DARK)).toBeGreaterThanOrEqual(AA_NORMAL)
+  })
+})
+
+// The Settings save toast (#3991) sets white text on a red or emerald fill. The
+// scanners above read a text colour and a fill out of one quoted string, and
+// the toast's classes used to be split across a ternary where they saw
+// neither, so the fills are named whole in toastBus.ts and measured here.
+describe('Settings save toast', () => {
+  for (const kind of ['success', 'error'] as const) {
+    it(`${kind}: white on its fill is at least ${AA_NORMAL}:1`, () => {
+      const classes = TOAST_FILL[kind].split(/\s+/)
+      const fill = classes.find(c => HUE_BG.test(c))
+      const text = classes.find(c => HUE_TEXT.test(c))
+      expect(fill, TOAST_FILL[kind]).toBeTruthy()
+      expect(text).toBe('text-white')
+      const base = TAILWIND.get(fill!.slice(3))
+      expect(base, fill).toBeTruthy()
+      expect(contrast('#ffffff', base!)).toBeGreaterThanOrEqual(AA_NORMAL)
+    })
+  }
+
+  it('is reachable by the white-on-fill scanner (one string holds both classes)', () => {
+    for (const kind of ['success', 'error'] as const) {
+      expect(TOAST_FILL[kind]).toMatch(/\btext-white\b/)
+      expect(TOAST_FILL[kind]).toMatch(/\bbg-(?:emerald|red)-\d+\b/)
+    }
   })
 })

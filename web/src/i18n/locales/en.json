@@ -979,6 +979,15 @@
     "retryImportError": "Retry failed: {{error}}",
     "retryDownload": "Retry download",
     "retryingDownload": "Retrying…",
+    "scanLibrary": "Scan library",
+    "scanningLibrary": "Scanning…",
+    "scanLibraryFor": "Scan library for {{title}}",
+    "scanLibraryHint": "Runs a library scan so the file the external tool placed is picked up.",
+    "scanStarted": "Library scan started. It picks up the file the external tool placed in your library and the book then shows as owned. This row stays under Handed off until you remove it.",
+    "scanQueued": "A scan is already running. Another one starts as soon as it finishes, so the file is picked up either way.",
+    "scanRunning": "A scan is already running. Try again once it has finished.",
+    "scanError": "Scan failed: {{error}}",
+    "scanFailedFallback": "Scan failed",
     "retryDownloadHint": "Sends this same release to your download client again. It does not search for a different release; use Search on the book for that.",
     "partialWarning": "Could not reach {{clients}}. This list may be incomplete, so a download missing from it is not necessarily gone.",
     "partialWarningUnnamed": "A download client did not answer. This list may be incomplete, so a download missing from it is not necessarily gone.",
@@ -1038,6 +1047,13 @@
     "viewAll": "All ({{count}})",
     "viewActive": "Active ({{count}})",
     "viewFailed": "Failed ({{count}})",
+    "viewDownloading": "Downloading ({{count}})",
+    "viewImporting": "Importing ({{count}})",
+    "viewHeld": "Held ({{count}})",
+    "viewExternal": "Handed off ({{count}})",
+    "viewAttention": "Needs attention ({{count}})",
+    "viewAttentionEmpty": "Nothing needs attention",
+    "viewStateEmpty": "No downloads in this state",
     "viewFailedEmpty": "No failed downloads",
     "viewActiveEmpty": "No downloads in progress",
     "viewShowAll": "Show all"
@@ -1960,7 +1976,9 @@
       "transmissionDirHint": "Optional absolute path override. Leave blank to use Transmission's configured default download directory.",
       "delugeLabelHint": "Applied via the Deluge label plugin. Leave blank if the plugin is not installed.",
       "pathRemapLabel": "Download client path remap",
+      "slskdHint": "Needs slskd 0.26.0 or newer and an API key with the readwrite role. Searches send your wanted titles to the Soulseek network, and downloading shows your IP address to peers, so run slskd behind a VPN with a forwarded port.",
       "remapHelp": {
+        "slskd": "Map slskd's downloads folder to the path Bindery can read. Example: if slskd saves to /app/downloads but Bindery sees that folder at /media/soulseek, use /app/downloads:/media/soulseek. Leave empty when both already see the same mount.",
         "qbittorrent": "Map the path qBittorrent reports to the path Bindery can read. Example: if qBittorrent shows /downloads/books but Bindery sees that folder at /media/books, use /downloads:/media/books. Bindery also uses this in reverse when sending new torrents.",
         "rtorrent": "Map the path rTorrent reports to the path Bindery can read. Seedbox installs almost always need this — e.g. rTorrent writes to /home/user/downloads while Bindery mounts that share at /media/books, so use /home/user/downloads:/media/books. Bindery also uses this in reverse when setting a new torrent's download directory, and to locate files when you remove a download with its data.",
         "other": "Map the path this client reports to the path Bindery can read: the client's path, a colon, then Bindery's. Example: if the client shows /downloads/books but Bindery sees that folder at /media/books, use /downloads:/media/books. A Windows path works on the client side, such as S:\\Downloads:/downloads. Leave empty when both already see the same mount. Diagnose checks the mapping end to end."
@@ -2418,6 +2436,7 @@
       "defaultMonitorModeLabel": "Default monitor mode",
       "defaultMonitorModeHint": "Applied to newly added authors. Existing authors keep their current mode unless edited.",
       "defaultMonitorLatestCountLabel": "Latest book count",
+      "defaultMonitorLatestCountInvalid": "Enter a whole number of 1 or more.",
       "defaultMonitorNewItemsLabel": "Default for monitoring newly discovered books",
       "defaultMonitorNewItemsHint": "Applied to newly added authors. Choose whether a metadata refresh may add books it discovers later. Existing authors keep their own setting.",
       "audiobookFileTemplate": "Audiobook file naming (per track)",
@@ -2772,6 +2791,12 @@
     },
     "pathRemap": {
       "syntaxHint": "Use comma-separated <code>from:to</code> prefix rewrites."
+    },
+    "toast": {
+      "saved": "{{name}} saved",
+      "set": "{{name}} set to {{value}}",
+      "failed": "Couldn't save {{name}}",
+      "genericName": "Setting"
     }
   },
   "addToLibrary": {

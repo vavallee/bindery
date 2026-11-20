@@ -279,6 +279,7 @@ func registerAdoptionRoutes(r chi.Router, h adoptionRouteHandler) {
 // libraryScanStatusRouteHandler is the surface registerLibraryScanStatusRoute
 // needs.
 type libraryScanStatusRouteHandler interface {
+	Scan(http.ResponseWriter, *http.Request)
 	ScanStatus(http.ResponseWriter, *http.Request)
 }
 
@@ -289,12 +290,19 @@ type libraryScanStatusRouteHandler interface {
 // and the key isAdminOnlySetting already withholds from GET /setting. Leaving
 // this route open kept a second door to the same value.
 //
+// POST /library/scan sits in the same group. The scan walks the whole library
+// with no owner filter and runs the reconciliation side effects, so under
+// multi user enforcement it is a server operation, not a per user one. Its only
+// callers are the admin scan panel and the admin adoption view; the scheduler
+// calls the scanner directly, not over HTTP.
+//
 // Gated rather than redacted because the only caller is the scan panel in
 // Settings > General, which renders inside that tab's isAdmin block, so no non
 // admin screen loses anything and no third response shape enters the API.
 func registerLibraryScanStatusRoute(r chi.Router, h libraryScanStatusRouteHandler) {
 	r.Group(func(r chi.Router) {
 		r.Use(auth.RequireAdmin)
+		r.Post("/library/scan", h.Scan)
 		r.Get("/library/scan/status", h.ScanStatus)
 	})
 }
