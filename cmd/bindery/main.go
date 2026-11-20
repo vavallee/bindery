@@ -1280,9 +1280,9 @@ func main() {
 		// registerDBIntegrityRoutes).
 		registerDBIntegrityRoutes(r, api.NewDBIntegrityHandler(database, cfg.DBPath, backupHandler))
 
-		// Library. The scan status returns server filesystem paths, so it is
-		// admin only (#2361); see registerLibraryScanStatusRoute.
-		r.Post("/library/scan", libraryHandler.Scan)
+		// Library scan and scan status, admin only: the status returns server
+		// filesystem paths (#2361) and the scan walks the global library; see
+		// registerLibraryScanStatusRoute.
 		registerLibraryScanStatusRoute(r, libraryHandler)
 		// Library adoption, admin only (see registerAdoptionRoutes).
 		registerAdoptionRoutes(r, adoptionHandler)

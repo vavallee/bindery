@@ -185,6 +185,8 @@ func (h *BookOrbitHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 func (h *BookOrbitHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := LoadBookOrbitConfig(r.Context(), h.settings)
 
+	savedBaseURL := cfg.BaseURL
+
 	var req bookOrbitConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -213,6 +215,13 @@ func (h *BookOrbitHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		newKey = key
 		cfg.APIKey = key
+	}
+	// A saved key belongs to the server it was issued for. When the URL moves
+	// and no replacement key came with it, drop the saved key rather than
+	// send it to the new address.
+	clearKey := newKey == "" && cfg.BaseURL != savedBaseURL && cfg.APIKey != ""
+	if clearKey {
+		cfg.APIKey = ""
 	}
 	if req.LibraryIDs != nil {
 		ids, err := parseBookOrbitLibraryIDs(*req.LibraryIDs)
@@ -252,7 +261,7 @@ func (h *BookOrbitHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		{Key: SettingBookOrbitPathRemap, Value: cfg.PathRemap},
 		{Key: SettingBookOrbitPublicURL, Value: cfg.PublicURL},
 	}
-	if newKey != "" {
+	if newKey != "" || clearKey {
 		kvs = append(kvs, db.SettingKV{Key: SettingBookOrbitAPIKey, Value: newKey})
 	}
 	if err := h.settings.SetMany(r.Context(), kvs); err != nil {

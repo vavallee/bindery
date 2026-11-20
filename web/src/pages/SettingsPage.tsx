@@ -2,6 +2,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { lazyWithReload } from '../util/lazyWithReload'
 import { useTranslation } from 'react-i18next'
+import { SettingsToastHost } from './settings/autoSave'
 import { api, DownloadClient, Indexer, ProwlarrInstance } from '../api/client'
 import SettingsSearch, { SettingsSearchPick } from './settings/SettingsSearch'
 import { fieldForAnchor } from './settings/settingsFieldIndex'
@@ -424,6 +425,7 @@ export default function SettingsPage() {
 
         {/* Tab content */}
         <div ref={contentRef} className="flex-1 min-w-0">
+          <SettingsToastHost />
           <Suspense fallback={<TabFallback label={t('settings.loadingTab')} />}>
             {renderTab()}
           </Suspense>

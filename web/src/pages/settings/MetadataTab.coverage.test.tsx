@@ -109,7 +109,10 @@ describe('MetadataTab library defaults', () => {
     // An invalid count is shown but never persisted.
     fireEvent.change(count, { target: { value: '0' } })
     expect(api.setSetting).not.toHaveBeenCalledWith('author.default_monitor_latest_count', '0')
+    fireEvent.blur(count)
+    expect(api.setSetting).not.toHaveBeenCalledWith('author.default_monitor_latest_count', '0')
     fireEvent.change(count, { target: { value: '3' } })
+    fireEvent.blur(count)
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_latest_count', '3'))
   })
 
