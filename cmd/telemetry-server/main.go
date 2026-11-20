@@ -5,10 +5,10 @@
 // Endpoints:
 //
 //	GET  /               — welcome page with logo and GitHub link
-//	GET  /stats          — public dashboard with version/OS/arch charts
+//	GET  /stats          — public dashboard with version/OS/arch charts (cached up to 60 s)
 //	GET  /stats.json     — public JSON snapshot {active,total,latest} for bots
 //	POST /api/ping       — upsert install record, return latest version (rate-limited)
-//	GET  /api/stats      — active/total counts + version breakdown (token-gated)
+//	GET  /api/stats      — active/total counts + version breakdown (token-gated, cached up to 60 s)
 //	GET  /api/backup     — sqlite VACUUM INTO snapshot of installs DB (token-gated)
 //	GET  /health         — liveness probe
 package main
@@ -64,6 +64,14 @@ type server struct {
 	// trustedProxies are the peers whose X-Real-Ip / X-Forwarded-For are
 	// believed for rate limiting. Empty means use the TCP peer address.
 	trustedProxies []*net.IPNet
+
+	// statsTTL is how long a computed dashboard snapshot is served to /stats
+	// and /api/stats before the next request recomputes it. Zero disables
+	// the cache (concurrent misses still share one computation).
+	statsTTL time.Duration
+	// statsQuery overrides queryStats in tests; nil means queryStats.
+	statsQuery func(context.Context) (*statsData, error)
+	stats      statsCache
 }
 
 // latest returns the most recent published version the server advertises.
@@ -171,6 +179,7 @@ func main() {
 		// loopback and private ranges; set TRUSTED_PROXIES to a CIDR list to
 		// narrow that, or to "none" to use the TCP peer only.
 		trustedProxies: resolveTrustedProxies(env("TRUSTED_PROXIES", "")),
+		statsTTL:       defaultStatsTTL,
 	}
 	// Seed the advertised version from the env; the poller below overrides it
 	// with the newest GitHub release once it can reach the API.

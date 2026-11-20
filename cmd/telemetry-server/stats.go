@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -101,10 +102,12 @@ type statsData struct {
 	Features          []statsBucket
 }
 
-// computeStats runs every dashboard query and returns one assembled snapshot.
+// queryStats runs every dashboard query and returns one assembled snapshot.
 // All counts are scoped to the active-30-day window except Total and the
-// recent-7d cohort.
-func (s *server) computeStats(ctx context.Context) (*statsData, error) {
+// recent-7d cohort. Handlers go through computeStats (stats_cache.go), which
+// caches the result; the snapshot is shared, so nothing may modify it after
+// this returns.
+func (s *server) queryStats(ctx context.Context) (*statsData, error) {
 	now := time.Now().UTC()
 	cutoff := now.Add(-30 * 24 * time.Hour)
 	cutoff7d := now.Add(-7 * 24 * time.Hour)
@@ -386,7 +389,25 @@ func (s *server) computeStats(ctx context.Context) (*statsData, error) {
 		d.VersionTrend = append(d.VersionTrend, vd)
 	}
 
+	// Stable order for legend rendering: queryBuckets already sorts by count
+	// desc; ties are broken alphabetically here so the page is deterministic.
+	// Done once here rather than in handleStatsPage because the snapshot is
+	// cached and shared between concurrent requests.
+	for _, bs := range [][]statsBucket{d.Versions, d.OS, d.Arch, d.Deploy} {
+		sortBucketsStable(bs)
+	}
+
 	return d, nil
+}
+
+// sortBucketsStable orders buckets by count desc, then label asc.
+func sortBucketsStable(bs []statsBucket) {
+	sort.SliceStable(bs, func(i, j int) bool {
+		if bs[i].Count != bs[j].Count {
+			return bs[i].Count > bs[j].Count
+		}
+		return bs[i].Label < bs[j].Label
+	})
 }
 
 // statsTokenValid reports whether the request carries the stats bearer token.
