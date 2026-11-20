@@ -305,6 +305,12 @@ func TestAddManualBook_RejectsBadRequests(t *testing.T) {
 		"series too long":       {"title": "T", "authorName": "A", "seriesTitle": long},
 		"position too long":     {"title": "T", "authorName": "A", "seriesTitle": "S", "seriesPosition": long},
 		"title is not a string": {"title": 7, "authorName": "A"},
+		"newline in title":      {"title": "Two\nLines", "authorName": "A"},
+		"tab in author":         {"title": "T", "authorName": "A\tB"},
+		"NUL in series":         {"title": "T", "authorName": "A", "seriesTitle": "S\x00"},
+		"C1 control in title":   {"title": "T\u0085U", "authorName": "A"},
+		"script position":       {"title": "T", "authorName": "A", "seriesTitle": "S", "seriesPosition": "abc<script>"},
+		"word position":         {"title": "T", "authorName": "A", "seriesTitle": "S", "seriesPosition": "first"},
 	}
 	for name, body := range cases {
 		if rec := f.post(t, context.Background(), body); rec.Code != http.StatusBadRequest {
@@ -536,5 +542,97 @@ func TestAddManualBook_AdminDoesNotLandInAnotherUsersLibrary(t *testing.T) {
 	}
 	if second := post("T2"); second.AuthorID != first.AuthorID {
 		t.Errorf("second book under author %d, want the admin's author %d", second.AuthorID, first.AuthorID)
+	}
+}
+
+// The messages name the field, so the form can say what to fix.
+func TestAddManualBook_ValidationMessages(t *testing.T) {
+	f := newManualBookFixture(t)
+	for body, want := range map[string]string{
+		`{"title":"a\nb","authorName":"A"}`:                                     "title must not contain control characters",
+		`{"title":"T","authorName":"A\u0000"}`:                                  "authorName must not contain control characters",
+		`{"title":"T","authorName":"A","seriesTitle":"S","seriesPosition":"x"}`: "seriesPosition must be a number",
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book/manual", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		f.h.AddManualBook(rec, req)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("%s: status %d body %s, want 400 with %q", body, rec.Code, rec.Body.String(), want)
+		}
+	}
+}
+
+// Positions the series code reads are accepted, and inner white space in the
+// typed fields collapses to one space.
+func TestAddManualBook_AcceptsPositionsAndCollapsesSpaces(t *testing.T) {
+	f := newManualBookFixture(t)
+	ctx := context.Background()
+	for i, pos := range []string{"1", "1.5", "0.5", "2-3", "2 \u2013 3"} {
+		rec := f.post(t, ctx, map[string]any{
+			"title": "Story " + string(rune('A'+i)), "authorName": "Pos Author", "seriesTitle": "Pos Series", "seriesPosition": pos,
+		})
+		if rec.Code != http.StatusCreated {
+			t.Errorf("position %q: status %d, want 201: %s", pos, rec.Code, rec.Body.String())
+		}
+	}
+	book := decodeManualBook(t, f.post(t, ctx, map[string]any{"title": "  Two   Spaces\u00a0Here ", "authorName": " Spacey   Author "}))
+	if book.Title != "Two Spaces Here" {
+		t.Errorf("title = %q, want inner white space collapsed", book.Title)
+	}
+	author, err := f.authors.GetByID(ctx, book.AuthorID)
+	if err != nil || author == nil || author.Name != "Spacey Author" {
+		t.Errorf("author = %+v, %v, want the collapsed name", author, err)
+	}
+}
+
+// The duplicate check is an exact match on the normalised title. A subtitle or
+// prefix variant is a different book the user typed on purpose, though Add Book
+// would treat it as the same work. Case, Unicode form and no-break spaces are
+// still the same title.
+func TestAddManualBook_OnlyAnExactTitleIsADuplicate(t *testing.T) {
+	f := newManualBookFixture(t)
+	ctx := context.Background()
+	author := seedLibraryAuthor(t, f.authors, "OL1A", "Brandon Sanderson")
+	seed := func(title string) *models.Book {
+		b := &models.Book{
+			ForeignID: "OL-" + title, AuthorID: author.ID, Title: title, SortTitle: title,
+			Status: models.BookStatusWanted, Genres: []string{}, MediaType: models.MediaTypeEbook, MetadataProvider: "openlibrary",
+		}
+		if err := f.books.Create(ctx, b); err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	mistborn := seed("Mistborn")
+	cafe := seed("Caf\u00e9 Society") // NFC
+
+	for _, title := range []string{"Mistborn: Secret History", "Mistborn: The Final Empire", "Cafe Society: A Tale"} {
+		rec := f.post(t, ctx, map[string]any{"title": title, "authorId": author.ID})
+		if rec.Code != http.StatusCreated {
+			t.Errorf("%q: status %d, want 201 (a subtitle variant is a different book): %s", title, rec.Code, rec.Body.String())
+		}
+	}
+
+	for _, tc := range []struct {
+		title string
+		want  int64
+	}{
+		{"MISTBORN", mistborn.ID},
+		{"  mistborn  ", mistborn.ID},
+		{"Mistborn (Unabridged)", mistborn.ID}, // the key drops a bracket suffix
+		{"Cafe\u0301 Society", cafe.ID},        // NFD
+		{"Caf\u00e9\u00a0Society", cafe.ID},    // no-break space
+	} {
+		rec := f.post(t, ctx, map[string]any{"title": tc.title, "authorId": author.ID})
+		if rec.Code != http.StatusConflict {
+			t.Errorf("%q: status %d, want 409: %s", tc.title, rec.Code, rec.Body.String())
+			continue
+		}
+		var conflict struct {
+			ExistingBookID int64 `json:"existingBookId"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &conflict); err != nil || conflict.ExistingBookID != tc.want {
+			t.Errorf("%q: existingBookId = %d (%v), want %d", tc.title, conflict.ExistingBookID, err, tc.want)
+		}
 	}
 }

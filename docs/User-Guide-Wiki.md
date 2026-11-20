@@ -341,8 +341,10 @@ you already have the file for).
   Edit the book as usual to fill in the rest. To link it to a real record
   later, use **Re-bind** on the book page.
 
-If the author already has a book with that title, the add is refused with a
-link to the existing one. The same title at a different position in the same
+If the author already has a book with that exact title (ignoring case,
+spacing and a bracketed suffix such as "(Unabridged)"), the add is refused with
+a link to the existing one. A title with a subtitle, such as "Mistborn: Secret
+History" beside "Mistborn", counts as a different book. The same title at a different position in the same
 series counts as a different book.
 
 Two settings decide whether an author add stays a trickle or becomes a flood:

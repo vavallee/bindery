@@ -160,7 +160,10 @@ spelling later reuses it. The book gets a `manual:book:<uuid>` id and
 empty.
 `seriesTitle` joins the series of that title the author is already in, else any
 series of that title in the caller's library, else a new hand-made series;
-`seriesPosition` needs a `seriesTitle`. A file already in the library for the
+`seriesPosition` needs a `seriesTitle` and is a number such as `1` or `1.5`, or
+a range such as `2-3`. `title`, `authorName` and `seriesTitle` are trimmed, have
+runs of white space collapsed to one space, and may not contain control
+characters or line breaks. A file already in the library for the
 title is bound to the book as for any added book, and then `searchOnAdd` does
 not search.
 
@@ -174,10 +177,13 @@ one to a provider work, and Add Author or `relink-upstream` relinks such an
 author in place, as for a Calibre or Audiobookshelf placeholder.
 
 It answers **201** with the book, **409** with the body above when the author
-already has a book with that title (a different `seriesPosition` in the same
-series is a different book), **404** when `authorId` names no author the caller
-can see, and **400** for a missing or invalid field or one longer than 500
-bytes. Requesters cannot call it.
+already has a book with that exact title (the same after case, Unicode form,
+white space, punctuation and bracketed suffix such as "(Unabridged)" are folded;
+unlike Add Book, a subtitle or prefix variant such as "Mistborn: Secret History"
+beside "Mistborn" is a different book and is accepted; a different
+`seriesPosition` in the same series is also a different book), **404** when `authorId` names no author the caller
+can see, and **400** for a missing or invalid field, a control character, a
+malformed `seriesPosition`, or a field longer than 500 bytes. Requesters cannot call it.
 
 To change the format or monitoring of a book you already have (for example an
 imported ebook you now also want as an audiobook), update it through

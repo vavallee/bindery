@@ -131,6 +131,8 @@ func TestEnrichAuthorAmbiguityOnlyForUnlinkedAuthor(t *testing.T) {
 
 // A book added by hand (#3840) is left on its manual identity: an import that
 // matches it by title must not relink it to the one provider work that fits.
+// bookWantsProviderIdentity only shapes the ambiguity message, so the early
+// return in enrichBook is what stops the relink: without it this test fails.
 func TestEnrichBookLeavesManualBookOnItsOwnIdentity(t *testing.T) {
 	importer, author, book := ambiguityFixture(t, "manual:book:abc", models.ManualMetadataProvider, prideWorks("OL-W1"))
 	if got := enrichMessages(t, importer, author, book); got != "" {

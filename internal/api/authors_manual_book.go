@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/textutil"
 )
@@ -61,10 +64,23 @@ func (h *AuthorHandler) AddManualBook(w http.ResponseWriter, r *http.Request) {
 	req.AuthorName = strings.TrimSpace(req.AuthorName)
 	req.SeriesTitle = strings.TrimSpace(req.SeriesTitle)
 	req.SeriesPosition = strings.TrimSpace(req.SeriesPosition)
+	for _, field := range []struct{ name, value string }{
+		{"title", req.Title}, {"authorName", req.AuthorName}, {"seriesTitle", req.SeriesTitle}, {"seriesPosition", req.SeriesPosition},
+	} {
+		if containsControlChar(field.value) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": field.name + " must not contain control characters or line breaks"})
+			return
+		}
+	}
 	if msg := validateManualBookRequest(req.Title, req.AuthorID, req.AuthorName, req.SeriesTitle, req.SeriesPosition, req.MediaType); msg != "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
+
+	// Valid, so collapse runs of spaces, including no-break spaces, to one.
+	req.Title = collapseSpaces(req.Title)
+	req.AuthorName = collapseSpaces(req.AuthorName)
+	req.SeriesTitle = collapseSpaces(req.SeriesTitle)
 
 	ctx := r.Context()
 	scopeID := auth.ListScopeUserID(ctx)
@@ -91,14 +107,25 @@ func (h *AuthorHandler) AddManualBook(w http.ResponseWriter, r *http.Request) {
 	if req.SeriesTitle != "" {
 		seriesRefs = []models.SeriesRef{{Title: req.SeriesTitle, Position: req.SeriesPosition}}
 	}
-	match, err := h.books.FindByAuthorAndDedupKeyVisibleTo(ctx, author.ID, req.Title, scopeID)
+	//
+	// Only an exact key match counts here. Add Book also treats a subtitle or
+	// prefix variant as the same work, which is right for a provider record
+	// but wrong for a title the user typed on purpose: "Mistborn: Secret
+	// History" is not "Mistborn".
+	candidates, err := h.books.FindAllByAuthorAndDedupKeyVisibleTo(ctx, author.ID, req.Title, scopeID)
 	if err != nil {
 		writeServerError(w, r, err)
 		return
 	}
-	if match != nil && !h.directInsertSeriesConflict(ctx, match.ID, seriesRefs) {
-		h.writeExistingBookConflict(w, match, false)
-		return
+	wantKey := indexer.CanonicalDedupKey(req.Title)
+	for i := range candidates {
+		if indexer.CanonicalDedupKey(candidates[i].Title) != wantKey {
+			continue
+		}
+		if !h.directInsertSeriesConflict(ctx, candidates[i].ID, seriesRefs) {
+			h.writeExistingBookConflict(w, &candidates[i], false)
+			return
+		}
 	}
 
 	mediaType := req.MediaType
@@ -168,6 +195,8 @@ func validateManualBookRequest(title string, authorID int64, authorName, seriesT
 		return "authorName must contain a letter or a digit"
 	case seriesPosition != "" && seriesTitle == "":
 		return "seriesPosition needs a seriesTitle"
+	case seriesPosition != "" && !manualSeriesPositionRe.MatchString(seriesPosition):
+		return "seriesPosition must be a number such as 1 or 1.5, or a range such as 2-3"
 	}
 	for _, field := range []struct{ name, value string }{
 		{"title", title}, {"authorName", authorName}, {"seriesTitle", seriesTitle}, {"seriesPosition", seriesPosition},
@@ -182,6 +211,21 @@ func validateManualBookRequest(title string, authorID int64, authorName, seriesT
 		return "mediaType must be 'ebook', 'audiobook', or 'both'"
 	}
 	return ""
+}
+
+// manualSeriesPositionRe is a series position as the series code reads one: a
+// number with an optional decimal part, or a range of two such numbers.
+var manualSeriesPositionRe = regexp.MustCompile(`^\d{1,4}(?:\.\d{1,2})?(?:\s*[-\x{2013}]\s*\d{1,4}(?:\.\d{1,2})?)?$`)
+
+// containsControlChar reports a C0 or C1 control character, which includes
+// tabs, line breaks and NUL.
+func containsControlChar(s string) bool {
+	return strings.IndexFunc(s, unicode.IsControl) >= 0
+}
+
+// collapseSpaces trims s and replaces each run of white space with one space.
+func collapseSpaces(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 var errManualBookAuthorNotFound = errors.New("manual book: author not found")
