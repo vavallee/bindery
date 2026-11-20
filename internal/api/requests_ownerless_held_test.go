@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/auth"
@@ -77,14 +78,39 @@ func TestRequestsCreate_AutoApproveOwnerlessCoveredBookIsNotSearched(t *testing.
 }
 
 // A requester asking for a missing format of a shared book is answered as for
-// another account's book: already in the library.
+// another account's book: refused, with the ask an admin sentence.
 func TestRequestsCreate_OwnerlessMissingFormatAnswersLikeHeldElsewhere(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
 	seedOwnerlessEbook(t, f)
 	rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W","mediaType":"audiobook"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("create: %d %s, want 409", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict || requestErrorBody(rec) != bookHeldCreateMessage {
+		t.Fatalf("create: %d %q, want 409 with %q", rec.Code, requestErrorBody(rec), bookHeldCreateMessage)
+	}
+}
+
+// An admin files for a requester who auto approves, for a missing format of a
+// shared book. The admin may file it, but the approval acts as the requester,
+// so the request stays pending and the book is neither monitored nor searched.
+func TestRequestsCreate_ForUserAutoApproveOwnerlessBookStaysPending(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	adder := &fakeAdder{}
+	f := newRequestsFixture(t, wellsRequestStub(), adder)
+	setAutoApprove(t, f, f.requester.ID, true)
+	book := seedOwnerlessEbook(t, f)
+	before, _ := f.books.GetByID(context.Background(), book.ID)
+	rec := f.create(t, f.admin, `{"kind":"book","foreignId":"OL27482W","mediaType":"audiobook","forUser":`+strconv.FormatInt(f.requester.ID, 10)+`}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create for user: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := decodeRequest(t, rec); got.Status != models.RequestStatusPending {
+		t.Fatalf("status %q, want pending", got.Status)
+	}
+	if n := addCalls(adder); n != 0 {
+		t.Fatalf("add core ran %d times for a shared book", n)
+	}
+	if after, _ := f.books.GetByID(context.Background(), book.ID); !reflect.DeepEqual(before, after) {
+		t.Fatalf("shared book changed: %+v -> %+v", before, after)
 	}
 }
 

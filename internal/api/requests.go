@@ -915,8 +915,11 @@ func (h *RequestHandler) alreadyInLibrary(ctx context.Context, owner int64, kind
 		// the row (#3835). Only a book that is covered or held elsewhere
 		// refuses.
 		if b != nil {
-			if outcome, _, _ := existingBookOutcomeFor(ctx, b, owner, h.effectiveMediaType(ctx, mediaType)); outcome != outcomeWiden {
+			switch outcome, _, _ := existingBookOutcomeFor(ctx, b, owner, h.effectiveMediaType(ctx, mediaType)); outcome {
+			case outcomeCovered:
 				return "This book is already in the library.", nil
+			case outcomeRefused:
+				return bookHeldCreateMessage, nil
 			}
 		}
 	case models.RequestKindAuthor:
@@ -1052,6 +1055,10 @@ func existingBookOutcomeFor(ctx context.Context, book *models.Book, owner int64,
 // errBookHeldElsewhere is an approval that needs a format added to a book that
 // belongs to another account.
 var errBookHeldElsewhere = errors.New("book held by another account")
+
+// bookHeldCreateMessage answers a request for a missing format of a book the
+// requester cannot change: another account's, or a shared one with tenancy on.
+const bookHeldCreateMessage = "This book is in a shared library you can't change, so ask an admin to add that format."
 
 const (
 	bookHeldElsewhereMessage = "This book is already in the library under another account and does not have the requested format, so approving cannot add it. Decline the request instead."
