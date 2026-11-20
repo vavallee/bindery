@@ -5,7 +5,6 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 )
@@ -32,8 +31,8 @@ func renderBarChart(buckets []statsBucket, maxBars int, pinLabel string) string 
 		return `<p class="empty">No data yet.</p>`
 	}
 	if maxBars > 0 && len(buckets) > maxBars {
-		// Copy so we can mutate without surprising the caller (other charts
-		// reuse the same slices indirectly via stable-sort in handleStatsPage).
+		// Copy so we can mutate without surprising the caller: the slices
+		// belong to the cached statsData shared by concurrent requests.
 		work := make([]statsBucket, len(buckets))
 		copy(work, buckets)
 		buckets = work
@@ -432,21 +431,6 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stable order for legend-rendering: queryBuckets already sorts by count
-	// desc; ties are broken alphabetically here so the page is deterministic.
-	stable := func(bs []statsBucket) {
-		sort.SliceStable(bs, func(i, j int) bool {
-			if bs[i].Count != bs[j].Count {
-				return bs[i].Count > bs[j].Count
-			}
-			return bs[i].Label < bs[j].Label
-		})
-	}
-	stable(d.Versions)
-	stable(d.OS)
-	stable(d.Arch)
-	stable(d.Deploy)
-
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if _, err := fmt.Fprintf(w, `<!doctype html>
 <html lang="en">
@@ -578,7 +562,7 @@ func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
   </section>
 
   <footer>
-    Generated %s. Data refreshes on every page load.
+    Generated %s. Figures are recomputed at most once a minute.
   </footer>
 </div>
 </body>
