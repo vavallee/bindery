@@ -911,7 +911,7 @@ and waits for Match to book or Retry import) and **Failed**. A state chip with
 nothing in it is hidden. Failed also holds the rows Needs attention shows, plus
 downloads that never produced a file. The chosen chip is kept in the address
 (`/queue?view=held`), and the older `?view=active` and `?view=failed` links work
-as before. History records every grab/import/failure and can
+as before. A **Handed off** row has a **Scan library** button (admins only): it runs the same library scan as Settings, which is what picks up the file your External import tool placed and settles the row. It scans the whole library, since there is no narrower scan, and says so if a scan is already running. Held rows have nothing to act on until the paired format arrives, and Needs attention rows keep Match to book and Retry import. History records every grab/import/failure and can
 blocklist a bad release in one click. A release NZBGet or SABnzbd fails as
 broken (missing articles, a failed repair or unpack, a corrupt archive) is
 blocklisted for you, with the client's verdict as the reason, so the next

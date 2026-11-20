@@ -1,0 +1,2 @@
+### Added
+- A Queue row handed off to your external import tool now has a Scan library button, so the next step is on the row instead of only Remove (#3993). It runs the same library scan as Settings and the row updates once the scan has picked up the file. The button is shown to admins, because the scan walks the whole library. Held rows have no action of their own to offer, and Needs attention rows already carry Match to book and Retry import.

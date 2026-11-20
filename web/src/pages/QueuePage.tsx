@@ -20,10 +20,14 @@ import BulkActionBar from '../components/BulkActionBar'
 import FilterBar from '../components/FilterBar'
 import EmptyState from '../components/EmptyState'
 import Checkbox from '../components/Checkbox'
+import { useIsAdmin } from '../auth/AuthContext'
 
 export default function QueuePage() {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
+  // The library scan is one library wide walk, not a per row call, and its
+  // status is admin only on the server. The button follows that (#3993).
+  const isAdmin = useIsAdmin()
   const [queue, setQueue] = useState<QueueItem[]>([])
   // The queue envelope's partial flag and the clients behind it (#2376). The
   // API has always sent these; the page threw them away, so an unreachable
@@ -36,6 +40,7 @@ export default function QueuePage() {
   const [grabbingPending, setGrabbingPending] = useState<number | null>(null)
   const [retryingImportIds, setRetryingImportIds] = useState<Set<number>>(() => new Set())
   const [retryImportErrors, setRetryImportErrors] = useState<Record<number, string>>({})
+  const [scanErrors, setScanErrors] = useState<Record<number, string>>({})
   const [matchMessages, setMatchMessages] = useState<Record<number, string>>({})
   const [deleteTarget, setDeleteTarget] = useState<QueueItem | null>(null)
   const [deleteFiles, setDeleteFiles] = useState(false)
@@ -227,6 +232,36 @@ export default function QueuePage() {
       setRetryImportErrors(prev => ({
         ...prev,
         [id]: errorText(e, t('queue.retryFailed', 'Retry failed')),
+      }))
+    } finally {
+      setRetryingImportIds(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
+  // handleScanLibrary is the next step for a handed off row (#3993): the
+  // external import tool files the book on its own schedule, and the library
+  // scan is what picks the result up and settles the row. It is the same call
+  // the Settings scan button makes; there is no narrower endpoint. Busy state
+  // and the success note share the per-row slots the other row actions use.
+  const handleScanLibrary = async (id: number) => {
+    setRetryingImportIds(prev => new Set(prev).add(id))
+    setScanErrors(prev => { const n = { ...prev }; delete n[id]; return n })
+    setMatchMessages(prev => { const n = { ...prev }; delete n[id]; return n })
+    try {
+      const res = await api.triggerLibraryScan()
+      const message = res?.queued
+        ? t('queue.scanQueued', 'A scan is already running. Another one starts as soon as it finishes.')
+        : t('queue.scanStarted', 'Library scan started. This row updates once the scan has picked up the file.')
+      setMatchMessages(prev => ({ ...prev, [id]: message }))
+      load()
+    } catch (e) {
+      setScanErrors(prev => ({
+        ...prev,
+        [id]: errorText(e, t('queue.scanFailedFallback', 'Scan failed')),
       }))
     } finally {
       setRetryingImportIds(prev => {
@@ -627,6 +662,11 @@ export default function QueuePage() {
                         {t('queue.retryImportError', { error: retryImportErrors[item.id] })}
                       </div>
                     )}
+                    {scanErrors[item.id] && (
+                      <div role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400 bg-red-400/10 rounded px-2 py-1 break-words">
+                        {t('queue.scanError', { error: scanErrors[item.id], defaultValue: 'Scan failed: {{error}}' })}
+                      </div>
+                    )}
                     {matchMessages[item.id] && (
                       <div className="mt-1 text-xs text-accent-text bg-emerald-400/10 rounded px-2 py-1 break-words">
                         {matchMessages[item.id]}
@@ -677,6 +717,18 @@ export default function QueuePage() {
                         className="px-3 py-2 text-xs bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 rounded font-medium touch-manipulation"
                       >
                         {retryingImportIds.has(item.id) ? t('queue.retryingDownload') : t('queue.retryDownload')}
+                      </button>
+                    )}
+                    {item.status === 'importExternal' && isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleScanLibrary(item.id)}
+                        disabled={retryingImportIds.has(item.id)}
+                        aria-label={t('queue.scanLibraryFor', { title: item.title, defaultValue: 'Scan library for {{title}}' })}
+                        title={t('queue.scanLibraryHint', 'Runs a library scan so the file the external tool placed is picked up.')}
+                        className="px-3 py-2 text-xs bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 rounded font-medium touch-manipulation"
+                      >
+                        {retryingImportIds.has(item.id) ? t('queue.scanningLibrary', 'Scanning…') : t('queue.scanLibrary', 'Scan library')}
                       </button>
                     )}
                     <button

@@ -24,14 +24,23 @@ vi.mock('../api/client', async importOriginal => {
       grabPending: vi.fn(),
       listAllBooks: vi.fn(),
       matchDownload: vi.fn(),
+      triggerLibraryScan: vi.fn(),
     },
   }
 })
+
+const authState = { isAdmin: true }
+vi.mock('../auth/AuthContext', async importOriginal => ({
+  ...await importOriginal<typeof import('../auth/AuthContext')>(),
+  useIsAdmin: () => authState.isAdmin,
+}))
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
       if (key === 'queue.remaining') return `${String(options?.time)} remaining`
+      if (key === 'queue.scanLibraryFor') return `Scan library for ${String(options?.title)}`
+      if (key === 'queue.scanLibrary') return 'Scan library'
       if (key === 'queue.selectItem') return `Select ${String(options?.title)}`
       if (key === 'queue.pendingHeading') return `Pending Releases (${String(options?.n)})`
       const labels: Record<string, string> = {
@@ -1094,6 +1103,81 @@ describe('QueuePage status view', () => {
     await screen.findByText('queue.viewStateEmpty')
     const view = screen.getByRole('group', { name: 'queue.statusView' })
     expect(within(view).getByRole('button', { name: 'queue.viewHeld' })).toBeInTheDocument()
+  })
+
+  // #3993: the next action for a handed off row.
+  describe('Scan library on handed off rows', () => {
+    beforeEach(() => { authState.isAdmin = true })
+
+    it('shows the action only on handed off rows', async () => {
+      vi.mocked(api.listQueue).mockResolvedValue({ items: [
+        makeQueueItem({ id: 1, title: 'Elsewhere', status: 'importExternal' }),
+        makeQueueItem({ id: 2, title: 'Parked', status: 'importHeld' }),
+        makeQueueItem({ id: 3, title: 'Stuck', status: 'importBlocked' }),
+        makeQueueItem({ id: 4, title: 'Going', status: 'downloading' }),
+        makeQueueItem({ id: 5, title: 'Broken', status: 'failed' }),
+      ] })
+      renderQueuePage()
+      await screen.findByText('Elsewhere')
+      expect(screen.getAllByRole('button', { name: /^Scan library for / })).toHaveLength(1)
+      expect(screen.getByRole('button', { name: 'Scan library for Elsewhere' })).toBeInTheDocument()
+    })
+
+    it('hides the action from a non admin', async () => {
+      authState.isAdmin = false
+      vi.mocked(api.listQueue).mockResolvedValue({ items: [
+        makeQueueItem({ id: 1, title: 'Elsewhere', status: 'importExternal' }),
+      ] })
+      renderQueuePage()
+      await screen.findByText('Elsewhere')
+      expect(screen.queryByRole('button', { name: /^Scan library for / })).toBeNull()
+    })
+
+    it('calls the library scan, disables while pending, then reports and refreshes', async () => {
+      vi.mocked(api.listQueue).mockResolvedValue({ items: [
+        makeQueueItem({ id: 1, title: 'Elsewhere', status: 'importExternal' }),
+      ] })
+      let resolve!: (v: { message: string }) => void
+      vi.mocked(api.triggerLibraryScan).mockReturnValue(new Promise(r => { resolve = r }))
+      renderQueuePage()
+      await screen.findByText('Elsewhere')
+      const calls = vi.mocked(api.listQueue).mock.calls.length
+      const btn = screen.getByRole('button', { name: 'Scan library for Elsewhere' })
+      fireEvent.click(btn)
+      expect(api.triggerLibraryScan).toHaveBeenCalledTimes(1)
+      expect(btn).toBeDisabled()
+      fireEvent.click(btn)
+      expect(api.triggerLibraryScan).toHaveBeenCalledTimes(1)
+      await act(async () => { resolve({ message: 'library scan started' }) })
+      expect(await screen.findByText('queue.scanStarted')).toBeInTheDocument()
+      expect(btn).not.toBeDisabled()
+      expect(vi.mocked(api.listQueue).mock.calls.length).toBeGreaterThan(calls)
+    })
+
+    it('says so when a scan is already running', async () => {
+      vi.mocked(api.listQueue).mockResolvedValue({ items: [
+        makeQueueItem({ id: 1, title: 'Elsewhere', status: 'importExternal' }),
+      ] })
+      vi.mocked(api.triggerLibraryScan).mockResolvedValue({ message: 'queued', queued: true })
+      renderQueuePage()
+      await screen.findByText('Elsewhere')
+      fireEvent.click(screen.getByRole('button', { name: 'Scan library for Elsewhere' }))
+      expect(await screen.findByText('queue.scanQueued')).toBeInTheDocument()
+    })
+
+    it('shows the failure on the row and re-enables the button', async () => {
+      vi.mocked(api.listQueue).mockResolvedValue({ items: [
+        makeQueueItem({ id: 1, title: 'Elsewhere', status: 'importExternal' }),
+      ] })
+      vi.mocked(api.triggerLibraryScan).mockRejectedValue(new Error('scanner busy'))
+      renderQueuePage()
+      await screen.findByText('Elsewhere')
+      const btn = screen.getByRole('button', { name: 'Scan library for Elsewhere' })
+      fireEvent.click(btn)
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent('queue.scanError')
+      expect(btn).not.toBeDisabled()
+    })
   })
 
 })
