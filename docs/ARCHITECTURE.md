@@ -45,8 +45,11 @@ numbers and a matching author, never over a locked title and never for a book
 with no author name, which it is not even asked about (see
 [third-party-data.md](third-party-data.md#ranobedb)). It runs only where
 enrichment runs: on a freshly fetched book that is missing a description or a
-cover, so it titles books added after it is switched on. A book already in the
-library and an author refresh keep their titles.
+cover, so it titles books added after it is switched on. Existing books keep
+their titles. Two paths can still bring a RanobeDB title in for a book the
+library did not have: an author refresh that meets a work new to the library,
+and the explicit rebind of a book to another record, which takes that record's
+title wholesale.
 
 `metadata.audnex_region` picks the Audible marketplace audnex is asked (`us` by
 default; `ca`, `uk`, `au`, `fr`, `de`, `jp`, `it`, `in` and `es` are accepted). The

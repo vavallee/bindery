@@ -180,7 +180,7 @@ var settingDescriptors = []SettingDescriptor{
 	},
 	{
 		Key: SettingMetadataBookRanobeDB, Type: SettingTypeBool, Default: "false",
-		Description: "Give light novels their official English title from RanobeDB. It applies to books added after it is switched on, never to a book already in the library. A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a locked title. Two requests per book, paced to RanobeDB's 60 a minute. Off by default: while off, RanobeDB is sent no request. A change applies to the next metadata lookup, without a restart.",
+		Description: "Give light novels their official English title from RanobeDB. It applies to books added after it is switched on, and existing books keep their titles. A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a locked title. Two requests per book, paced to RanobeDB's 60 a minute. Off by default: while off, RanobeDB is sent no request. A change applies to the next metadata lookup, without a restart.",
 		State:       SettingStateActive,
 	},
 	{

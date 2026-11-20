@@ -262,6 +262,27 @@ Source: the RanobeDB API documentation, <https://ranobedb.org/api/docs/v0>
   from RanobeDB and carry its ODbL terms, attribution and share alike among
   them, when an operator redistributes the database. The setting's
   description names RanobeDB as the source.
+- **The Produced Work notice (ODbL 4.3).** Checked against the licence text at
+  <https://opendatacommons.org/licenses/odbl/1-0/>: a Produced Work does not
+  need the 4.2 notice, but anyone who publicly uses one must include a notice
+  "reasonably calculated to make any Person that uses, views, accesses,
+  interacts with, or is otherwise exposed to" it aware that the content came
+  from the database under the ODbL. The licence's example wording is:
+
+  > Contains information from [RanobeDB](https://ranobedb.org), which is made
+  > available here under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/).
+
+  Bindery carries it in the README and here. An operator who exposes their
+  library, through the web UI, the API or the OPDS feed, to people other than
+  themselves, with RanobeDB titles in it, is the one publicly using the work
+  and has to show this notice to those people. Bindery cannot do it for them:
+  there is no per book flag recording which title came from RanobeDB, so the
+  UI has no book detail line for it, and the OPDS feed
+  (`internal/opds/feed.go`) has no rights or attribution element, so it carries
+  no notice either. Wikidata's credit works per author because the author
+  records where a photo or bio came from; a book has no such record. An
+  operator who shares a library should leave this setting off or add the
+  notice where their users will see it.
 - **Rate.** The documentation sets no hard limit but asks for no more than 60
   requests a minute. The client in `internal/metadata/ranobedb` starts at most
   one request a second, one at a time, for the whole process, so it stays at
