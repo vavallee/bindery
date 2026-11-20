@@ -6,6 +6,8 @@ import { api, QualityProfile } from '../../api/client'
 import { inputCls, labelCls } from './formStyles'
 import { dangerLink, primaryFill } from '../../components/buttons'
 import FormatList from './FormatList'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import { EditorItem, partitionItems } from './qualitySummary'
 
 // EBOOK_FORMATS and AUDIOBOOK_FORMATS mirror formatTokens in
@@ -195,9 +197,11 @@ function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) 
         <label htmlFor={`${fid}-default`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
           {t('settings.quality.defaultProfileLabel')}
         </label>
+        <FieldValue for={`${fid}-default`} value={profiles.find(p => p.id === effectiveDefault)?.name ?? ''} />
         <p className="text-xs text-fg-muted mb-2">{t('settings.quality.defaultProfileHint')}</p>
         <select
           id={`${fid}-default`}
+          aria-describedby={fieldValueId(`${fid}-default`)}
           value={effectiveDefault ?? ''}
           onChange={e => { void saveDefault(e.target.value) }}
           className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"

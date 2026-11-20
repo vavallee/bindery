@@ -2,13 +2,14 @@
 // ::before overlay widens the tap target to 44px square without changing the
 // 36x20 track.
 
-export default function Toggle({ checked, onChange, title, disabled, id }: { checked: boolean; onChange: () => void; title?: string; disabled?: boolean; id?: string }) {
+export default function Toggle({ checked, onChange, title, disabled, id, describedBy }: { checked: boolean; onChange: () => void; title?: string; disabled?: boolean; id?: string; describedBy?: string }) {
   return (
     <button
       id={id}
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-describedby={describedBy}
       onClick={onChange}
       title={title}
       disabled={disabled}

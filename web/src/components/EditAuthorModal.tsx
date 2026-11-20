@@ -4,6 +4,8 @@ import { api, Author, AuthorMonitorMode, MetadataProfile, MonitorNewItems, Quali
 import { useModal } from './useModal'
 import { primaryFill } from './buttons'
 import { authorSaveError } from '../util/authorSaveError'
+import FieldValue from '../pages/settings/FieldValue'
+import { fieldValueId } from '../pages/settings/fieldValueId'
 
 interface Props {
   author: Author
@@ -104,6 +106,16 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
     [authorSeries, selectedSet],
   )
 
+  // What each field holds right now, shown under its label (#3989). Read from
+  // the same state the control reads, so it moves with the control.
+  const monitorModeText = (m: AuthorMonitorMode) => ({
+    all: t('monitorMode.all', 'All books'),
+    future: t('monitorMode.future', 'Future books only (grows on refresh)'),
+    latest: t('monitorMode.latest', 'Latest only'),
+    none: t('monitorMode.none', 'None'),
+    series: t('monitorMode.series', 'By series'),
+  })[m]
+
   const save = async () => {
     // Build a patch with only the fields that actually changed — sending
     // unchanged values is functionally fine but produces noisy log lines.
@@ -201,7 +213,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               {qualityProfiles.length > 0 && (
                 <div className="mb-3">
                   <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.qualityProfile', 'Quality profile')}</label>
-                  <select id={`${fid}-1`}
+                  <FieldValue for={`${fid}-1`} value={qualityProfiles.find(p => p.id === qualityProfileId)?.name ?? t('common.qualityProfileNone')} />
+                  <select id={`${fid}-1`} aria-describedby={fieldValueId(`${fid}-1`)}
                     value={qualityProfileId ?? ''}
                     onChange={e => setQualityProfileId(e.target.value ? Number(e.target.value) : null)}
                     className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -223,7 +236,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               {metadataProfiles.length > 0 && (
                 <div className="mb-3">
                   <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.metadataProfile', 'Metadata profile')}</label>
-                  <select id={`${fid}-2`}
+                  <FieldValue for={`${fid}-2`} value={metadataProfiles.find(p => p.id === metadataProfileId)?.name} />
+                  <select id={`${fid}-2`} aria-describedby={fieldValueId(`${fid}-2`)}
                     value={metadataProfileId ?? ''}
                     onChange={e => setMetadataProfileId(e.target.value ? Number(e.target.value) : null)}
                     className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -237,7 +251,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               {rootFolders.length > 0 && (
                 <div className="mb-3">
                   <label htmlFor={`${fid}-3`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.rootFolder', 'Root folder')}</label>
-                  <select id={`${fid}-3`}
+                  <FieldValue for={`${fid}-3`} value={rootFolders.find(rf => rf.id === rootFolderId)?.path} />
+                  <select id={`${fid}-3`} aria-describedby={fieldValueId(`${fid}-3`)}
                     value={rootFolderId ?? ''}
                     onChange={e => setRootFolderId(e.target.value ? Number(e.target.value) : null)}
                     className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -251,7 +266,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               {rootFolders.length > 0 && (
                 <div className="mb-3">
                   <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.audiobookRootFolder', 'Audiobook root folder')}</label>
-                  <select id={`${fid}-4`}
+                  <FieldValue for={`${fid}-4`} value={rootFolders.find(rf => rf.id === audiobookRootFolderId)?.path ?? t('editAuthorModal.audiobookRootFolderDefault', 'Use global audiobook folder')} />
+                  <select id={`${fid}-4`} aria-describedby={fieldValueId(`${fid}-4`)}
                     value={audiobookRootFolderId ?? ''}
                     onChange={e => setAudiobookRootFolderId(e.target.value ? Number(e.target.value) : null)}
                     className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -266,7 +282,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               )}
               <div className="mb-3">
                 <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.monitorMode', 'Monitor mode')}</label>
-                <select id={`${fid}-5`}
+                <FieldValue for={`${fid}-5`} value={monitorModeText(monitorMode)} />
+                <select id={`${fid}-5`} aria-describedby={fieldValueId(`${fid}-5`)}
                   value={monitorMode}
                   onChange={e => setMonitorMode(e.target.value as AuthorMonitorMode)}
                   className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -280,7 +297,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               </div>
               <div className="mb-3">
                 <label htmlFor={`${fid}-6`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.monitorNewItems', 'Monitor newly discovered books')}</label>
-                <select id={`${fid}-6`}
+                <FieldValue for={`${fid}-6`} value={monitorNewItems === 'none' ? t('monitorNewItems.none', 'Don’t add them') : t('monitorNewItems.all', 'Follow monitor mode')} />
+                <select id={`${fid}-6`} aria-describedby={fieldValueId(`${fid}-6`)}
                   value={monitorNewItems}
                   onChange={e => setMonitorNewItems(e.target.value as MonitorNewItems)}
                   className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
@@ -300,7 +318,9 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                       {t('editAuthorModal.monitoredSeriesEmpty', 'No series found for this author yet. Refresh the author to pull series data first.')}
                     </p>
                   ) : (
-                    <div className="max-h-48 overflow-y-auto border border-slate-300 dark:border-zinc-700 rounded-md p-2 bg-slate-50 dark:bg-zinc-950">
+                    <>
+                    <FieldValue for={`${fid}-series`} value={monitoredSeriesIds.length > 0 ? t('settings.currentValue.seriesSelected', '{{count}} series selected', { count: monitoredSeriesIds.length }) : ''} />
+                    <div role="group" aria-label={t('editAuthorModal.monitoredSeries', 'Monitored series')} aria-describedby={fieldValueId(`${fid}-series`)} className="max-h-48 overflow-y-auto border border-slate-300 dark:border-zinc-700 rounded-md p-2 bg-slate-50 dark:bg-zinc-950">
                       {authorSeries.map(s => (
                         <label key={s.id} className="flex items-start gap-2 text-sm py-1 cursor-pointer select-none">
                           <input
@@ -325,6 +345,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                         </label>
                       ))}
                     </div>
+                    </>
                   )}
                   {selectedWithoutHardcover.length > 0 && (
                     <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
@@ -336,7 +357,8 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
               {monitorMode === 'latest' && (
                 <div className="mb-3">
                   <label htmlFor={`${fid}-7`} className="block text-xs text-fg-muted mb-1">{t('editAuthorModal.monitorLatestCount', 'Latest book count')}</label>
-                  <input id={`${fid}-7`}
+                  <FieldValue for={`${fid}-7`} value={String(monitorLatestCount)} />
+                  <input id={`${fid}-7`} aria-describedby={fieldValueId(`${fid}-7`)}
                     type="number"
                     min={1}
                     value={monitorLatestCount}

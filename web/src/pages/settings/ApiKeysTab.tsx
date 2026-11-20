@@ -5,6 +5,8 @@ import ClipboardManualFallback from '../../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../../components/useClipboardCopy'
 import SaveButton from './SaveButton'
 import Toggle from './Toggle'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import { useSaveResult } from './useSaveResult'
 import { secretInputAttrs } from '../../util/inputAttrs'
 import { slateFill } from '../../components/buttons'
@@ -193,9 +195,12 @@ export default function ApiKeysTab() {
                     : t('settings.general.hardcoverTokenNotConfigured', 'No token configured')}
                 </span>
               </div>
+              <FieldValue for={`${fid}-hc-token`} value={hardcoverTokenConfigured ? 'configured' : ''} secret />
               <div className="flex flex-wrap gap-2">
                 <input
                   {...secretInputAttrs}
+                  id={`${fid}-hc-token`}
+                  aria-describedby={fieldValueId(`${fid}-hc-token`)}
                   value={hardcoverToken}
                   onChange={e => setHardcoverToken(e.target.value)}
                   placeholder={hardcoverTokenConfigured
@@ -253,6 +258,7 @@ export default function ApiKeysTab() {
                 <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">
                   {t('settings.general.enhancedHardcoverSeries', 'Enhanced Hardcover series')}
                 </label>
+                <FieldValue for="enhanced-hardcover-series" value={enhancedHardcoverAdminEnabled ? t('settings.currentValue.enabled', 'On') : t('settings.currentValue.disabled', 'Off')} flush />
                 <p className="text-xs text-fg-muted mt-0.5">
                   {t('settings.general.enhancedHardcoverSeriesHint', 'Use Hardcover-backed series matching, catalog diffs, and missing-book fill.')}
                 </p>
@@ -261,6 +267,7 @@ export default function ApiKeysTab() {
                 </p>
               </div>
               <Toggle
+                describedBy={fieldValueId('enhanced-hardcover-series')}
                 checked={enhancedHardcoverAdminEnabled}
                 onChange={toggleEnhancedHardcover}
                 disabled={saving === 'hardcover.enhanced_series_enabled'}

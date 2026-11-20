@@ -6,6 +6,8 @@ import { api, AuthorMonitorMode, MetadataProfile, MonitorNewItems } from '../../
 import { inputCls } from './formStyles'
 import { dangerLink, primaryFill } from '../../components/buttons'
 import Toggle from './Toggle'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 
 function isAuthorMonitorMode(value: string): value is AuthorMonitorMode {
   return value === 'all' || value === 'future' || value === 'latest' || value === 'none'
@@ -104,6 +106,28 @@ export default function MetadataTab() {
   const fid = useId()
   const { t, i18n } = useTranslation()
   const autoSave = useAutoSave()
+  // Display text for the current-value subtitles (#3989): the same words the
+  // controls use, never the stored keys.
+  const providerLabel = (v: string) => {
+    switch (v) {
+      case 'dnb': return t('settings.currentValue.provider.dnb', 'DNB (Deutsche Nationalbibliothek)')
+      case 'nb': return t('settings.currentValue.provider.nb', 'Nasjonalbiblioteket')
+      case 'bnf': return t('settings.currentValue.provider.bnf', 'BnF (Bibliothèque nationale de France)')
+      case 'hardcover': return t('settings.currentValue.provider.hardcover', 'Hardcover')
+      default: return t('settings.currentValue.provider.openlibrary', 'OpenLibrary')
+    }
+  }
+  const mediaTypeLabel = (v: string) =>
+    v === 'audiobook' ? t('mediaType.audiobook', 'Audiobook') : v === 'both' ? t('mediaType.both', 'Both') : t('mediaType.ebook', 'Ebook')
+  const monitorModeLabel = (v: string) => {
+    switch (v) {
+      case 'future': return t('monitorMode.future', 'Future books only (grows on refresh)')
+      case 'latest': return t('monitorMode.latest', 'Latest only')
+      case 'none': return t('monitorMode.none', 'None')
+      default: return t('monitorMode.all', 'All books')
+    }
+  }
+  const onOff = (on: boolean) => on ? t('settings.currentValue.enabled', 'On') : t('settings.currentValue.disabled', 'Off')
   const mounted = useMounted()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [profiles, setProfiles] = useState<MetadataProfile[]>([])
@@ -213,10 +237,11 @@ export default function MetadataTab() {
           <label htmlFor={`${fid}-5`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.general.metadataProviderLabel', 'Primary metadata provider')}
           </label>
+          <FieldValue for={`${fid}-5`} value={settings['metadata.primary_provider'] ? providerLabel(settings['metadata.primary_provider']) : ''} defaultValue={providerLabel('openlibrary')} />
           <p className="text-xs text-fg-muted mb-2">
             {t('settings.general.metadataProviderHint', 'Selects the source used for author and book search, and decides what an author\'s catalogue looks like. DNB (Deutsche Nationalbibliothek) is recommended for German, Austrian, and Swiss catalogues — it covers German-language publications since 1913 where OpenLibrary coverage is thin. Nasjonalbiblioteket (the National Library of Norway) is recommended for Norwegian catalogues — it holds every Norwegian publication by legal deposit, under its original Norwegian title where OpenLibrary often has only the English translation. BnF (Bibliothèque nationale de France) is recommended for French-language libraries: legal deposit puts nearly every book published in France in its catalogue, under the French edition title, translator included, where OpenLibrary often has only the original English title. Contains data from the Bibliothèque nationale de France under the Licence Ouverte / Open Licence 2.0, with the date each record was retrieved shown on its book and author pages; BnF does not endorse Bindery. Hardcover is a curated catalogue: fewer translation editions, omnibus bundles, and non-book entries than OpenLibrary, at the cost of a thinner long tail. OpenLibrary remains the default. Whichever you pick, the other providers are still used as enrichers, except Nasjonalbiblioteket and BnF, which are only queried when chosen as the primary.')}
           </p>
-          <select id={`${fid}-5`}
+          <select id={`${fid}-5`} aria-describedby={fieldValueId(`${fid}-5`)}
             value={settings['metadata.primary_provider'] ?? 'openlibrary'}
             onChange={async e => {
               const next = e.target.value
@@ -314,10 +339,11 @@ export default function MetadataTab() {
             <label htmlFor={`${fid}-audnex-region`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.audnexRegionLabel', 'audnex marketplace')}
             </label>
+            <FieldValue for={`${fid}-audnex-region`} value={(() => { const r = AUDNEX_REGIONS.find(x => x.code === (AUDNEX_REGIONS.some(y => y.code === settings['metadata.audnex_region']) ? settings['metadata.audnex_region'] : 'us')); return r ? `${r.name} (${r.code})` : '' })()} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.audnexRegionHint', 'The Audible marketplace audnex looks an ASIN up in. An ASIN sold only on another marketplace, such as a German audiobook, is not found in the US one, so pick the one your audiobooks come from. Only this one marketplace is asked. Takes effect from the next lookup, with no restart.')}
             </p>
-            <select id={`${fid}-audnex-region`}
+            <select id={`${fid}-audnex-region`} aria-describedby={fieldValueId(`${fid}-audnex-region`)}
               value={AUDNEX_REGIONS.some(r => r.code === settings['metadata.audnex_region']) ? settings['metadata.audnex_region'] : 'us'}
               onChange={async e => {
                 const next = e.target.value
@@ -344,10 +370,11 @@ export default function MetadataTab() {
             <label htmlFor={`${fid}-6`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.defaultMediaTypeLabel', 'Default media type')}
             </label>
+            <FieldValue for={`${fid}-6`} value={mediaTypeLabel(settings['default.media_type'] ?? 'ebook')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.defaultMediaTypeHint', 'Applied to new authors, and to books you add on their own, when no explicit choice is made. Existing rows are unaffected: change authors with the Authors page bulk action, and books from the Books page with Set ebook, Set audiobook or Set both, which also covers your wanted list once Books is filtered to Wanted.')}
             </p>
-            <select id={`${fid}-6`}
+            <select id={`${fid}-6`} aria-describedby={fieldValueId(`${fid}-6`)}
               value={settings['default.media_type'] ?? 'ebook'}
               onChange={async e => {
                 const next = e.target.value
@@ -385,10 +412,11 @@ export default function MetadataTab() {
             <label htmlFor={`${fid}-7`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.defaultMonitorModeLabel', 'Default monitor mode')}
             </label>
+            <FieldValue for={`${fid}-7`} value={monitorModeLabel(isAuthorMonitorMode(settings['author.default_monitor_mode'] ?? '') ? settings['author.default_monitor_mode'] : 'all')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.defaultMonitorModeHint', 'Applied to newly added authors. Existing authors keep their current mode unless edited.')}
             </p>
-            <select id={`${fid}-7`}
+            <select id={`${fid}-7`} aria-describedby={fieldValueId(`${fid}-7`)}
               value={isAuthorMonitorMode(settings['author.default_monitor_mode'] ?? '') ? settings['author.default_monitor_mode'] : 'all'}
               onChange={async e => {
                 const next = e.target.value as AuthorMonitorMode
@@ -430,10 +458,11 @@ export default function MetadataTab() {
             <label htmlFor={`${fid}-9`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.defaultMonitorNewItemsLabel', 'Default for monitoring newly discovered books')}
             </label>
+            <FieldValue for={`${fid}-9`} value={settings['author.default_monitor_new_items'] === 'none' ? t('monitorNewItems.none', 'Don’t add them') : t('monitorNewItems.all', 'Follow monitor mode')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.defaultMonitorNewItemsHint', 'Applied to newly added authors. Choose whether a metadata refresh may add books it discovers later. Existing authors keep their own setting.')}
             </p>
-            <select id={`${fid}-9`}
+            <select id={`${fid}-9`} aria-describedby={fieldValueId(`${fid}-9`)}
               value={settings['author.default_monitor_new_items'] === 'none' ? 'none' : 'all'}
               onChange={async e => {
                 const next = e.target.value as MonitorNewItems
@@ -453,9 +482,11 @@ export default function MetadataTab() {
           <div id="autoGrab.enabled" className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.autoGrabLabel')}</label>
+              <FieldValue for="auto-grab-enabled" value={onOff((settings['autoGrab.enabled'] ?? 'true') !== 'false')} flush />
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.autoGrabHint')}</p>
             </div>
             <Toggle
+              describedBy={fieldValueId('auto-grab-enabled')}
               checked={(settings['autoGrab.enabled'] ?? 'true') !== 'false'}
               onChange={async () => {
                 const current = (settings['autoGrab.enabled'] ?? 'true').toLowerCase()
@@ -473,9 +504,11 @@ export default function MetadataTab() {
           <div id="recommendations.enabled" className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.recommendationsLabel')}</label>
+              <FieldValue for="recommendations-enabled" value={onOff((settings['recommendations.enabled'] ?? 'false') === 'true')} flush />
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.recommendationsHint')}</p>
             </div>
             <Toggle
+              describedBy={fieldValueId('recommendations-enabled')}
               checked={(settings['recommendations.enabled'] ?? 'false') === 'true'}
               onChange={async () => {
                 const current = (settings['recommendations.enabled'] ?? 'false').toLowerCase()
@@ -494,9 +527,11 @@ export default function MetadataTab() {
           <div id="metadata.author_enrichment.wikidata" className="flex items-center justify-between gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.authorWikidataLabel', 'Author photos and bios from Wikidata')}</label>
+              <FieldValue for="author-wikidata" value={onOff((settings['metadata.author_enrichment.wikidata'] ?? 'false') === 'true')} flush />
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.authorWikidataHint', 'Fills an author\'s missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author\'s library authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Lookups ride on the daily author refresh, and each photo and bio is credited on the author\'s page. While this is off, Wikimedia is sent no request.')}</p>
             </div>
             <Toggle
+              describedBy={fieldValueId('author-wikidata')}
               checked={(settings['metadata.author_enrichment.wikidata'] ?? 'false') === 'true'}
               onChange={async () => {
                 const current = (settings['metadata.author_enrichment.wikidata'] ?? 'false').toLowerCase()

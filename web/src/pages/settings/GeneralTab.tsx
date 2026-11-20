@@ -14,6 +14,8 @@ import { inputCls } from './formStyles'
 import RenameFilesModal from '../../components/RenameFilesModal'
 import NamingTemplateField from './NamingTemplateField'
 import SaveButton from './SaveButton'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import DatabaseCheckSection from './DatabaseCheckSection'
 import { useSaveResult } from './useSaveResult'
 import { btn, slateFill, primaryFill } from '../../components/buttons'
@@ -56,6 +58,26 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       case 'external': return t('settings.general.importMode.external', 'External')
     }
   }
+  // Display text for the current-value subtitles (#3989). The same labels the
+  // controls show, so a subtitle never names a setting key or a raw value.
+  const intervalLabel = (v: string) => {
+    const m = /^(\d+)(m|h)$/.exec(v)
+    if (!m) return v
+    const n = Number(m[1])
+    if (m[2] === 'm') return t('settings.general.interval.minutes', { count: n })
+    return n % 168 === 0 ? t('settings.general.interval.days', { count: n / 24 }) : t('settings.general.interval.hours', { count: n })
+  }
+  const cadenceLabel = (v: string) => {
+    switch (v) {
+      case 'off': return t('settings.general.discoveryOff')
+      case '24h': return t('settings.general.discoveryDaily')
+      case '168h': return t('settings.general.discoveryWeekly')
+      case '720h': return t('settings.general.discoveryMonthly')
+      default: return intervalLabel(v)
+    }
+  }
+  const contentCheckLabel = (m: 'off' | 'warn' | 'block') =>
+    m === 'off' ? t('settings.general.contentCheckOff') : m === 'block' ? t('settings.general.contentCheckBlock') : t('settings.general.contentCheckWarn')
   const { isAdmin } = useAuth()
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -374,6 +396,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
           <div id="import.mode">
             <label className="block text-xs text-fg-muted mb-1">{t('settings.general.importMode.label', 'Import Mode')}</label>
+            <FieldValue for="import-mode" value={settings['import.mode'] ? importModeLabel(importMode as 'auto') : ''} defaultValue={importModeLabel('auto')} />
             <p className="text-xs text-fg-muted mb-2">
               {/* JSX drops the newline between a text line and a following
                   <strong> on the next line, so each sentence that ends right
@@ -381,7 +404,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   ("the library.Auto (the default)"). */}
               <RichText text={t('settings.general.importMode.hint', 'How Bindery places completed downloads into the library. <b>Auto</b> (the default) hardlinks when the download folder and library share a volume, otherwise copies — either way the source stays in place so torrent seeding keeps working. <b>Move</b> relocates the source out of the download folder, which breaks seeding. Use <b>Hardlink</b> or <b>Copy</b> to force keeping the source file intact; Hardlink requires the download folder and library to be on the same filesystem/volume. Use <b>External</b> if another tool (Calibre, Grimmory, etc.) manages your library — Bindery grabs the download and stops; your tool processes it, then Bindery reconciles on the next library scan.')} components={{ b: <strong /> }} />
             </p>
-            <div className="flex gap-2 flex-wrap">
+            <div role="group" aria-label={t('settings.general.importMode.label', 'Import Mode')} aria-describedby={fieldValueId('import-mode')} className="flex gap-2 flex-wrap">
               {(['auto', 'move', 'copy', 'hardlink', 'external'] as const).map(m => (
                 <button
                   key={m}
@@ -417,11 +440,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="import-audiobook-mode" className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookImportMode')}
             </label>
+            <FieldValue for="import-audiobook-mode" value={audiobookModeSetting ? importModeLabel(audiobookModeSetting as 'auto') : ''} defaultValue={t('settings.general.audiobookImportModeSame')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.audiobookImportModeHint')}
             </p>
             <select
               id="import-audiobook-mode"
+              aria-describedby={fieldValueId('import-audiobook-mode')}
               data-testid="import-audiobook-mode"
               value={audiobookModeSetting}
               onChange={async e => {
@@ -465,11 +490,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="import-ebook-content-check" className="block text-xs text-fg-muted mb-1">
               {t('settings.general.ebookContentCheck')}
             </label>
+            <FieldValue for="import-ebook-content-check" value={contentCheckLabel(contentCheckMode(settings['import.ebook.content_check']))} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.ebookContentCheckHint')}
             </p>
             <select
               id="import-ebook-content-check"
+              aria-describedby={fieldValueId('import-ebook-content-check')}
               data-testid="import-ebook-content-check"
               value={contentCheckMode(settings['import.ebook.content_check'])}
               onChange={async e => {
@@ -488,11 +515,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="import-audiobook-content-check" className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookContentCheck')}
             </label>
+            <FieldValue for="import-audiobook-content-check" value={contentCheckLabel(contentCheckMode(settings['import.audiobook.content_check']))} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.audiobookContentCheckHint')}
             </p>
             <select
               id="import-audiobook-content-check"
+              aria-describedby={fieldValueId('import-audiobook-content-check')}
               data-testid="import-audiobook-content-check"
               value={contentCheckMode(settings['import.audiobook.content_check'])}
               onChange={async e => {
@@ -558,7 +587,8 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <div className="flex gap-6 flex-wrap">
                 <div id="import.drop_layout">
                   <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.general.dropLayout', 'Layout')}</label>
-                  <select id={`${fid}-1`}
+                  <FieldValue for={`${fid}-1`} value={(settings['import.drop_layout'] ?? 'flat') === 'templated' ? t('settings.general.dropLayoutTemplated', 'Templated ({Author}/{Title}…)') : t('settings.general.dropLayoutFlat', 'Flat (file in folder root)')} />
+                  <select id={`${fid}-1`} aria-describedby={fieldValueId(`${fid}-1`)}
                     value={settings['import.drop_layout'] ?? 'flat'}
                     onChange={async e => {
                       const v = e.target.value
@@ -573,7 +603,8 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 </div>
                 <div id="import.drop_link_mode">
                   <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.general.dropLinkMode', 'Placement')}</label>
-                  <select id={`${fid}-2`}
+                  <FieldValue for={`${fid}-2`} value={(settings['import.drop_link_mode'] ?? 'copy') === 'hardlink' ? t('settings.general.dropLinkHardlink', 'Hardlink (same filesystem)') : t('settings.general.dropLinkCopy', 'Copy')} />
+                  <select id={`${fid}-2`} aria-describedby={fieldValueId(`${fid}-2`)}
                     value={settings['import.drop_link_mode'] ?? 'copy'}
                     onChange={async e => {
                       const v = e.target.value
@@ -919,10 +950,11 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor={`${fid}-10`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.searchIntervalLabel')}
             </label>
+            <FieldValue for={`${fid}-10`} value={settings['search.interval'] ? intervalLabel(settings['search.interval']) : ''} defaultValue={intervalLabel('12h')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.searchIntervalHint')}
             </p>
-            <select id={`${fid}-10`}
+            <select id={`${fid}-10`} aria-describedby={fieldValueId(`${fid}-10`)}
               value={settings['search.interval'] ?? '12h'}
               onChange={async e => {
                 const next = e.target.value
@@ -955,10 +987,11 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor={`${fid}-11`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.hardcoverSyncIntervalLabel', 'Hardcover list sync interval')}
             </label>
+            <FieldValue for={`${fid}-11`} value={settings['hardcover.sync_interval'] ? intervalLabel(settings['hardcover.sync_interval']) : ''} defaultValue={intervalLabel('24h')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.hardcoverSyncIntervalHint', 'How often Bindery re-syncs your enabled Hardcover import lists. Lower it if you curate a Hardcover list as your main way of adding books. Use Sync now on the Import tab for an immediate run.')}
             </p>
-            <select id={`${fid}-11`}
+            <select id={`${fid}-11`} aria-describedby={fieldValueId(`${fid}-11`)}
               data-testid="hardcover-sync-interval"
               value={hardcoverSyncInterval}
               onChange={async e => {
@@ -999,10 +1032,11 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor={`${fid}-12`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.libraryScanIntervalLabel', 'Library scan interval')}
             </label>
+            <FieldValue for={`${fid}-12`} value={settings['library.scan_interval'] ? intervalLabel(settings['library.scan_interval']) : ''} defaultValue={intervalLabel('6h')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.libraryScanIntervalHint')}
             </p>
-            <select id={`${fid}-12`}
+            <select id={`${fid}-12`} aria-describedby={fieldValueId(`${fid}-12`)}
               data-testid="library-scan-interval"
               value={libraryScanInterval}
               onChange={async e => {
@@ -1042,11 +1076,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="discovery-interval" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.discoveryIntervalLabel')}
             </label>
+            <FieldValue for="discovery-interval" value={cadenceLabel(discoveryInterval)} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.discoveryIntervalHint')}
             </p>
             <select
               id="discovery-interval"
+              aria-describedby={fieldValueId('discovery-interval')}
               value={discoveryInterval}
               onChange={async e => {
                 const next = e.target.value
@@ -1077,11 +1113,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="series-check-interval" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.seriesCheckIntervalLabel')}
             </label>
+            <FieldValue for="series-check-interval" value={cadenceLabel(seriesCheckInterval)} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.seriesCheckIntervalHint')}
             </p>
             <select
               id="series-check-interval"
+              aria-describedby={fieldValueId('series-check-interval')}
               value={seriesCheckInterval}
               onChange={async e => {
                 const next = e.target.value
@@ -1253,7 +1291,8 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
         {isAdmin && (<>
         <div>
           <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.general.auth.authMode', 'Authentication Mode')}</label>
-          <select id={`${fid}-1`}
+          <FieldValue for={`${fid}-1`} value={cfg.mode === 'enabled' ? t('settings.general.auth.modeEnabled', 'Enabled') : cfg.mode === 'local-only' ? t('settings.general.auth.modeLocalOnly', 'Local only (bypass for private IPs)') : t('settings.general.auth.modeDisabled', 'Disabled (no auth)')} />
+          <select id={`${fid}-1`} aria-describedby={fieldValueId(`${fid}-1`)}
             value={cfg.mode}
             onChange={e => setMode(e.target.value as AuthStatus['mode'])}
             disabled={savingMode}
