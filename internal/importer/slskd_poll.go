@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -135,19 +136,29 @@ func (s *Scanner) checkSlskdDownloads(ctx context.Context, client *models.Downlo
 			s.retrySlskdImport(ctx, client, dl, batchID)
 			continue
 		}
-		p := slskd.Summarize(batches[strings.ToLower(batchID)])
+		transfers := batches[strings.ToLower(batchID)]
+		if len(transfers) == 0 {
+			// slskd lists no transfers for the batch. That is not a failure:
+			// "clear completed", its retention and a Bindery that was down all
+			// remove a finished transfer from the list while its files sit in
+			// the download's folder. Look there before judging, and never
+			// delete anything on this path.
+			s.slskdBatchMissing(ctx, client, dl, batchID)
+			continue
+		}
+		p := slskd.Summarize(transfers)
 		switch p.Group {
 		case slskd.GroupSucceeded:
 			if want := expectedSlskdFiles(dl); want > 0 && p.Files < want {
-				s.failSlskd(ctx, client, dl, fmt.Sprintf("slskd reports %d of the %d files of this download", p.Files, want))
+				s.failSlskd(ctx, client, dl, fmt.Sprintf("slskd reports %d of the %d files of this download", p.Files, want), false)
 				continue
 			}
 			s.completeSlskd(ctx, client, dl, batchID)
 		case slskd.GroupFailed:
-			s.failSlskd(ctx, client, dl, slskdFailureMessage(p))
+			s.failSlskd(ctx, client, dl, slskdFailureMessage(p), true)
 		default:
 			if stalled, limit := s.slskdStalled(dl, p); stalled {
-				s.failSlskd(ctx, client, dl, slskdStallMessage(p, limit))
+				s.failSlskd(ctx, client, dl, slskdStallMessage(p, limit), true)
 			}
 		}
 	}
@@ -178,12 +189,26 @@ func slskdStallMessage(p slskd.Progress, limit time.Duration) string {
 	return fmt.Sprintf("the peer did not start sending within %d minutes, so it was cancelled. Pick another result", int(limit.Minutes()))
 }
 
-// failSlskd cancels the download in slskd, deletes what it left on disk and
-// marks it failed.
-func (s *Scanner) failSlskd(ctx context.Context, client *models.DownloadClient, dl *models.Download, message string) {
+// slskdBatchMissing handles a download whose batch slskd does not list. When
+// the download's folder holds files they are imported (the content check still
+// runs). Otherwise the download fails, and nothing is deleted either way.
+func (s *Scanner) slskdBatchMissing(ctx context.Context, client *models.DownloadClient, dl *models.Download, batchID string) {
+	if folder, _ := s.slskdFolder(ctx, client, dl); folder != "" && len(discoverBookFiles(ctx, folder, nil)) > 0 {
+		slog.Info("slskd no longer lists this download but its files are on disk; importing them", "title", dl.Title, "path", folder)
+		s.completeSlskd(ctx, client, dl, batchID)
+		return
+	}
+	s.failSlskd(ctx, client, dl, slskdFailureMessage(slskd.Progress{}), false)
+}
+
+// failSlskd cancels the download in slskd and marks it failed. deleteFiles also
+// deletes what it left on disk: true only when slskd itself reported a failed
+// or stalled transfer, never when the download merely went missing from slskd's
+// list, where the files may be a finished download.
+func (s *Scanner) failSlskd(ctx context.Context, client *models.DownloadClient, dl *models.Download, message string, deleteFiles bool) {
 	cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	if err := downloader.RemoveDownload(cancelCtx, client, dl, true, s.downloadPathRemap); err != nil {
+	if err := downloader.RemoveDownload(cancelCtx, client, dl, deleteFiles, s.downloadPathRemap); err != nil {
 		slog.Warn("slskd: could not cancel a failed download in slskd", "download_id", dl.ID, "error", err)
 	}
 	slog.Warn("download failed", "title", dl.Title, "message", message)
@@ -199,8 +224,20 @@ func (s *Scanner) slskdFolder(ctx context.Context, client *models.DownloadClient
 	if folder == "" {
 		return "", reason
 	}
-	if fi, err := os.Lstat(folder); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+	fi, err := os.Lstat(folder)
+	if err != nil {
+		// Not there yet; the caller decides what a missing folder means.
+		return folder, ""
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
 		return "", "the download's folder is a symbolic link"
+	}
+	// No component above it may be a link either: the folder has to resolve to
+	// bindery/<id> inside the real downloads folder (#4083 confinement).
+	realFolder, err1 := filepath.EvalSymlinks(folder)
+	realRoot, err2 := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(folder)))
+	if err1 != nil || err2 != nil || realFolder != filepath.Join(realRoot, "bindery", filepath.Base(folder)) {
+		return "", "the download's folder resolves outside slskd's downloads folder"
 	}
 	return folder, ""
 }

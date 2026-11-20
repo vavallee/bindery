@@ -76,6 +76,11 @@ func (g Grab) Validate() error {
 	}
 	var total int64
 	seen := map[string]bool{}
+	// slskd writes every file of a request into one destination folder, so two
+	// files with the same base name (compared without case, because the
+	// destination may be a case insensitive filesystem) would overwrite or
+	// rename each other. A request holding such a pair is refused.
+	bases := map[string]bool{}
 	for _, f := range g.Files {
 		if err := ValidateFilename(f.Filename); err != nil {
 			return err
@@ -87,6 +92,11 @@ func (g Grab) Validate() error {
 			return errors.New("the Soulseek result lists a file twice")
 		}
 		seen[f.Filename] = true
+		base := strings.ToLower(path.Base(strings.ReplaceAll(f.Filename, `\`, "/")))
+		if bases[base] {
+			return errors.New("the Soulseek result has two files with the same name, which would overwrite each other")
+		}
+		bases[base] = true
 		total += f.Size
 		if total > MaxGrabBytes || total < 0 {
 			return fmt.Errorf("the Soulseek result is larger than the %d GiB Bindery downloads at once", MaxGrabBytes>>30)
