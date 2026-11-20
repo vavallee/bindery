@@ -332,9 +332,12 @@ you already have the file for).
   is attached right away, the same as for any added book, and the indexer
   search is then skipped. Otherwise import or hardlink the file as usual;
   Manual Import and **Fix match** find the book by its title.
-- **Refreshes leave it alone.** The book has no metadata source, so a metadata
-  refresh never changes it, and when an author refresh finds a work with the
-  same title it does not attach that record to your book or add a second copy.
+- **Refreshes and imports leave it alone.** The book has no metadata source, so
+  a metadata refresh never changes it, and when an author refresh finds a work
+  with the same title it does not attach that record to your book or add a
+  second copy. Its title is locked, so an Audiobookshelf or Calibre import that
+  matches the book by title keeps the title you typed, and an Audiobookshelf
+  import does not relink it to a provider record.
   Edit the book as usual to fill in the rest. To link it to a real record
   later, use **Re-bind** on the book page.
 

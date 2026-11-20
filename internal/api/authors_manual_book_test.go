@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -142,6 +144,15 @@ func TestAddManualBook_CreatesBookAndAuthorWithoutAskingAProvider(t *testing.T) 
 	}
 	if n := f.provider.calls.Load(); n != 0 {
 		t.Errorf("the add asked the metadata provider %d times, want none", n)
+	}
+	// The typed title is locked so an import or refresh matching it by title
+	// cannot overwrite it.
+	stored, err := f.books.GetByID(ctx, book.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("book %d: %v, %v", book.ID, stored, err)
+	}
+	if !stored.IsFieldLocked(models.BookFieldTitle) {
+		t.Errorf("locked fields = %v, want the title locked", stored.LockedFields)
 	}
 
 	author, err := f.authors.GetByID(ctx, book.AuthorID)
@@ -469,5 +480,61 @@ func TestFetchAuthorBooks_LeavesManualBookAlone(t *testing.T) {
 	}
 	if ids, err := seriesRepo.GetSeriesIDsForBook(ctx, manual.ID); err != nil || len(ids) != 0 {
 		t.Errorf("manual book linked to series %v (err %v), want none", ids, err)
+	}
+}
+
+// The id is random, not a clock reading, so two adds cannot share one.
+func TestAddManualBook_ForeignIDIsUnique(t *testing.T) {
+	f := newManualBookFixture(t)
+	ctx := context.Background()
+	seen := map[string]bool{}
+	for _, title := range []string{"One", "Two", "Three", "Four"} {
+		book := decodeManualBook(t, f.post(t, ctx, map[string]any{"title": title, "authorName": "Anon Author"}))
+		id := strings.TrimPrefix(book.ForeignID, models.ManualBookForeignIDPrefix)
+		if _, err := uuid.Parse(id); err != nil {
+			t.Fatalf("foreign id %q: suffix is not a uuid: %v", book.ForeignID, err)
+		}
+		if seen[book.ForeignID] {
+			t.Fatalf("foreign id %q repeated", book.ForeignID)
+		}
+		seen[book.ForeignID] = true
+	}
+}
+
+// An admin sees every user's authors, but a name typed into the dialog must
+// not file the admin's book under another user's author. The admin gets an
+// author of their own instead, and a second book reuses it.
+func TestAddManualBook_AdminDoesNotLandInAnotherUsersLibrary(t *testing.T) {
+	f := newTenancyFixture(t, true, &stubMetaProvider{name: "openlibrary"})
+	f.h.series = db.NewSeriesRepo(f.db)
+	ctx := context.Background()
+	bobs := &models.Author{ForeignID: "OL-BOB-A", Name: "Shared Name", SortName: "Name, Shared", MetadataProvider: "openlibrary"}
+	if err := f.authors.CreateForUser(ctx, bobs, f.bob); err != nil {
+		t.Fatal(err)
+	}
+	post := func(title string) models.Book {
+		raw, _ := json.Marshal(map[string]any{"title": title, "authorName": "Shared Name"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book/manual", bytes.NewReader(raw)).WithContext(f.adminCtx())
+		rec := httptest.NewRecorder()
+		f.h.AddManualBook(rec, req)
+		return decodeManualBook(t, rec)
+	}
+	first := post("T1")
+	if first.AuthorID == bobs.ID {
+		t.Fatal("the admin's book was filed under bob's author")
+	}
+	author, err := f.authors.GetByID(ctx, first.AuthorID)
+	if err != nil || author == nil {
+		t.Fatalf("author: %v, %v", author, err)
+	}
+	if author.OwnerUserID != f.admin {
+		t.Errorf("author owner = %d, want the admin %d", author.OwnerUserID, f.admin)
+	}
+	stored, err := f.books.GetByID(ctx, first.ID)
+	if err != nil || stored == nil || stored.OwnerUserID != f.admin {
+		t.Errorf("book = %+v, %v, want it owned by the admin", stored, err)
+	}
+	if second := post("T2"); second.AuthorID != first.AuthorID {
+		t.Errorf("second book under author %d, want the admin's author %d", second.AuthorID, first.AuthorID)
 	}
 }

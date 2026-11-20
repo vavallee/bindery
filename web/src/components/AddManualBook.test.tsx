@@ -122,6 +122,9 @@ describe('AddManualBook', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('This author already has a book with this title in your library.')
     expect(screen.getByRole('link', { name: 'Open existing book' })).toHaveAttribute('href', '/book/42')
+    // The title field points at the message that explains it.
+    expect(screen.getByLabelText('Title')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByLabelText('Title').getAttribute('aria-describedby')).toBe(screen.getByRole('alert').id)
     expect(onAdded).not.toHaveBeenCalled()
   })
 

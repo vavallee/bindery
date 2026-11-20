@@ -48,6 +48,7 @@ export default function AddManualBook({ initialTitle, initialAuthor, onBack, onC
   const [addConflict, setAddConflict] = useState<BookConflictBody | null>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
   const authorHintId = useId()
+  const errorId = useId()
 
   useEffect(() => {
     headingRef.current?.focus()
@@ -97,7 +98,7 @@ export default function AddManualBook({ initialTitle, initialAuthor, onBack, onC
 
         <label className="block">
           <span className={labelClass}>{t('addToLibrary.manual.titleLabel')}</span>
-          <input type="text" required value={title} onChange={e => setTitle(e.target.value)} className={inputClass} />
+          <input type="text" required value={title} onChange={e => setTitle(e.target.value)} aria-invalid={addConflict ? true : undefined} aria-describedby={addConflict ? errorId : undefined} className={inputClass} />
         </label>
 
         <div>
@@ -148,7 +149,7 @@ export default function AddManualBook({ initialTitle, initialAuthor, onBack, onC
         </label>
 
         {addError && (
-          <div role="alert" className="px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+          <div id={errorId} role="alert" className="px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
             <div>{addError}</div>
             {addConflict?.existingBookId && (
               <div className="mt-2 text-xs font-medium">

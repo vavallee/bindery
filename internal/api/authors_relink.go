@@ -636,11 +636,17 @@ func authorSearchQueries(name string) []string {
 // no author ID) attach to the user's existing author instead of duplicating it.
 // Identity uses the same key as ResolveCanonicalAuthor so the two agree.
 func (h *AuthorHandler) findLibraryAuthorByName(ctx context.Context, name string) *models.Author {
+	return h.findLibraryAuthorByNameForUser(ctx, name, auth.ListScopeUserID(ctx))
+}
+
+// findLibraryAuthorByNameForUser is findLibraryAuthorByName over the authors
+// userID can see (0 is every author), for a caller that narrows the scope.
+func (h *AuthorHandler) findLibraryAuthorByNameForUser(ctx context.Context, name string, userID int64) *models.Author {
 	want := metadata.CanonicalAuthorKey(name)
 	if want == "" {
 		return nil
 	}
-	authors, err := h.authors.ListByUser(ctx, auth.ListScopeUserID(ctx))
+	authors, err := h.authors.ListByUser(ctx, userID)
 	if err != nil {
 		return nil
 	}

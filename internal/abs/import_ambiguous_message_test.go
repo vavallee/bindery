@@ -128,3 +128,26 @@ func TestEnrichAuthorAmbiguityOnlyForUnlinkedAuthor(t *testing.T) {
 		})
 	}
 }
+
+// A book added by hand (#3840) is left on its manual identity: an import that
+// matches it by title must not relink it to the one provider work that fits.
+func TestEnrichBookLeavesManualBookOnItsOwnIdentity(t *testing.T) {
+	importer, author, book := ambiguityFixture(t, "manual:book:abc", models.ManualMetadataProvider, prideWorks("OL-W1"))
+	if got := enrichMessages(t, importer, author, book); got != "" {
+		t.Fatalf("message = %q, want none", got)
+	}
+	if book.ForeignID != "manual:book:abc" || book.MetadataProvider != models.ManualMetadataProvider {
+		t.Fatalf("book = %q / %q, want it left on its manual identity", book.ForeignID, book.MetadataProvider)
+	}
+}
+
+// The title a manual book is created with is locked, so the field merge an ABS
+// import runs on a title match keeps what the user typed.
+func TestMergeBookFieldsKeepsLockedManualTitle(t *testing.T) {
+	importer, _, _, _, _, _, _, _, _, _ := newABSImporterFixture(t)
+	book := &models.Book{Title: "The Last Church", ForeignID: "manual:book:abc", LockedFields: []string{models.BookFieldTitle}}
+	importer.mergeBookFields(book, 1, NormalizedLibraryItem{Title: "The last church (unabridged)"}, false)
+	if book.Title != "The Last Church" {
+		t.Fatalf("title = %q, want the locked title kept", book.Title)
+	}
+}

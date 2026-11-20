@@ -7,7 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
@@ -105,7 +106,8 @@ func (h *AuthorHandler) AddManualBook(w http.ResponseWriter, r *http.Request) {
 		mediaType = h.resolveDefaultMediaType(ctx)
 	}
 	book := &models.Book{
-		ForeignID:        fmt.Sprintf(models.ManualBookForeignIDPrefix+"%d", time.Now().UTC().UnixNano()),
+		// A random id: a clock reading can repeat across two requests.
+		ForeignID:        models.ManualBookForeignIDPrefix + uuid.NewString(),
 		AuthorID:         author.ID,
 		Title:            req.Title,
 		SortTitle:        req.Title,
@@ -122,6 +124,11 @@ func (h *AuthorHandler) AddManualBook(w http.ResponseWriter, r *http.Request) {
 	if book.OwnerUserID == 0 {
 		book.OwnerUserID = scopeID
 	}
+	// The title is typed by hand, so lock it: an Audiobookshelf or Calibre
+	// import, a library scan or a refresh that matches the book by title must
+	// not rewrite it. There is no lock for a series title or position, and the
+	// dialog takes no language or genres.
+	book.LockField(models.BookFieldTitle)
 	if err := h.books.Create(ctx, book); err != nil {
 		writeServerError(w, r, err)
 		return
@@ -194,7 +201,16 @@ func (h *AuthorHandler) resolveManualBookAuthor(ctx context.Context, authorID in
 		}
 		return author, false, nil
 	}
-	if existing := h.findLibraryAuthorByName(ctx, name); existing != nil {
+	// Under tenancy an admin lists every user's authors, so a name match
+	// could file the admin's book in another user's library. A typed name
+	// looks only at the caller's own authors and the unowned ones, and makes
+	// the admin's own author otherwise. An explicit authorId above still
+	// reaches any author, as the admin may open any author page.
+	nameScope := scopeID
+	if nameScope == 0 && auth.EnforceTenancy() {
+		nameScope = auth.UserIDFromContext(ctx)
+	}
+	if existing := h.findLibraryAuthorByNameForUser(ctx, name, nameScope); existing != nil {
 		return existing, false, nil
 	}
 
@@ -202,7 +218,7 @@ func (h *AuthorHandler) resolveManualBookAuthor(ctx context.Context, authorID in
 	// author ids, so a second book typed under the same spelling reuses the
 	// row even where the name match above found nothing.
 	foreignID := models.ManualAuthorForeignIDPrefix + textutil.AuthorSlug(name)
-	if existing, err := h.authors.GetByAnyForeignIDForUser(ctx, foreignID, scopeID); err != nil {
+	if existing, err := h.authors.GetByAnyForeignIDForUser(ctx, foreignID, nameScope); err != nil {
 		return nil, false, err
 	} else if existing != nil {
 		return existing, false, nil
@@ -224,7 +240,7 @@ func (h *AuthorHandler) resolveManualBookAuthor(ctx context.Context, authorID in
 			return nil, false, err
 		}
 		// A concurrent request made the same author first.
-		existing, getErr := h.authors.GetByAnyForeignIDForUser(ctx, foreignID, scopeID)
+		existing, getErr := h.authors.GetByAnyForeignIDForUser(ctx, foreignID, nameScope)
 		if getErr != nil {
 			return nil, false, getErr
 		}

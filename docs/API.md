@@ -151,10 +151,13 @@ or knows too badly to use, without asking any provider (#3840):
 
 `title` is required, and so is one of `authorId` (a library author the caller
 can see) or `authorName`. A name is matched against the authors in the caller's
-library first; any other name becomes a new, unmonitored author with a
-`manual:author:<slug>` id, and the same spelling later reuses it. The book gets
-a `manual:book:<n>` id and `metadataProvider: "manual"`, is monitored and
-wanted, and takes the `default.media_type` setting when `mediaType` is empty.
+library first (with multiple users enabled, an admin's name match looks only at
+the admin's own authors and unowned ones, never another user's); any other name
+becomes a new, unmonitored author with a `manual:author:<slug>` id, and the same
+spelling later reuses it. The book gets a `manual:book:<uuid>` id and
+`metadataProvider: "manual"`, is monitored and wanted, has its title locked (see
+`lockedFields`), and takes the `default.media_type` setting when `mediaType` is
+empty.
 `seriesTitle` joins the series of that title the author is already in, else any
 series of that title in the caller's library, else a new hand-made series;
 `seriesPosition` needs a `seriesTitle`. A file already in the library for the
@@ -162,9 +165,11 @@ title is bound to the book as for any added book, and then `searchOnAdd` does
 not search.
 
 No provider owns the `manual:` prefix, so nothing refreshes these rows: the
-scheduled profile refresh skips such authors, and an author catalogue sync that
-lists a work with the same title leaves the book alone rather than recording
-the work's ids on it or creating a second row. `POST /book/{id}/rebind` binds
+scheduled profile and release discovery refreshes skip such authors, an author
+catalogue sync that lists a work with the same title leaves the book alone
+rather than recording the work's ids on it or creating a second row, an
+Audiobookshelf import that matches the book by title does not relink it to a
+provider work, and the locked title survives Audiobookshelf and Calibre imports. `POST /book/{id}/rebind` binds
 one to a provider work, and Add Author or `relink-upstream` relinks such an
 author in place, as for a Calibre or Audiobookshelf placeholder.
 

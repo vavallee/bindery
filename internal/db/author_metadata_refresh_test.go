@@ -10,8 +10,9 @@ import (
 
 // TestListMetadataRefreshDue_FiltersAndOrder pins who the staggered profile
 // refresh visits (#2595): monitored authors only, never Calibre shells or
-// authors made by hand (#3840), never refreshed authors first, then the oldest refresh, nobody refreshed more
-// recently than the cutoff, and the limit applies after that ordering.
+// authors made by hand (#3840), never refreshed authors first, then the
+// oldest refresh, nobody refreshed more recently than the cutoff, and the
+// limit applies after that ordering.
 func TestListMetadataRefreshDue_FiltersAndOrder(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
