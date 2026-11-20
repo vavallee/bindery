@@ -372,6 +372,8 @@ func BookProviderFromForeignID(foreignID string) string {
 		return "calibre"
 	case strings.HasPrefix(foreignID, "abs:"):
 		return "audiobookshelf"
+	case strings.HasPrefix(foreignID, ManualForeignIDPrefix):
+		return ManualMetadataProvider
 	default:
 		return "openlibrary"
 	}

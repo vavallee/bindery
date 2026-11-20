@@ -44,6 +44,8 @@ func TestListDiscoveryDue_FiltersAndOrder(t *testing.T) {
 	newDiscoveryTestAuthor(t, repo, "OL6A", func(a *models.Author) { a.Monitored = false })
 	newDiscoveryTestAuthor(t, repo, "OL7A", func(a *models.Author) { a.MonitorNewItems = models.AuthorMonitorNewItemsNone })
 	newDiscoveryTestAuthor(t, repo, "calibre:author:9", nil)
+	// A hand-made author has no catalogue to discover from (#3840).
+	newDiscoveryTestAuthor(t, repo, "manual:author:dan-abnett", nil)
 
 	for id, when := range map[int64]time.Time{
 		old.ID:    now.Add(-200 * time.Hour),
@@ -60,7 +62,7 @@ func TestListDiscoveryDue_FiltersAndOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if eligible != 5 {
-		t.Errorf("CountDiscoveryEligible = %d, want 5 (the unmonitored, none and calibre authors are not eligible)", eligible)
+		t.Errorf("CountDiscoveryEligible = %d, want 5 (the unmonitored, none, calibre and manual authors are not eligible)", eligible)
 	}
 
 	due, err := repo.ListDiscoveryDue(ctx, cutoff, 10)

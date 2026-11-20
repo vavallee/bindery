@@ -1708,7 +1708,9 @@ function BookDetailPageInner() {
             {identityRows.map(row => (
               <li key={`${row.provider}-${row.foreignId}`} className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium min-w-32">
-                  {providerDisplayName(row.provider) || t('bookDetail.metadataSource.unknownProvider', 'Unknown provider')}
+                  {row.provider === 'manual'
+                    ? t('bookDetail.metadataSource.manual', 'Added by hand')
+                    : providerDisplayName(row.provider) || t('bookDetail.metadataSource.unknownProvider', 'Unknown provider')}
                 </span>
                 {row.primary && (
                   <span className="text-xs px-1.5 py-0.5 rounded-full border border-emerald-500/40 text-emerald-700 dark:text-emerald-300">
