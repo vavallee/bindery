@@ -147,6 +147,14 @@ func (h *ABSHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// A saved key belongs to the server it was issued for. When the URL moves
+	// and no replacement key came with it, drop the saved key rather than
+	// send it to the new address.
+	newKeySupplied := req.APIKey != nil && strings.TrimSpace(*req.APIKey) != ""
+	clearKey := !newKeySupplied && baseURL != current.BaseURL && apiKey != ""
+	if clearKey {
+		apiKey = ""
+	}
 	label := current.Label
 	if req.Label != nil {
 		label = strings.TrimSpace(*req.Label)
@@ -194,7 +202,7 @@ func (h *ABSHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		{Key: SettingABSLibraryIDs, Value: string(libraryIDsJSON)},
 		{Key: SettingABSPathRemap, Value: pathRemap},
 	}
-	if req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "" {
+	if newKeySupplied || clearKey {
 		kvs = append(kvs, db.SettingKV{Key: SettingABSAPIKey, Value: apiKey})
 	}
 	if err := h.settings.SetMany(r.Context(), kvs); err != nil {
