@@ -99,6 +99,29 @@ describe('AdvancedTab current value subtitles (#3989)', () => {
     expect(el.outerHTML).not.toContain('hunter2')
   })
 
+  it('wires the subtitle on every control branch: bool, enum, int, duration and string', async () => {
+    seed([
+      descriptor({ key: 'k.bool', type: 'bool', default: 'false' }),
+      descriptor({ key: 'k.enum', type: 'enum', values: ['a', 'b'], default: 'a' }),
+      descriptor({ key: 'k.int', type: 'int', default: '5' }),
+      descriptor({ key: 'k.duration', type: 'duration', default: '1h' }),
+      descriptor({ key: 'k.string', default: 'x' }),
+    ], { 'k.enum': 'b', 'k.int': '7' })
+    render(<AdvancedTab />)
+    await screen.findByLabelText('k.string')
+    const wired = expectFieldValuesWired(document.body)
+    expect(Object.keys(wired)).toHaveLength(5)
+    const select = screen.getByLabelText('k.enum')
+    const number = screen.getByLabelText('k.int')
+    expect(select.tagName).toBe('SELECT')
+    expect(number).toHaveAttribute('type', 'number')
+    expect(select).toHaveAccessibleDescription('Current: b')
+    expect(number).toHaveAccessibleDescription('Current: 7')
+    expect(screen.getByLabelText('k.duration')).toHaveAccessibleDescription('Current: Default (1h)')
+    expect(screen.getByLabelText('k.string')).toHaveAccessibleDescription('Current: Default (x)')
+    expect(screen.getByRole('switch', { name: 'k.bool' })).toHaveAccessibleDescription('Current: Default (Off)')
+  })
+
   it('wires every subtitle on the tab to a control', async () => {
     seed([descriptor({ key: 'a.b', default: '1' }), descriptor({ key: 'a.c', type: 'bool', default: 'true' })])
     render(<AdvancedTab />)

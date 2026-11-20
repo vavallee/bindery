@@ -54,9 +54,21 @@ describe('FieldValue (#3989)', () => {
     expect(document.body.innerHTML).not.toContain('pa55')
   })
 
+  it('shows Set for credentials it cannot show a host for', () => {
+    render(<FieldValue for="a" value="http://u:p@" />)
+    expect(screen.getByTestId('field-value')).toHaveTextContent(/^Current: Set$/)
+    expect(screen.getByTestId('field-value')).not.toHaveAttribute('title')
+  })
+
+  it('drops a query token even with no userinfo', () => {
+    render(<FieldValue for="a" value="http://h/a?token=abc" />)
+    expect(screen.getByTestId('field-value')).toHaveTextContent('Current: http://h/a')
+    expect(document.body.innerHTML).not.toContain('token')
+  })
+
   it('keeps a plain URL and its title', () => {
-    render(<FieldValue for="a" value="http://calibre:8099/x?y=1" />)
-    expect(screen.getByTestId('field-value')).toHaveAttribute('title', 'Current: http://calibre:8099/x?y=1')
+    render(<FieldValue for="a" value="http://calibre:8099/x" />)
+    expect(screen.getByTestId('field-value')).toHaveAttribute('title', 'Current: http://calibre:8099/x')
   })
 
   it('the wiring check fails when a control points at a neighbouring field line', () => {

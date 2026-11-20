@@ -34,6 +34,18 @@ describe('ApiKeysTab current value subtitles (#3989)', () => {
     await screen.findByText('Hardcover API Token')
     const input = screen.getByPlaceholderText('Paste a Hardcover API token')
     expect(input).toHaveAccessibleDescription('No token configured')
+    // Only the enhanced series line exists; a Current line for the token must not return.
+    expect(document.querySelectorAll('[data-testid="field-value"]').length).toBe(1)
+    expect(document.querySelector('[data-testid="field-value"]')).toHaveAttribute('id', 'enhanced-hardcover-series-value')
+    expect(screen.queryByText(/^Current: (Set|Not set)$/)).toBeNull()
+  })
+
+  it('shows the configured badge once and no Current line for the token', async () => {
+    status({ hardcoverTokenConfigured: true })
+    render(<ApiKeysTab />)
+    await screen.findByText('Token configured')
+    expect(screen.getAllByText('Token configured')).toHaveLength(1)
+    expect(screen.queryByText(/^Current: (Set|Not set)$/)).toBeNull()
     expect(document.querySelectorAll('[data-testid="field-value"]').length).toBe(1)
   })
 

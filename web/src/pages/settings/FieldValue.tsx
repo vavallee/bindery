@@ -43,8 +43,8 @@ export default function FieldValue({ for: base, value, defaultValue, secret = fa
     text = has ? t('settings.currentValue.set', 'Set') : t('settings.currentValue.notSet', 'Not set')
   } else if (has) {
     const r = redactUrlUserinfo(value as string)
-    text = r.text
     redacted = r.redacted
+    text = r.secret ? t('settings.currentValue.set', 'Set') : r.text
   } else if (defaultValue) {
     text = t('settings.currentValue.default', 'Default ({{value}})', { value: defaultValue })
   } else {
