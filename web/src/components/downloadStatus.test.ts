@@ -5,6 +5,8 @@ import {
   RETRYABLE_STATUSES,
   RESENDABLE_STATUSES,
   downloadStatusBadge,
+  inQueueView,
+  parseQueueView,
   isMatchable,
   isResendable,
   isRetryable,
@@ -114,5 +116,49 @@ describe('downloadStatusBadge', () => {
     expect(b.label).toBe('weird')
     expect(b.chip).toMatch(/slate|zinc/)
     expect(b.description).toBeUndefined()
+  })
+})
+
+// #3992: the Queue's status chips. Every state lands in exactly the chips the
+// issue names, so a Held or handed off row is no longer just "Active".
+describe('inQueueView', () => {
+  it.each([
+    ['grabbed', 'downloading'],
+    ['downloading', 'downloading'],
+    ['completed', 'importing'],
+    ['importPending', 'importing'],
+    ['importing', 'importing'],
+    ['importHeld', 'held'],
+    ['importExternal', 'external'],
+    ['importFailed', 'attention'],
+    ['importBlocked', 'attention'],
+  ] as const)('puts %s in the %s chip and in no other state chip', (status, view) => {
+    const states = ['downloading', 'importing', 'held', 'external', 'attention'] as const
+    for (const v of states) expect(inQueueView(status, v)).toBe(v === view)
+  })
+
+  it('keeps Active as everything that has not failed and Failed as before', () => {
+    expect(inQueueView('importHeld', 'active')).toBe(true)
+    expect(inQueueView('importExternal', 'active')).toBe(true)
+    expect(inQueueView('importBlocked', 'active')).toBe(false)
+    for (const status of Object.keys(DOWNLOAD_STATUSES)) {
+      expect(inQueueView(status, 'failed')).toBe(FAILED_STATUSES.has(status))
+      expect(inQueueView(status, '')).toBe(true)
+    }
+  })
+
+  it('does not put a plain failed download under Needs attention', () => {
+    expect(inQueueView('failed', 'attention')).toBe(false)
+    expect(inQueueView('failed', 'failed')).toBe(true)
+  })
+})
+
+describe('parseQueueView', () => {
+  it('accepts every view and reads an unknown one as All', () => {
+    expect(parseQueueView('active')).toBe('active')
+    expect(parseQueueView('failed')).toBe('failed')
+    expect(parseQueueView('held')).toBe('held')
+    expect(parseQueueView('bogus')).toBe('')
+    expect(parseQueueView(null)).toBe('')
   })
 })
