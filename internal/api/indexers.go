@@ -17,10 +17,12 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/decision"
+	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/soulseek"
 	"github.com/vavallee/bindery/internal/telemetry"
 )
 
@@ -69,6 +71,31 @@ func NewIndexerHandler(indexers *db.IndexerRepo, books *db.BookRepo, authors *db
 		searcher: searcher, settings: settings, blocklist: blocklist,
 		lastDebug: indexer.NewDebugLog(),
 	}
+}
+
+// withSearchSources adds the Soulseek search sources to ctx for an interactive
+// search: one per enabled slskd download client. With no such client, nothing
+// is added and nothing leaves Bindery, which is what keeps Soulseek opt in. The
+// scheduler's automatic searches never call this, because they cannot grab from
+// Soulseek yet (#1717).
+func (h *IndexerHandler) withSearchSources(ctx context.Context) context.Context {
+	if h.clients == nil {
+		return ctx
+	}
+	clients, err := h.clients.ListEnabled(ctx)
+	if err != nil {
+		slog.Warn("could not list download clients for the Soulseek search source", "error", err)
+		return ctx
+	}
+	var srcs []indexer.Source
+	for i := range clients {
+		c := clients[i]
+		if c.Type != downloader.ClientTypeSlskd || (!c.EnabledForBooks && !c.EnabledForAudiobooks) {
+			continue
+		}
+		srcs = append(srcs, soulseek.NewSource(c.Name, downloader.SlskdFor(&c)))
+	}
+	return indexer.WithSources(ctx, srcs...)
 }
 
 // WithSearchDebugLog replaces the handler's private debug log with one shared
@@ -756,7 +783,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			results []newznab.SearchResult
 			dbg     *indexer.SearchDebug
 		}
-		ctx := r.Context()
+		ctx := h.withSearchSources(r.Context())
 		ebookCh := make(chan searchOut, 1)
 		audioCh := make(chan searchOut, 1)
 		go func() {
@@ -814,7 +841,7 @@ func (h *IndexerHandler) SearchBook(w http.ResponseWriter, r *http.Request) {
 			dbg.Query.MediaType = book.MediaType
 		}
 	} else {
-		results, dbg = h.searcher.SearchBookWithDebug(r.Context(), idxs, crit)
+		results, dbg = h.searcher.SearchBookWithDebug(h.withSearchSources(r.Context()), idxs, crit)
 		if dbg != nil {
 			relDropped = dbg.Dropped
 		}
@@ -1117,7 +1144,7 @@ func (h *IndexerHandler) SearchQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := h.searcher.SearchQuery(r.Context(), idxs, query)
+	results := h.searcher.SearchQuery(h.withSearchSources(r.Context()), idxs, query)
 	// Recorded raw, before the redaction below: see SearchBook.
 	h.searchResults.remember(results)
 	// Strip every credential before returning to the client (see SearchBook).

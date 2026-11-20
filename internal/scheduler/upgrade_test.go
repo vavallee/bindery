@@ -86,7 +86,7 @@ func newUpgradeSweepFixture(t *testing.T, upgradeAllowed bool, ownedFile string,
 		t.Fatalf("indexer create: %v", err)
 	}
 	for i := range results {
-		results[i].IndexerID = idx.ID
+		results[i].IndexerID = &idx.ID
 	}
 	searcher := &countingSearcher{results: results}
 	s := &Scheduler{

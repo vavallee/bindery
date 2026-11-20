@@ -7,10 +7,12 @@ import { useConfirmDialog } from '../components/useConfirmDialog'
 import { grabErrorText, grabWithForceConfirm } from '../util/forceGrab'
 import { primaryFill } from '../components/buttons'
 import ReleaseSwarm from '../components/ReleaseSwarm'
+import { SoulseekBadge, SoulseekDetail, SoulseekGrabNote, isSoulseek, soulseekGrabAria, useSoulseekGrabTitle } from '../components/SoulseekRelease'
 import { errorText } from '../util/errorText'
 
 export default function SearchPage() {
   const { t } = useTranslation()
+  const soulseekGrabTitle = useSoulseekGrabTitle()
   const { confirm, confirmDialog } = useConfirmDialog()
   // The header search's "Search indexers for …" row lands here with ?q=.
   const [searchParams, setSearchParams] = useSearchParams()
@@ -91,7 +93,7 @@ export default function SearchPage() {
         title: r.title,
         nzbUrl: r.nzbUrl,
         size: r.size,
-        indexerId: r.indexerId,
+        indexerId: r.indexerId ?? undefined,
         protocol: r.protocol,
         mediaType: r.mediaType,
       }, confirm, t)
@@ -186,10 +188,14 @@ export default function SearchPage() {
                 className="flex items-center justify-between p-2 border border-slate-200 dark:border-zinc-800 rounded bg-slate-100 dark:bg-zinc-900 text-xs"
               >
                 <div className="min-w-0 mr-3">
-                  <span className="truncate block text-slate-800 dark:text-zinc-200">{r.title}</span>
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    {isSoulseek(r) && <SoulseekBadge />}
+                    <span className="truncate block text-slate-800 dark:text-zinc-200">{r.title}</span>
+                  </span>
                   <span className="text-fg-muted truncate block">
                     {r.indexerName}{r.size ? ` · ${formatBytes(r.size)}` : ''}{r.grabs ? ` · ${r.grabs} grabs` : ''}
                     <ReleaseSwarm seeders={r.seeders} peers={r.peers} />
+                    {isSoulseek(r) && <SoulseekDetail r={r} />}
                     {r.language && <span className="ml-2 uppercase">{r.language}</span>}
                   </span>
                 </div>
@@ -199,13 +205,16 @@ export default function SearchPage() {
                   </span>
                 ) : (
                   <button
-                    onClick={() => grab(r)}
+                    onClick={() => { if (!isSoulseek(r)) grab(r) }}
                     disabled={grabbing !== null}
-                    className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0`}
+                    title={isSoulseek(r) ? soulseekGrabTitle : undefined}
+                    {...soulseekGrabAria(r)}
+                    className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0 ${isSoulseek(r) ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     {grabbing === r.guid ? t('search.grabbing') : t('search.grab')}
                   </button>
                 )}
+                <SoulseekGrabNote r={r} />
               </div>
             ))}
           </div>

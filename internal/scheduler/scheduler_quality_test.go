@@ -76,7 +76,7 @@ func qualityFixture(t *testing.T, attachProfile bool, items []models.QualityItem
 	results := make([]newznab.SearchResult, 0, len(titles))
 	for _, title := range titles {
 		results = append(results, newznab.SearchResult{
-			GUID: "guid-" + title, Title: title, IndexerID: idx.ID,
+			GUID: "guid-" + title, Title: title, IndexerID: &idx.ID,
 			NZBURL: "http://127.0.0.1:1/nzb", Protocol: "usenet",
 		})
 	}

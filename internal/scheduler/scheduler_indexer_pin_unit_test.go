@@ -11,7 +11,7 @@ import (
 )
 
 func (f *schedPinFixture) result(guid, protocol string) *newznab.SearchResult {
-	return &newznab.SearchResult{GUID: guid, Title: "Pin Author Pinned Book epub", Protocol: protocol, IndexerID: f.idx.ID, IndexerName: f.idx.Name}
+	return &newznab.SearchResult{GUID: guid, Title: "Pin Author Pinned Book epub", Protocol: protocol, IndexerID: &f.idx.ID, IndexerName: f.idx.Name}
 }
 
 func TestPinnedClient_Routing(t *testing.T) {
@@ -27,7 +27,7 @@ func TestPinnedClient_Routing(t *testing.T) {
 	t.Run("result without an indexer id is never pinned", func(t *testing.T) {
 		f.pin(t, f.privC.ID)
 		res := f.result("g", "usenet")
-		res.IndexerID = 0
+		res.IndexerID = nil
 		if c, err := f.s.pinnedClient(ctx, res); c != nil || err != nil {
 			t.Fatalf("got %v, %v; want nil, nil", c, err)
 		}
@@ -151,7 +151,7 @@ func TestRecordPinnedFailure_Dedupe(t *testing.T) {
 	}
 
 	other := f.result("g3", "usenet")
-	other.IndexerID = f.idx.ID + 50
+	other.IndexerID = idPtr(f.idx.ID + 50)
 	f.s.recordPinnedFailure(f.ctx, f.book.ID, other, disabled)
 	if got := len(f.pinnedFailures(t)); got != 2 {
 		t.Fatalf("a different indexer must record its own failure, events = %d", got)

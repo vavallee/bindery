@@ -41,7 +41,7 @@ func TestSearchAndGrab_PathPasskeyNeverLeavesTheServer(t *testing.T) {
 			guid := f.indexerURL + "/tracker/torrent/download/12345." + pathRSSKey
 			dlPath := "/tracker/download/12345/" + pathPasskey + "/One.Shot.torrent"
 			f.searcher.results = []newznab.SearchResult{{
-				GUID: guid, InfoURL: guid, IndexerID: f.indexerID, Title: "Lee Child - One Shot (epub)",
+				GUID: guid, InfoURL: guid, IndexerID: &f.indexerID, Title: "Lee Child - One Shot (epub)",
 				NZBURL: f.indexerURL + dlPath, Protocol: "usenet",
 			}}
 
@@ -101,7 +101,7 @@ func TestSearchAndGrab_PathRedactedGUIDsStayDistinct(t *testing.T) {
 	f.searcher.results = nil
 	for i, h := range hashes {
 		f.searcher.results = append(f.searcher.results, newznab.SearchResult{
-			GUID: f.indexerURL + "/tracker/torrent/" + h, IndexerID: f.indexerID, Title: "Lee Child - One Shot " + h[:2],
+			GUID: f.indexerURL + "/tracker/torrent/" + h, IndexerID: &f.indexerID, Title: "Lee Child - One Shot " + h[:2],
 			NZBURL: f.indexerURL + "/tracker/dl/" + string(rune('1'+i)) + "/" + pathPasskey, Protocol: "usenet",
 		})
 	}
@@ -174,7 +174,7 @@ func TestSearchAndGrab_UserinfoNeverLeavesTheServer(t *testing.T) {
 			withCreds := strings.Replace(f.indexerURL, "://", "://feeduser:TRACKERPW@", 1)
 			guid := withCreds + "/tracker/details/77"
 			f.searcher.results = []newznab.SearchResult{{
-				GUID: guid, InfoURL: guid, IndexerID: f.indexerID, Title: "Lee Child - One Shot (epub)",
+				GUID: guid, InfoURL: guid, IndexerID: &f.indexerID, Title: "Lee Child - One Shot (epub)",
 				NZBURL: withCreds + "/tracker/dl/77/One.Shot.torrent", Protocol: "usenet",
 			}}
 			assertNoCreds := func(what, body string) {

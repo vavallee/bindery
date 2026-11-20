@@ -47,6 +47,12 @@ const queueImportedVisibleFor = 7 * 24 * time.Hour
 
 var errAlreadyGrabbed = errors.New("already grabbed")
 
+// errSoulseekGrabUnavailable refuses a grab of a Soulseek result. Interactive
+// search lists them, but sending a download to slskd arrives in a later release
+// (#1717). Refusing here, before any download row exists, keeps a hand crafted
+// request from leaving a half grabbed row behind.
+var errSoulseekGrabUnavailable = errors.New("grabbing from Soulseek is not available yet, so this result can be seen but not downloaded")
+
 // errNoDownloadClient marks a grab or retry that no enabled download client
 // can take. It is a setup problem the user can fix, so the handlers answer 400
 // with the actionable text and a code the web app keys on, never a 502.
@@ -171,7 +177,7 @@ func queueItemMessage(ctx context.Context, err error) string {
 	case errors.As(err, &perr):
 		return pinnedMessage(ctx, perr)
 	case errors.Is(err, errNoDownloadClient), errors.Is(err, errAlreadyGrabbed),
-		errors.Is(err, errRetryNotResendable), errors.Is(err, errGrabBookNotFound),
+		errors.Is(err, errSoulseekGrabUnavailable), errors.Is(err, errRetryNotResendable), errors.Is(err, errGrabBookNotFound),
 		isNoEligibleMediaTypeError(err):
 		return err.Error()
 	case errors.Is(err, errSendFailed):
@@ -1084,6 +1090,10 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	if req.Protocol == downloader.ProtocolSoulseek || strings.HasPrefix(req.GUID, "slskd:") {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": errSoulseekGrabUnavailable.Error()})
+		return
+	}
 	if req.GUID == "" || req.NZBURL == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "guid and nzbUrl required"})
 		return
@@ -1116,6 +1126,10 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 			"error":          err.Error(),
 			"forceAvailable": errors.Is(err, errRegrabForceable),
 		})
+		return
+	}
+	if errors.Is(err, errSoulseekGrabUnavailable) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, errGrabBookNotFound) {
@@ -1612,6 +1626,9 @@ func stampedMediaType(mediaType string) string {
 func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Download, error) {
 	if req.Protocol == "" {
 		req.Protocol = "usenet"
+	}
+	if req.Protocol == downloader.ProtocolSoulseek {
+		return nil, errSoulseekGrabUnavailable
 	}
 	existing, err := h.downloads.GetByGUID(ctx, req.GUID)
 	if err != nil {

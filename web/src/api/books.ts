@@ -109,9 +109,21 @@ export interface BookConflictBody {
   formatWidened?: boolean
 }
 
+// What a Soulseek peer reported about an offered folder (#1717). Peer supplied.
+export interface SoulseekInfo {
+  username: string
+  freeSlot: boolean
+  queueLength: number
+  uploadSpeed: number // bytes per second
+  fileCount: number
+  format: string
+}
+
 export interface SearchResult {
   guid: string
-  indexerId: number
+  // null for a result no indexer produced (a Soulseek peer), so it is absent
+  // from grab bookkeeping rather than 0.
+  indexerId?: number | null
   indexerName: string
   title: string
   size: number
@@ -124,7 +136,8 @@ export interface SearchResult {
   seeders?: number
   peers?: number
   pubDate: string
-  protocol: string   // "usenet" or "torrent"
+  protocol: string   // "usenet", "torrent" or "soulseek"
+  soulseek?: SoulseekInfo // set when protocol is "soulseek"
   language?: string  // ISO 639-1 from newznab:attr language (when present)
   mediaType?: string // "ebook" or "audiobook"; set for dual-format book searches
   approved?: boolean
@@ -161,6 +174,13 @@ export interface IndexerDebug {
   error?: string
 }
 
+export interface SourceDebug {
+  name: string
+  resultCount: number
+  durationMs: number
+  error?: string
+}
+
 export interface PipelineDebug {
   rawCount: number
   afterDedupe: number
@@ -178,6 +198,8 @@ export interface FilterDebug {
 export interface SearchDebug {
   query: SearchQueryDebug
   indexers: IndexerDebug[]
+  // Non indexer search sources that were asked (Soulseek); absent when none were.
+  sources?: SourceDebug[]
   pipeline: PipelineDebug
   filters: FilterDebug[]
   startedAt: string
