@@ -7,6 +7,7 @@ import { api } from '../api/client'
 import { coverColorFor } from '../components/coverPalette'
 import type { Author, Book, Download, SearchResult } from '../api/client'
 import { acceptConfirm, clickBulkAction } from '../test-utils'
+import { useTimeZone } from '../test/useTimeZone'
 
 vi.mock('../api/client', async importOriginal => {
   const actual = await importOriginal<typeof import('../api/client')>()
@@ -33,6 +34,7 @@ vi.mock('react-i18next', () => ({
       if (key === 'bookDetail.filteredHeading') return `Filtered (${String(options?.count)})`
       if (key === 'bookDetail.noResultsFiltered') return `None matched, ${String(options?.count)} filtered.`
       if (key === 'bulkActionBar.selected') return `${String(options?.count)} selected`
+      if (key === 'wanted.upcomingNote') return `Upcoming until ${String(options?.date)}`
 
       const labels: Record<string, string> = {
         'wanted.title': 'Wanted',
@@ -819,6 +821,37 @@ describe('WantedPage upcoming books', () => {
     fireEvent.click(screen.getByRole('button', { name: /^common\.filters/ }))
     fireEvent.click(screen.getByRole('radio', { name: 'wanted.upcomingOnly' }))
     await waitFor(() => expect(api.listWantedPage).toHaveBeenLastCalledWith(expect.objectContaining({ upcoming: 'only' })))
+  })
+})
+
+// The hold ends on the release date, which the server sends as UTC midnight.
+// It is a calendar date, so a browser west of UTC must not show the day before.
+describe('WantedPage upcoming date west of UTC', () => {
+  useTimeZone('America/Los_Angeles')
+
+  it('runs in a zone west of UTC', () => {
+    expect(new Date('2027-01-15T00:00:00Z').getDate()).toBe(14)
+  })
+
+  it('shows the release day, not the day before', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([
+      makeBook({ id: 1, title: 'Oathbringer', searchHeldUntil: '2027-01-15T00:00:00Z' }),
+    ]))
+    renderWantedPage()
+    await screen.findByText('Oathbringer')
+    const note = screen.getByTestId('wanted-upcoming').textContent ?? ''
+    expect(note).toContain('15')
+    expect(note).toContain('2027')
+    expect(note).not.toContain('14')
+  })
+
+  it('leaves the date blank rather than printing an unparseable one', async () => {
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([
+      makeBook({ id: 1, title: 'Oathbringer', searchHeldUntil: 'nope' }),
+    ]))
+    renderWantedPage()
+    await screen.findByText('Oathbringer')
+    expect(screen.getByTestId('wanted-upcoming').textContent).toBe('Upcoming until ')
   })
 })
 

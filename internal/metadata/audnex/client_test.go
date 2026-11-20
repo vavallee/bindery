@@ -121,3 +121,49 @@ func TestGetBook_ContextCanceled(t *testing.T) {
 		t.Errorf("expected nil book on cancellation, got %+v", b)
 	}
 }
+
+// #3982: the region a client was built with is the one every request names,
+// and an empty or unsupported one means us.
+func TestGetBookSendsConfiguredRegion(t *testing.T) {
+	for _, tc := range []struct{ configured, want string }{
+		{"de", "de"},
+		{"DE", "de"},
+		{" uk ", "uk"},
+		{"", "us"},
+		{"xx", "us"},
+	} {
+		var got string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got = r.URL.Query().Get("region")
+			http.NotFound(w, r)
+		}))
+		c := New(tc.configured)
+		c.baseURL = srv.URL
+		if _, err := c.GetBook(context.Background(), "B0FDGG4R6M"); err != nil {
+			t.Fatal(err)
+		}
+		srv.Close()
+		if got != tc.want {
+			t.Errorf("New(%q) sent region=%q, want %q", tc.configured, got, tc.want)
+		}
+	}
+}
+
+func TestWithRegionSharesGateAndLeavesReceiver(t *testing.T) {
+	c := New("us")
+	d := c.WithRegion("de")
+	if c.Region() != "us" || d.Region() != "de" {
+		t.Fatalf("regions = %q and %q, want us and de", c.Region(), d.Region())
+	}
+	if c.gate != d.gate || c.http != d.http {
+		t.Error("WithRegion must share the refusal gate and HTTP client")
+	}
+	for _, r := range Regions {
+		if !ValidRegion(r) {
+			t.Errorf("%q is listed but not valid", r)
+		}
+	}
+	if ValidRegion("br") || ValidRegion("") {
+		t.Error("br and empty must not be valid regions")
+	}
+}

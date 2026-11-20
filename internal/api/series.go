@@ -214,7 +214,8 @@ type seriesListResponse struct {
 // the envelope the default, is the follow-up.
 func (h *SeriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Owner-scoped books (#1457): a non-admin must not enumerate other
-	// users' titles through the series view. Series rows stay global.
+	// users' titles through the series view, and a series linked only to
+	// other users' books is left out of the list and its total.
 	userID := auth.ListScopeUserID(r.Context())
 
 	q := r.URL.Query()
@@ -1164,12 +1165,31 @@ func (h *SeriesHandler) SearchHardcover(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, results)
 }
 
+// requireVisibleSeries answers 404 and returns false when the caller cannot
+// see the series (it links none of their books), the same answer a missing id
+// gets. Admins and tenancy-off installs see every series.
+func (h *SeriesHandler) requireVisibleSeries(w http.ResponseWriter, r *http.Request, id int64) bool {
+	s, err := h.series.GetByIDForUser(r.Context(), id, auth.ListScopeUserID(r.Context()))
+	if err != nil {
+		writeServerError(w, r, err)
+		return false
+	}
+	if s == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "series not found"})
+		return false
+	}
+	return true
+}
+
 func (h *SeriesHandler) GetHardcoverLink(w http.ResponseWriter, r *http.Request) {
 	if !h.requireEnhancedHardcoverAPI(w, r) {
 		return
 	}
 	id, ok := parseID(w, r)
 	if !ok {
+		return
+	}
+	if !h.requireVisibleSeries(w, r, id) {
 		return
 	}
 	link, err := h.series.GetHardcoverLink(r.Context(), id)

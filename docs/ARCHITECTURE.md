@@ -44,6 +44,12 @@ official English title of a match with a clear best score, the same volume
 numbers and a matching author, never over a locked title (see
 [third-party-data.md](third-party-data.md#ranobedb)).
 
+`metadata.audnex_region` picks the Audible marketplace audnex is asked (`us` by
+default; `ca`, `uk`, `au`, `fr`, `de`, `jp`, `it`, `in` and `es` are accepted). The
+audnex client is rebuilt for the new region on a save, sharing the old one's
+refusal gate, and the aggregator's answer cache starts empty so a result cached
+for one marketplace is not served for another (#3982).
+
 An author's photo and bio come from the author's own provider. When it has none,
 the optional *author enrichers* fill the gap on the staggered `refresh-metadata`
 job and on the two single author actions, adding an author and its Refresh

@@ -59,7 +59,8 @@ func (r *EditionRepo) ListByBooks(ctx context.Context, bookIDs []int64) (map[int
 		rows, err := r.exec.QueryContext(ctx, `
 			SELECT id, foreign_id, book_id, title, isbn_13, isbn_10, asin, publisher,
 			       publish_date, format, num_pages, language, image_url, is_ebook,
-			       edition_info, monitored, created_at, updated_at, narrators, edition_type
+			       edition_info, monitored, created_at, updated_at, narrators, edition_type,
+			       COALESCE(locked_fields, '[]'), CAST(updated_at AS TEXT)
 			FROM editions WHERE book_id IN (`+placeholders+`) ORDER BY id`, args...) // #nosec G202 -- placeholders are fixed ? tokens; IDs stay bound args
 		if err != nil {
 			return nil, fmt.Errorf("list editions by books: %w", err)

@@ -354,6 +354,59 @@ func TestWikidataAuthorEnricherIsOptInAndAppliesLive(t *testing.T) {
 	}
 }
 
+// #3982: metadata.audnex_region applies to the next lookup without a restart,
+// defaults to us, and a stored value audnex would refuse falls back to us.
+func TestAudnexRegionSettingAppliesLive(t *testing.T) {
+	m, repo := metadataProvidersFixture(t)
+	ctx := context.Background()
+	set := m.build(ctx)
+	if set.audnexRegion != "us" {
+		t.Fatalf("default region = %q, want us", set.audnexRegion)
+	}
+	agg := metadata.NewAggregator(set.primary, set.enrichers...)
+	agg.SetAudnexRegion(set.audnexRegion)
+	if got := agg.AudnexRegion(); got != "us" {
+		t.Fatalf("boot region = %q, want us", got)
+	}
+	if !metadataProviderSettingKeys[api.SettingMetadataAudnexRegion] {
+		t.Fatal("saving the audnex region does not trigger a rebuild")
+	}
+
+	h := api.NewSettingsHandler(repo).WithChangeHook(metadataProvidersReconfigurer(m, agg))
+	put := func(value string) int {
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("key", api.SettingMetadataAudnexRegion)
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/setting/"+api.SettingMetadataAudnexRegion, strings.NewReader(`{"value":"`+value+`"}`))
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		rec := httptest.NewRecorder()
+		h.Set(rec, req)
+		return rec.Code
+	}
+	if code := put("de"); code != http.StatusOK {
+		t.Fatalf("PUT de: status %d", code)
+	}
+	if got := agg.AudnexRegion(); got != "de" {
+		t.Errorf("region after saving de = %q, want de", got)
+	}
+	if code := put("br"); code != http.StatusBadRequest {
+		t.Errorf("PUT br: status %d, want 400", code)
+	}
+	if got := agg.AudnexRegion(); got != "de" {
+		t.Errorf("a refused value changed the region to %q", got)
+	}
+
+	// A hand edited database can still hold anything.
+	if err := repo.Set(ctx, api.SettingMetadataAudnexRegion, "atlantis"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.apply(ctx, agg); err != nil {
+		t.Fatal(err)
+	}
+	if got := agg.AudnexRegion(); got != "us" {
+		t.Errorf("unsupported stored region gave %q, want us", got)
+	}
+}
+
 // TestRanobeDBBookEnricherIsOptInAndAppliesLive covers #2012: the RanobeDB
 // enricher is off until its setting is saved as true, a save wires it into
 // the running aggregator without a restart and after every other enricher,

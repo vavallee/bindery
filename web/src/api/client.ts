@@ -28,6 +28,7 @@ import { settingsApi } from './settings'
 import { calibreApi } from './calibre'
 import { grimmoryApi } from './grimmory'
 import { absApi } from './abs'
+import { bookOrbitApi } from './bookorbit'
 import { importListsApi } from './importlists'
 import { recommendationsApi } from './recommendations'
 import { adoptionApi } from './adoption'
@@ -59,6 +60,7 @@ export type * from './settings'
 export type * from './calibre'
 export type * from './grimmory'
 export type * from './abs'
+export type * from './bookorbit'
 export type * from './importlists'
 export type * from './recommendations'
 export type * from './adoption'
@@ -90,6 +92,7 @@ export const api = {
   ...calibreApi,
   ...grimmoryApi,
   ...absApi,
+  ...bookOrbitApi,
   ...importListsApi,
   ...recommendationsApi,
   ...adoptionApi,

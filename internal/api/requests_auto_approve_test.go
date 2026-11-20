@@ -22,7 +22,7 @@ import (
 
 func setAutoApprove(t *testing.T, f *requestsFixture, userID int64, enabled bool) {
 	t.Helper()
-	if err := f.users.SetRequestsAutoApprove(context.Background(), userID, enabled); err != nil {
+	if err := f.users.SetRequestsAutoApprove(context.Background(), userID, &enabled); err != nil {
 		t.Fatalf("set auto approve: %v", err)
 	}
 }
@@ -331,7 +331,7 @@ func TestUserMgmt_SetAutoApprove(t *testing.T) {
 		t.Fatalf("SetAutoApprove status=%d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	got, _ := users.GetByID(ctx, u.ID)
-	if got == nil || !got.RequestsAutoApprove {
+	if got == nil || got.RequestsAutoApprove == nil || !*got.RequestsAutoApprove {
 		t.Fatalf("auto approve not persisted, got %+v", got)
 	}
 
@@ -344,7 +344,7 @@ func TestUserMgmt_SetAutoApprove(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != 1 || !listed[0].AutoApproveRequests {
+	if len(listed) != 1 || listed[0].AutoApproveRequests == nil || !*listed[0].AutoApproveRequests || !listed[0].AutoApproveEffective {
 		t.Fatalf("users list did not report auto approve: %+v", listed)
 	}
 
@@ -353,7 +353,7 @@ func TestUserMgmt_SetAutoApprove(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("SetAutoApprove off status=%d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	if got, _ = users.GetByID(ctx, u.ID); got.RequestsAutoApprove {
+	if got, _ = users.GetByID(ctx, u.ID); got.RequestsAutoApprove == nil || *got.RequestsAutoApprove {
 		t.Fatal("auto approve still on after being turned off")
 	}
 }
@@ -382,5 +382,77 @@ func TestUserMgmt_SetAutoApprove_BadRequests(t *testing.T) {
 	h.SetAutoApprove(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("non-numeric id status=%d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// A book an admin skipped does not auto approve (#3898, #3954). It is in the
+// library without a file, so a requester may ask for it, but approving that
+// request turns the book back into a wanted one. That is a human's call: the
+// request waits in the queue and the book is left exactly as it was.
+func TestRequestsCreate_AutoApproveLeavesExistingBookForAHuman(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	setAutoApprove(t, f, f.requester.ID, true)
+	ctx := context.Background()
+	author := seedWells(t, f.authors)
+	book := &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war of the worlds", Status: models.BookStatusSkipped, Monitored: false, MediaType: models.MediaTypeEbook}
+	if err := f.books.Create(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := decodeRequest(t, rec); got.Status != models.RequestStatusPending {
+		t.Fatalf("status %q, want pending: a request for an existing book must wait for an admin", got.Status)
+	}
+	after, err := f.books.GetByID(ctx, book.ID)
+	if err != nil || after == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if after.Status != models.BookStatusSkipped || after.Monitored {
+		t.Fatalf("skipped book was rewritten without an admin: status %q monitored %v", after.Status, after.Monitored)
+	}
+}
+
+// The same holds when the create reopens a request approved earlier: the book
+// that approval added is still there, an admin has since skipped it, and
+// asking again waits for a human.
+func TestRequestsCreate_AutoApproveReopenLeavesExistingBookForAHuman(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	ctx := context.Background()
+
+	first := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first create: %d %s", first.Code, first.Body.String())
+	}
+	id := decodeRequest(t, first).ID
+	if rec := f.approve(f.admin, id, `{}`); rec.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
+	}
+	book, err := f.books.GetByForeignID(ctx, "OL27482W")
+	if err != nil || book == nil {
+		t.Fatalf("approved book not in the library: %v", err)
+	}
+	book.Status, book.Monitored = models.BookStatusSkipped, false
+	if err := f.books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+
+	setAutoApprove(t, f, f.requester.ID, true)
+	again := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
+	if again.Code != http.StatusCreated {
+		t.Fatalf("second create: %d %s", again.Code, again.Body.String())
+	}
+	got := decodeRequest(t, again)
+	if got.ID != id || got.Status != models.RequestStatusPending {
+		t.Fatalf("reopened request id %d status %q, want id %d pending", got.ID, got.Status, id)
+	}
+	after, err := f.books.GetByID(ctx, book.ID)
+	if err != nil || after == nil {
+		t.Fatalf("reload book: %v", err)
+	}
+	if after.Status != models.BookStatusSkipped || after.Monitored {
+		t.Fatalf("skipped book was rewritten without an admin: status %q monitored %v", after.Status, after.Monitored)
 	}
 }

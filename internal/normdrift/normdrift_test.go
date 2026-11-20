@@ -260,9 +260,11 @@ func TestDiacriticSchemesAreTheDocumentedOnes(t *testing.T) {
 		{"FoldForTitleMatch", textutil.FoldForTitleMatch, "Höhle", "hoehle"},
 		{"NormalizeRelease", indexer.NormalizeRelease, "Höhle", "hoehle"},
 		{"CanonicalDedupKey", indexer.CanonicalDedupKey, "Höhle", "hoehle"},
-		// ...but leaves other diacritics alone, so scripts stay distinct.
-		{"FoldForTitleMatch", textutil.FoldForTitleMatch, "Miéville", "miéville"},
-		{"NormalizeRelease", indexer.NormalizeRelease, "Nesbø", "nesbø"},
+		// ...and folds the other LATIN diacritics (#3952) so "Vallée" meets
+		// "Vallee", while every other script keeps its marks and stays distinct.
+		{"FoldForTitleMatch", textutil.FoldForTitleMatch, "Miéville", "mieville"},
+		{"NormalizeRelease", indexer.NormalizeRelease, "Nesbø", "nesbo"},
+		{"NormalizeRelease", indexer.NormalizeRelease, "Й", "й"},
 		// Author identity STRIPS diacritics instead.
 		{"NormalizeAuthorName", textutil.NormalizeAuthorName, "Höhle", "hohle"},
 		{"NormalizeAuthorName", textutil.NormalizeAuthorName, "Miéville", "mieville"},
@@ -380,6 +382,12 @@ func TestNonLatinScriptsKeepDistinctKeys(t *testing.T) {
 		{"三体", "黑暗森林", "死神永生"},
 		{"刘慈欣", "村上春樹", "遠藤周作"},
 		{"Преступление", "Наказание", "Идиот"},
+		// Kana that differ only by a voicing mark (dakuten, handakuten).
+		// The mark changes the letter, so these are different words; a fold
+		// that strips every combining mark keys them the same (#2452).
+		{"がっこう", "かっこう"},
+		{"ヴィクトル", "ウィクトル"},
+		{"パン", "バン", "ハン"},
 	}
 	for _, fold := range stringFolds {
 		for _, group := range groups {

@@ -30,15 +30,6 @@ func TestEffectiveNarrators(t *testing.T) {
 	}
 }
 
-func TestFoldName(t *testing.T) {
-	if FoldName("Rosamund Pike") != FoldName("rosamund  PIKE.") || FoldName("José Núñez") != "jose nunez" {
-		t.Fatal("fold mismatch")
-	}
-	if FoldName("Scott Brick") == FoldName("Scott Bricks") {
-		t.Fatal("fold must not be fuzzy")
-	}
-}
-
 func TestNormalizers(t *testing.T) {
 	if NormalizeEditionType(" Unabridged ") != EditionTypeUnabridged || NormalizeEditionType("garbage") != "" {
 		t.Fatal("edition type")

@@ -9,6 +9,10 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
+var yes, no = true, false
+
+func isTrue(b *bool) bool { return b != nil && *b }
+
 // The per-account request auto approval flag (#2718) must default off, survive
 // a round trip through GetByID, and be settable back off. A new account must
 // never start approving its own requests just because the column exists.
@@ -29,14 +33,14 @@ func TestUserRepo_RequestsAutoApprove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RequestsAutoApprove {
-		t.Fatal("a new account defaults to auto approving its requests")
+	if got.RequestsAutoApprove != nil {
+		t.Fatal("a new account must have no setting of its own, so it follows the system default")
 	}
 
-	if err := repo.SetRequestsAutoApprove(ctx, u.ID, true); err != nil {
+	if err := repo.SetRequestsAutoApprove(ctx, u.ID, &yes); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ = repo.GetByID(ctx, u.ID); !got.RequestsAutoApprove {
+	if got, _ = repo.GetByID(ctx, u.ID); !isTrue(got.RequestsAutoApprove) {
 		t.Fatal("auto approve did not persist")
 	}
 	// List shares scanUser with GetByID, but it is a different query, so check
@@ -45,14 +49,14 @@ func TestUserRepo_RequestsAutoApprove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || !list[0].RequestsAutoApprove {
+	if len(list) != 1 || !isTrue(list[0].RequestsAutoApprove) {
 		t.Fatalf("List did not carry auto approve: %+v", list)
 	}
 
-	if err := repo.SetRequestsAutoApprove(ctx, u.ID, false); err != nil {
+	if err := repo.SetRequestsAutoApprove(ctx, u.ID, &no); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ = repo.GetByID(ctx, u.ID); got.RequestsAutoApprove {
+	if got, _ = repo.GetByID(ctx, u.ID); isTrue(got.RequestsAutoApprove) {
 		t.Fatal("turning auto approve off did not persist")
 	}
 }
@@ -67,7 +71,7 @@ func TestUserRepo_SetRequestsAutoApprove_UnknownUser(t *testing.T) {
 	defer database.Close()
 	repo := NewUserRepo(database)
 
-	if err := repo.SetRequestsAutoApprove(context.Background(), 4242, true); !errors.Is(err, ErrUserNotFound) {
+	if err := repo.SetRequestsAutoApprove(context.Background(), 4242, &yes); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("error = %v, want ErrUserNotFound", err)
 	}
 }
@@ -105,13 +109,13 @@ func TestMigration093_AppliesToPopulatedUsers(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("the existing user did not survive the migration: %v", err)
 	}
-	if got.RequestsAutoApprove {
+	if isTrue(got.RequestsAutoApprove) {
 		t.Fatal("the migration switched an existing account to auto approve")
 	}
-	if err := repo.SetRequestsAutoApprove(ctx, u.ID, true); err != nil {
+	if err := repo.SetRequestsAutoApprove(ctx, u.ID, &yes); err != nil {
 		t.Fatalf("the column added by the migration is not writable: %v", err)
 	}
-	if got, _ = repo.GetByID(ctx, u.ID); !got.RequestsAutoApprove {
+	if got, _ = repo.GetByID(ctx, u.ID); !isTrue(got.RequestsAutoApprove) {
 		t.Fatal("the column added by the migration did not persist a write")
 	}
 }

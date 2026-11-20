@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/downloader/rttest"
+
 	"github.com/vavallee/bindery/internal/downloader/deluge"
 	"github.com/vavallee/bindery/internal/downloader/infohash"
 )
@@ -592,11 +594,6 @@ func TestGetTorrents_StalledState(t *testing.T) {
 	}
 }
 
-// roundTripFunc is a test helper that implements http.RoundTripper via a function.
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 // delugeNetTimeoutErr is a minimal net.Error that signals a timeout.
 type delugeNetTimeoutErr struct{}
 
@@ -609,7 +606,7 @@ func (e *delugeNetTimeoutErr) Temporary() bool { return true }
 func TestTest_DNSNotFound(t *testing.T) {
 	dnsErr := &net.DNSError{Name: "deluge-container", IsNotFound: true}
 	c := deluge.New("deluge-container", 8112, "pw", "", false)
-	c.SetHTTPTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
+	c.SetHTTPTransport(rttest.Func(func(*http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("dial: %w", dnsErr)
 	}))
 
@@ -626,7 +623,7 @@ func TestTest_DNSNotFound(t *testing.T) {
 // TestTest_ConnectionRefused verifies that ECONNREFUSED appends the port hint.
 func TestTest_ConnectionRefused(t *testing.T) {
 	c := deluge.New("127.0.0.1", 8112, "pw", "", false)
-	c.SetHTTPTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
+	c.SetHTTPTransport(rttest.Func(func(*http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("dial tcp: %w", syscall.ECONNREFUSED)
 	}))
 
@@ -643,7 +640,7 @@ func TestTest_ConnectionRefused(t *testing.T) {
 // TestTest_Timeout verifies that a timeout error appends the firewall hint.
 func TestTest_Timeout(t *testing.T) {
 	c := deluge.New("10.0.0.1", 8112, "pw", "", false)
-	c.SetHTTPTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
+	c.SetHTTPTransport(rttest.Func(func(*http.Request) (*http.Response, error) {
 		return nil, &delugeNetTimeoutErr{}
 	}))
 

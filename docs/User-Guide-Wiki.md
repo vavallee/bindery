@@ -48,6 +48,10 @@ an arbitrary release is unreliable. The escape hatches:
   at a folder of files you already have and matches them to books; files already
   tracked in the library are skipped by default, and toggling **Show already
   imported** surfaces them again, e.g. to spot a corrupted file or relink one.
+  In External import mode a file whose download is still handed off to your
+  import tool is skipped the same way, and listed as already handed off when
+  the toggle is on, so a rescan cannot drop it twice. It is offered again once
+  the drop fails or is blocked, or its Queue row is removed.
   The folder browser starts at your root folders, the download directories and
   any **import source folders** an admin lists under Settings, General, Import
   (`import.source_folders`, one absolute path per line). A source folder is a
@@ -234,6 +238,14 @@ matches none of the books with that title and the folder name does. Loose files 
 filename alone; if those are misread, move them into author folders, or use
 Manual Import, which lets you pick the right book.
 
+A release folder, one whose name carries a format tag such as `[epub]` or
+`(m4b)`, like `The War of the Worlds - H. G. Wells [m4b]`, is read as a release
+name when a file sits directly in it: the author and title come from the name
+and the tags come off. A tagged folder with a book folder below it is still an
+author folder. Initials keep their dots (`H. G. Wells`, `J.R.R. Tolkien`) so the
+metadata search sees the name the way providers spell it; the same applies to
+automatic import and the library scan (#3974).
+
 Every token, the brace rules and some layouts to copy are in
 [File naming templates](File-Naming-Wiki.md).
 
@@ -267,7 +279,12 @@ monitored.
 | **Library imports** (Calibre, Readarr, ABS, Goodreads CSV, author list) | Your existing catalogue — see the next section |
 
 **Add Author** and **Add Book** open the same dialog. Type an author name, a
-title, an ISBN or an ASIN and press Enter. The **All / Books / Authors** control
+title, an ISBN or an ASIN and press Enter. If a book has a page on Hardcover
+that the search does not return, paste the page's address
+(`https://hardcover.app/books/<slug>`) or type `hc:<slug>`: that fetches the
+one book straight from Hardcover and offers it like any other result, so you
+can add it and then edit whatever Hardcover has too little of. This needs a
+Hardcover API token in Settings → API Keys. The **All / Books / Authors** control
 under the search box picks what the results show: *Books* is a flat list of
 books, best title match first; *Authors* is author rows only; *All* lists
 authors first, each followed by the books the provider attributes to them, with
@@ -303,7 +320,10 @@ Two settings decide whether an author add stays a trickle or becomes a flood:
   books it discovers at all. *Follow monitor mode* adds them and monitors them
   per the mode; *Don't add them* keeps the refresh to the books you already
   have. Library imports (Calibre, ABS) set *Don't add them* on the authors they
-  create, because those catalogues are partial by design.
+  create, because those catalogues are partial by design. The default for
+  authors you add yourself lives in Settings → Metadata Profiles → Library
+  Defaults → **Default for monitoring newly discovered books**. It only applies
+  to authors added after you change it, and the Add Author dialog preselects it.
 
 These two are independent, and monitor mode *None* is not a substitute for the
 second one: it means "list the catalogue, monitor none of it", so a refresh
@@ -365,6 +385,15 @@ many grabs can be dead today; seeders is the number to read when picking a
 torrent by hand, and a release with 0 seeders is shown in red. Peers is
 seeders plus leechers, as the indexer counts them. Usenet results, and torrent
 indexers that leave the counts out, show neither.
+
+Automatic search also reads seeders (#3953). A torrent its indexer reports with
+0 seeders is never grabbed automatically, since nothing can finish it: Bindery
+takes the next release instead, and if every candidate is dead it grabs nothing
+and the book stays Wanted for a later search to find a seeded copy. A torrent
+whose indexer does not report seeders is treated as unknown, not dead, and
+usenet is unaffected. Seeders also break ties between otherwise similar
+results, with a small capped bonus that never outweighs a better format or the
+grab count. Interactive search still lists and grabs zero seeder releases by hand.
 
 **Two language titles.** A translated book whose title is stored as
 "translated / original", such as "El imperio final / The Final Empire", is
@@ -761,6 +790,10 @@ File Naming (`import.ebook.content_check`, admin only):
   the file anyway and skips the check; **Retry import** runs it again.
 - **Off**: the check does not run and no file is opened for it.
 
+In External import mode with a drop folder the same check runs before the file is
+placed in the drop folder, with the same Warn and Block behaviour. With no drop
+folder nothing is placed and it does not run.
+
 Block is opt in because a wrongly refused download costs more than a missed
 mismatch. The check only runs for downloads Bindery grabbed for a book. A library
 scan, manual import, **Match to book** and a download matched to its book from
@@ -834,6 +867,10 @@ The setting is **Check audiobook contents** next to the ebook one
   skips the check, and **Retry import** runs it again.
 - **Off**: no tag is read.
 
+In External import mode with a drop folder this check, and the audiobook language
+check, run before the audiobook is placed in the drop folder, with the same
+behaviour.
+
 Like the ebook check it applies only to downloads grabbed for a book, never to
 a library scan, manual import or **Match to book**, and it does not change the
 files or their tags.
@@ -841,8 +878,22 @@ files or their tags.
 If the library app downstream reads sidecar metadata, turn on **Write a
 metadata.opf sidecar** in Settings → General (off by default). Bindery then
 writes a Calibre style `metadata.opf` next to each imported ebook and
-audiobook with its own title, author, series and identifiers, and refreshes it
-on Reorganize. The book file itself is never modified.
+audiobook with its own title, author, series and identifiers. The book file
+itself is never modified.
+
+Reorganize also refreshes the sidecar, for every book it touches: one it moves
+and one that is already in the right place (#4008, #4034), so a library gets
+consistent sidecars without renaming anything. It only
+writes a `metadata.opf` that is missing or that Bindery wrote itself (new files
+carry a `bindery:generator` marker). A `metadata.opf` from Calibre,
+Audiobookshelf or a hand edit is left alone and counted as skipped, and a file
+that is already up to date is not rewritten. A folder that holds more than one book (a flat
+template such as `{Author}/{Title}.{ext}`) gets no sidecar, since one file cannot
+describe two books, and a `metadata.opf` that is a symlink is never replaced.
+When Reorganize finds a folder is shared and it holds a `metadata.opf` that
+Bindery wrote earlier, it removes that stale file. Formats in External import mode
+are skipped, unless Reorganize also moves the file after you confirm. A write that fails, say on a read only mount, is reported for that
+book and the run carries on. Imports still replace an existing sidecar.
 
 **Queue and History.** The Queue page shows live downloads and, importantly,
 the recovery actions: **Retry import** (after fixing a path remap), **Retry
@@ -852,7 +903,15 @@ book** (attach a failed import to the right book and import it from disk), and
 per-row error detail. An `imported` row leaves the Queue after 7 days (it stays on History), failed and blocked rows stay until you deal with them, and Bindery deletes finished download rows older than `BINDERY_DOWNLOAD_RETENTION_DAYS` (90 by default, `0` keeps them). Once a row is trimmed, Bindery no longer remembers that exact release was grabbed, so if you later delete the file and the book is wanted again, the same release can be grabbed again. Tick rows for **Retry selected**, or use **Retry all
 failed** to cover every failed row at once. If a download client does not answer
 in time the page says so above the list, so a short Queue is never mistaken for
-lost downloads. History records every grab/import/failure and can
+lost downloads. The chips above the list filter by state, each with a count:
+**All**, **Active** (everything that has not failed), **Downloading**,
+**Importing**, **Held** (parked for pair gating), **Handed off** (waiting on your
+External import tool), **Needs attention** (an import that failed or is blocked
+and waits for Match to book or Retry import) and **Failed**. A state chip with
+nothing in it is hidden. Failed also holds the rows Needs attention shows, plus
+downloads that never produced a file. The chosen chip is kept in the address
+(`/queue?view=held`), and the older `?view=active` and `?view=failed` links work
+as before. A **Handed off** row has a **Scan library** button (admins only): it runs the same library scan as Settings, which picks up the file your External import tool placed in your library, and the book then shows as owned. The row stays under Handed off until you use **Remove** on it. The scan covers the whole library, since there is no narrower scan, and the page says so if a scan is already running. Held rows have nothing to act on until the paired format arrives, and Needs attention rows keep Match to book and Retry import. History records every grab/import/failure and can
 blocklist a bad release in one click. A release NZBGet or SABnzbd fails as
 broken (missing articles, a failed repair or unpack, a corrupt archive) is
 blocklisted for you, with the client's verdict as the reason, so the next
@@ -914,6 +973,7 @@ matches where your metadata lives, then scan:
 | A Calibre library | Settings → Calibre → **Library import** (reads `metadata.db`, creates authors + books) |
 | A Readarr install | Settings → Import / Migrate → upload `readarr.db` ([guide](Migrating-From-Readarr-Wiki.md)) |
 | An Audiobookshelf server | Settings → Audiobookshelf → configure + **Import** ([guide](ABS-Import-Wiki.md)) |
+| A BookOrbit server | Settings → BookOrbit → configure + **Import libraries** ([guide](BookOrbit-Import.md)) |
 | A Goodreads account | Settings → Import / Migrate → **Goodreads CSV** (export, filter by shelf, preview, commit) |
 | Just a list of authors | Settings → Import / Migrate → **Upload CSV**, one author name per line |
 | Only folders of files | Scan the library, then adopt on **Import → In your library**; or use **Import → From a folder** for files outside the library |
@@ -1262,7 +1322,10 @@ each destination on the server rather than trusting the list you were shown, so
 a file that changed under you is skipped instead of moved somewhere stale. A
 move is always a move, never a copy, so hardlinks survive and nothing is
 duplicated. Bindery also prunes the folder a file left behind when it empties,
-and refreshes the `metadata.opf` sidecar when you have that turned on.
+and refreshes the `metadata.opf` sidecar when you have that turned on (see
+above for what it will and will not overwrite). The dialog also lists files that
+are already correct but still need a sidecar, and the result counts how many
+sidecars were written and how many were skipped.
 
 An audiobook folder moves as a whole, so one that also holds a file another
 book tracks (say a second copy of the same title added from another metadata
@@ -1295,6 +1358,10 @@ Three scopes, all the same preview:
 | One book | the book page, **More** → Rename files |
 | One author | the author page, **More** → Rename files |
 | Your whole library | Settings → General → Library → **Reorganize Library** (#2296) |
+
+**External import mode.** If ebooks or audiobooks are in External import mode, another
+tool owns that layout, so the dialog shows a warning and the Rename button stays off
+until you tick a confirmation. Only files of those formats are affected.
 
 **Run Scan library first.** Reorganize only knows about files already attached
 to a book, so anything sitting in your library that no scan has matched is
@@ -1754,6 +1821,21 @@ commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
   and you can still grab it by hand. The same reason appears in the search debug
   view.
 
+## How Settings save
+
+Settings save in one of two ways, and both tell you the result. A field with its
+own **Save** button, such as a folder path or a naming template, saves when you
+press the button, which shows Saving, then Saved or Error. Everything else saves
+the moment you change it: a select, a toggle, or a button like the Import Mode
+choices. Those show a short message in the bottom corner, such as "Import Mode
+set to External" or "Telemetry saved", and a red "Couldn't save ..." message if
+the request failed, so you no longer need to reload the page to check that a
+change stuck. Messages stack, up to five at a time, rather than replacing each
+other, so a failure is never hidden by a later success. A failed save also puts
+the control back on the value that is actually saved. A number field such as
+Latest book count saves when you leave the field or press Enter, not on each
+digit, and says so beside the field if the number is not valid.
+
 ## Finding a setting when you do not know its tab
 
 The search box at the top of Settings matches tab names, section headings and
@@ -1849,7 +1931,8 @@ Knowing the edges saves time:
   not a book file: imports place regular files only (a symlink inside a
   download never lands in your library, and a download folder that is itself
   a symlink is refused in every import mode, including the drop folder
-  handoff), Library Scan and the
+  handoff; a file the download client lists that sits behind a symlinked
+  folder resolving outside the download is skipped), Library Scan and the
   Audiobookshelf import do not attach one to a book, and downloads (browser,
   OPDS, the Calibre bridge) refuse to serve one. An audiobook zip leaves out
   any link inside the book folder, file or folder. Replace a linked file with

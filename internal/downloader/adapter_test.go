@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
+
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
@@ -150,10 +152,8 @@ func TestGetLiveStatusesTransmission(t *testing.T) {
 }
 
 func TestGetLiveStatusesQbittorrent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_ = json.NewEncoder(w).Encode([]map[string]any{{
 				"hash":        "ABCDEF",
@@ -167,8 +167,7 @@ func TestGetLiveStatusesQbittorrent(t *testing.T) {
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
@@ -352,10 +351,8 @@ func TestTestClient_Transmission(t *testing.T) {
 }
 
 func TestTestClient_Qbittorrent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/app/version":
 			_, _ = w.Write([]byte("1.2.3"))
 		case "/api/v2/torrents/info":
@@ -363,8 +360,7 @@ func TestTestClient_Qbittorrent(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
 	if err := TestClient(context.Background(), client); err != nil {
@@ -600,10 +596,8 @@ func TestSendDownload_Transmission_AbsoluteCategorySentAsDownloadDir(t *testing.
 
 func TestSendDownload_Qbittorrent(t *testing.T) {
 	var gotSavePath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			_ = r.ParseForm()
 			gotSavePath = r.FormValue("savepath")
@@ -613,8 +607,7 @@ func TestSendDownload_Qbittorrent(t *testing.T) {
 				{"hash": "ABCDEF123", "progress": 0.0},
 			})
 		}
-	}))
-	defer srv.Close()
+	})
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p", PathRemap: "/media:/books"}
 	result, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{
@@ -637,17 +630,14 @@ func TestSendDownload_Qbittorrent(t *testing.T) {
 
 func TestSendDownload_QbittorrentAudiobookSavePath(t *testing.T) {
 	var gotSavePath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			_ = r.ParseForm()
 			gotSavePath = r.FormValue("savepath")
 			_, _ = w.Write([]byte("Ok."))
 		}
-	}))
-	defer srv.Close()
+	})
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p", PathRemap: "/media:/books"}
 	_, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{
@@ -672,10 +662,8 @@ func TestSendDownload_QbittorrentAudiobookSavePath(t *testing.T) {
 func TestSendDownload_QbittorrentAudiobookCategory(t *testing.T) {
 	var gotCategory, gotAutoTMM string
 	var savePathPresent bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			_ = r.ParseForm()
 			gotCategory = r.FormValue("category")
@@ -685,8 +673,7 @@ func TestSendDownload_QbittorrentAudiobookCategory(t *testing.T) {
 		case "/api/v2/torrents/info":
 			_, _ = w.Write([]byte("[]"))
 		}
-	}))
-	defer srv.Close()
+	})
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{
 		Type:              "qbittorrent",
@@ -722,10 +709,8 @@ func TestSendDownload_QbittorrentAudiobookCategory(t *testing.T) {
 // CategoryAudiobook is configured — backwards-compat guard for #700.
 func TestSendDownload_QbittorrentEbookCategoryUnchanged(t *testing.T) {
 	var gotCategory string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			_ = r.ParseForm()
 			gotCategory = r.FormValue("category")
@@ -733,8 +718,7 @@ func TestSendDownload_QbittorrentEbookCategoryUnchanged(t *testing.T) {
 		case "/api/v2/torrents/info":
 			_, _ = w.Write([]byte("[]"))
 		}
-	}))
-	defer srv.Close()
+	})
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{
 		Type:              "qbittorrent",
@@ -896,15 +880,12 @@ func TestRemoveDownload_Transmission_NilID(t *testing.T) {
 }
 
 func TestRemoveDownload_Qbittorrent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		default:
 			_, _ = w.Write([]byte(""))
 		}
-	}))
-	defer srv.Close()
+	})
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
 	hash := "abc123"
@@ -1102,17 +1083,14 @@ func TestTorrentSavePath_RemapPrecedence(t *testing.T) {
 // path must be the client's own, not Bindery's container folder (#2665).
 func TestSendDownload_QbittorrentGlobalRemapOnly(t *testing.T) {
 	var gotSavePath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/add":
 			_ = r.ParseForm()
 			gotSavePath = r.FormValue("savepath")
 			_, _ = w.Write([]byte("Ok."))
 		}
-	}))
-	defer srv.Close()
+	})
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
 	_, err := SendDownload(context.Background(), client, "magnet:?xt=urn:btih:ABCDEF123&dn=Book", "", SendOptions{

@@ -139,16 +139,16 @@ func TestDestPath_ExtensionGuard(t *testing.T) {
 	writeBytesAt(t, epub, epubBytes())
 
 	// Content supplies the extension for an extensionless source.
-	got, err := NewRenamer("{Title}.{ext}").DestPath("/lib", author, book, "", "", epub)
+	got, err := NewRenamerWithAudiobook("{Title}.{ext}", "").DestPath("/lib", author, book, "", "", epub)
 	if err != nil || got != "/lib/Dr. Book.epub" {
 		t.Fatalf("got %q %v", got, err)
 	}
 	// A dotted title does not hide a missing dot before {ext}.
-	if _, err := NewRenamer("{Title}{ext}").DestPath("/lib", author, book, "", "", "x.epub"); !errors.Is(err, ErrEbookNoExtension) {
+	if _, err := NewRenamerWithAudiobook("{Title}{ext}", "").DestPath("/lib", author, book, "", "", "x.epub"); !errors.Is(err, ErrEbookNoExtension) {
 		t.Fatalf("err = %v, want ErrEbookNoExtension", err)
 	}
 	// No extension anywhere.
-	if _, err := NewRenamer("{Title}.{ext}").DestPath("/lib", author, book, "", "", filepath.Join(dir, "none")); !errors.Is(err, ErrEbookNoExtension) {
+	if _, err := NewRenamerWithAudiobook("{Title}.{ext}", "").DestPath("/lib", author, book, "", "", filepath.Join(dir, "none")); !errors.Is(err, ErrEbookNoExtension) {
 		t.Fatalf("err = %v, want ErrEbookNoExtension", err)
 	}
 }
@@ -265,17 +265,17 @@ func TestReorganize_HistoryVersusContent(t *testing.T) {
 func TestDestPath_GuardEdges(t *testing.T) {
 	author := &models.Author{Name: "Jane Doe"}
 	// A trailing dot with an extension available still has no extension.
-	if _, err := NewRenamer("{Title}.").DestPath("/lib", author, &models.Book{Title: "Book"}, "", "", "x.epub"); !errors.Is(err, ErrEbookNoExtension) {
+	if _, err := NewRenamerWithAudiobook("{Title}.", "").DestPath("/lib", author, &models.Book{Title: "Book"}, "", "", "x.epub"); !errors.Is(err, ErrEbookNoExtension) {
 		t.Errorf("trailing dot: err = %v", err)
 	}
 	// A template with no {ext} at all must still end in an extension; a dot
 	// inside the title is not one.
 	for _, title := range []string{"Book", "Dr. Book"} {
-		if _, err := NewRenamer("{Author}/{Title}").DestPath("/lib", author, &models.Book{Title: title}, "", "", "x.epub"); !errors.Is(err, ErrEbookNoExtension) {
+		if _, err := NewRenamerWithAudiobook("{Author}/{Title}", "").DestPath("/lib", author, &models.Book{Title: title}, "", "", "x.epub"); !errors.Is(err, ErrEbookNoExtension) {
 			t.Errorf("no {ext} template, title %q: err = %v", title, err)
 		}
 	}
-	if got, err := NewRenamer("{Title}.kepub").DestPath("/lib", author, &models.Book{Title: "Book"}, "", "", "x.epub"); err != nil || got != "/lib/Book.kepub" {
+	if got, err := NewRenamerWithAudiobook("{Title}.kepub", "").DestPath("/lib", author, &models.Book{Title: "Book"}, "", "", "x.epub"); err != nil || got != "/lib/Book.kepub" {
 		t.Errorf("fixed extension template: %q %v", got, err)
 	}
 }
@@ -283,7 +283,7 @@ func TestDestPath_GuardEdges(t *testing.T) {
 func TestDropEbookName_UsesRecoveredExtension(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "noext")
 	writeBytesAt(t, src, epubBytes())
-	got := NewRenamer("").DropEbookName(&models.Author{Name: "Jane Doe"}, &models.Book{Title: "Book"}, src)
+	got := NewRenamerWithAudiobook("", "").DropEbookName(&models.Author{Name: "Jane Doe"}, &models.Book{Title: "Book"}, src)
 	if got != "Book - Jane Doe.epub" {
 		t.Errorf("got %q", got)
 	}

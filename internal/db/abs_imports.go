@@ -176,17 +176,30 @@ func (r *ABSImportRunRepo) ListRecent(ctx context.Context, limit int) ([]models.
 // break keeps the order stable when two rows share a started_at, which
 // otherwise lets a row repeat or vanish between pages.
 func (r *ABSImportRunRepo) ListPage(ctx context.Context, limit, offset int) ([]models.ABSImportRun, error) {
+	return r.listPage(ctx, "", limit, offset)
+}
+
+// ListPageBySource is ListPage narrowed to the runs of one source. The table
+// holds every importer that runs through the Audiobookshelf import engine, so
+// each one's history lists only its own rows.
+func (r *ABSImportRunRepo) ListPageBySource(ctx context.Context, sourceID string, limit, offset int) ([]models.ABSImportRun, error) {
+	return r.listPage(ctx, strings.TrimSpace(sourceID), limit, offset)
+}
+
+func (r *ABSImportRunRepo) listPage(ctx context.Context, sourceID string, limit, offset int) ([]models.ABSImportRun, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 	if offset < 0 {
 		offset = 0
 	}
+	// An empty sourceID matches every row.
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, source_id, source_label, base_url, library_id, status, dry_run, source_config_json, checkpoint_json, summary_json, started_at, finished_at
 		FROM abs_import_runs
+		WHERE (? = '' OR source_id = ?)
 		ORDER BY started_at DESC, id DESC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT ? OFFSET ?`, sourceID, sourceID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list recent abs import runs: %w", err)
 	}
@@ -345,21 +358,23 @@ func (r *ABSImportRunEntityRepo) Record(ctx context.Context, entity *models.ABSI
 	}
 	outcome = mergeABSRunEntityOutcome(existingOutcome, outcome)
 	metadataJSON = mergeABSRunEntityMetadata(existingMetadataJSON, metadataJSON)
-	result, err := r.db.ExecContext(ctx, `
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO abs_import_run_entities (run_id, source_id, library_id, item_id, entity_type, external_id, local_id, outcome, metadata_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(run_id, entity_type, external_id, local_id) DO UPDATE SET
 			item_id = excluded.item_id,
 			outcome = excluded.outcome,
-			metadata_json = excluded.metadata_json`,
-		entity.RunID, sourceID, entity.LibraryID, entity.ItemID, entity.EntityType, entity.ExternalID, entity.LocalID, outcome, metadataJSON)
+			metadata_json = excluded.metadata_json
+		RETURNING id`,
+		entity.RunID, sourceID, entity.LibraryID, entity.ItemID, entity.EntityType, entity.ExternalID, entity.LocalID, outcome, metadataJSON).Scan(&id)
 	if err != nil {
 		return fmt.Errorf("record abs import run entity %d/%s/%s: %w", entity.RunID, entity.EntityType, entity.ExternalID, err)
 	}
+	// RETURNING, not LastInsertId: a conflict update leaves the connection's
+	// last insert id on an unrelated row (#3978).
 	if entity.ID == 0 {
-		if id, err := result.LastInsertId(); err == nil && id > 0 {
-			entity.ID = id
-		}
+		entity.ID = id
 	}
 	entity.SourceID = sourceID
 	entity.Outcome = outcome

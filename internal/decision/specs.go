@@ -284,6 +284,30 @@ func (s FreeleechOnlySpec) IsSatisfiedBy(r Release, _ models.Book) (bool, string
 	return false, fmt.Sprintf("%s: costs %g× ratio (not freeleech)", RejectionFreeleechHold, *r.DownloadVolumeFactor)
 }
 
+// --- DeadTorrent ---
+
+// RejectionDeadTorrent prefixes every rejection produced by DeadTorrentSpec,
+// so the scheduler can log it without a typed flag.
+const RejectionDeadTorrent = "dead torrent"
+
+// DeadTorrentSpec keeps AUTOMATIC grabs off torrents their indexer reports
+// with zero seeders (#3953). Nothing can finish such a download, so grabbing
+// it only holds a queue slot until the stall timeout fires.
+//
+// Only a count the indexer reported as 0 rejects. A missing count (nil) is
+// unknown, not zero: some indexers omit the attribute, and treating that as
+// dead would stop every grab from them. Usenet has no swarm and always passes.
+// Interactive search builds its own specification set without this spec, so a
+// user can still see and grab a zero-seeder release by hand.
+type DeadTorrentSpec struct{}
+
+func (DeadTorrentSpec) IsSatisfiedBy(r Release, _ models.Book) (bool, string) {
+	if r.Protocol != "torrent" || r.Seeders == nil || *r.Seeders > 0 {
+		return true, ""
+	}
+	return false, RejectionDeadTorrent + ": the indexer reports 0 seeders"
+}
+
 // --- MultiBookPack ---
 
 // RejectionMultiBookPack prefixes every rejection produced by

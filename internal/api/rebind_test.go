@@ -561,3 +561,83 @@ func TestRebind_KeepsFieldsTheFetchCouldNotDetermine(t *testing.T) {
 		t.Errorf("description is determined absent and should clear, got %q", got.Description)
 	}
 }
+
+// Rebinding to an omnibus edition must not strip the real series the book
+// already had: Hardcover's ref for the wrapper is dropped on purpose (#3317),
+// so unlink then relink would otherwise leave the book with no series.
+func TestRebind_KeepsRealSeriesWhenUpstreamIsEditionWrapper(t *testing.T) {
+	h, _, _, series, author, book, ctx := rebindFixture(t)
+
+	real := &models.Series{ForeignID: "hc-series:839", Title: "The Liveship Traders"}
+	if err := series.CreateOrGet(ctx, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := series.LinkBook(ctx, real.ID, book.ID, "1", true); err != nil {
+		t.Fatal(err)
+	}
+	stale := &models.Series{ForeignID: "SER_STALE", Title: "Unrelated Old Series"}
+	if err := series.CreateOrGet(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := series.LinkBook(ctx, stale.ID, book.ID, "2", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The provider already dropped the wrapper ref, so SeriesRefs is empty.
+	h.WithMetaLookup(&stubLookup{book: &models.Book{
+		Title:  "The Liveship Traders Trilogy",
+		Author: &models.Author{ForeignID: author.ForeignID},
+	}})
+	rec := httptest.NewRecorder()
+	h.Rebind(rec, rebindRequest(book.ID, map[string]any{"provider": "hardcover", "foreign_id": "hc:omnibus"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	ids, _ := series.GetSeriesIDsForBook(ctx, book.ID)
+	if len(ids) != 1 || ids[0] != real.ID {
+		t.Errorf("want only the real series kept, got %v (real=%d stale=%d)", ids, real.ID, stale.ID)
+	}
+}
+
+// TestRebind_KeepsRecordingFieldLocks pins that a rebind clears the work-field
+// locks (the user asked for the new record's title, description and so on)
+// but keeps narrator, duration and ASIN locks, because it keeps those values:
+// an ASIN the user cleared and locked must not be re-promoted by the hydration
+// that follows the rebind.
+func TestRebind_KeepsRecordingFieldLocks(t *testing.T) {
+	h, books, _, _, author, book, ctx := rebindFixture(t)
+	book.MediaType = models.MediaTypeAudiobook
+	book.ASIN = ""
+	book.Narrator = "My Narrator"
+	book.LockedFields = []string{models.BookFieldTitle, models.BookFieldASIN, models.BookFieldNarrator}
+	if err := books.Update(ctx, book); err != nil {
+		t.Fatal(err)
+	}
+	audioASIN := "B123456789"
+	h.WithMetaLookup(&stubLookup{book: &models.Book{
+		Title:  "Correct Book",
+		Author: &models.Author{ForeignID: author.ForeignID, Name: author.Name},
+	}})
+	h.WithEditionFetcher(func(context.Context, string) ([]models.Edition, error) {
+		return []models.Edition{{ForeignID: "hc:correct-audio-locked", Title: "Correct Book", ASIN: &audioASIN, Format: "Audiobook", Monitored: true}}, nil
+	})
+
+	rec := httptest.NewRecorder()
+	h.Rebind(rec, rebindRequest(book.ID, map[string]any{"provider": "hardcover", "foreign_id": "123"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	updated, err := books.GetByID(ctx, book.ID)
+	if err != nil || updated == nil {
+		t.Fatal(err)
+	}
+	if updated.Title != "Correct Book" || updated.IsFieldLocked(models.BookFieldTitle) {
+		t.Fatalf("rebind must take the new title and drop its lock: title=%q locked=%v", updated.Title, updated.LockedFields)
+	}
+	if updated.ASIN != "" || !updated.IsFieldLocked(models.BookFieldASIN) {
+		t.Fatalf("cleared, locked ASIN was re-promoted or unlocked: asin=%q locked=%v", updated.ASIN, updated.LockedFields)
+	}
+	if updated.Narrator != "My Narrator" || !updated.IsFieldLocked(models.BookFieldNarrator) {
+		t.Fatalf("narrator or its lock lost: narrator=%q locked=%v", updated.Narrator, updated.LockedFields)
+	}
+}

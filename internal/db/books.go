@@ -621,11 +621,6 @@ func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userI
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
 }
 
-// ListByStatusIncludingExcluded returns books with the given status regardless of excluded flag.
-func (r *BookRepo) ListByStatusIncludingExcluded(ctx context.Context, status string) ([]models.Book, error) {
-	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 ORDER BY books.sort_key, sort_title", []any{status})
-}
-
 // ListByStatusIncludingExcludedAndUser is ListByStatusIncludingExcluded scoped
 // to a user's own + unowned books (userID 0 leaves it unscoped, for admins and
 // single-tenant deployments). The excluded-aware counterpart to
@@ -973,6 +968,38 @@ func (r *BookRepo) UpdateIfUnchanged(ctx context.Context, b *models.Book, expect
 	return r.update(ctx, b, expectedUpdatedAt)
 }
 
+// ErrBookKeptChanging is returned by UpdateKeepingLocks when the row changed
+// before every write it tried; nothing was written.
+var ErrBookKeptChanging = errors.New("kept changing while it was being written, nothing was written")
+
+// UpdateKeepingLocks applies apply to b and writes it with the updated_at
+// guard, so a lock the user set between the caller's read and this write is
+// not overwritten by the caller's snapshot. When the row moved, b is
+// reloaded, apply runs again against the current locks, and the write is
+// tried again, three writes in all; after that it returns
+// ErrBookKeptChanging and the caller decides whether that is a skip or a
+// failure. A book with no updated_at, such as one created earlier in the
+// same run, is written directly.
+func (r *BookRepo) UpdateKeepingLocks(ctx context.Context, b *models.Book, apply func(*models.Book)) error {
+	apply(b)
+	if b.UpdatedAtRaw == "" {
+		return r.Update(ctx, b)
+	}
+	for attempt := 1; ; attempt++ {
+		written, err := r.UpdateIfUnchanged(ctx, b, b.UpdatedAtRaw)
+		if err != nil || written {
+			return err
+		}
+		if err := r.ReloadHydratedBook(ctx, b); err != nil {
+			return err
+		}
+		if attempt >= 3 {
+			return fmt.Errorf("book %d: %w", b.ID, ErrBookKeptChanging)
+		}
+		apply(b)
+	}
+}
+
 // update writes every column of b. A non-empty expectedUpdatedAt adds the
 // stored-text updated_at precondition.
 func (r *BookRepo) update(ctx context.Context, b *models.Book, expectedUpdatedAt string) (bool, error) {
@@ -1106,6 +1133,8 @@ func (r *BookRepo) ReloadHydratedBook(ctx context.Context, b *models.Book) error
 
 // FillMissingAudiobookDuration persists a duration derived from edition metadata
 // without rewriting a book that may have changed during the provider fetch.
+// The lock is tested on the stored row, so a duration the user locked empty
+// after the fetch began stays empty.
 // After either a successful write or a guarded-write miss, b is refreshed so
 // callers use the current identity, duration, and monitoring state together.
 func (r *BookRepo) FillMissingAudiobookDuration(ctx context.Context, b *models.Book) (bool, error) {
@@ -1119,8 +1148,10 @@ func (r *BookRepo) FillMissingAudiobookDuration(ctx context.Context, b *models.B
 	res, err := r.exec.ExecContext(ctx, `
 		UPDATE books SET duration_seconds = ?, updated_at = ?
 		WHERE id = ? AND foreign_id = ? AND metadata_provider = ? AND media_type = ?
-		  AND asin = ? AND duration_seconds <= 0`,
-		b.DurationSeconds, timeValueArg(now), b.ID, b.ForeignID, b.MetadataProvider, b.MediaType, b.ASIN)
+		  AND asin = ? AND duration_seconds <= 0
+		  AND NOT EXISTS (SELECT 1 FROM json_each(COALESCE(books.locked_fields, '[]')) WHERE value = ?)`,
+		b.DurationSeconds, timeValueArg(now), b.ID, b.ForeignID, b.MetadataProvider, b.MediaType, b.ASIN,
+		models.BookFieldDurationSeconds)
 	if err != nil {
 		return false, fmt.Errorf("fill missing audiobook duration for book %d: %w", b.ID, err)
 	}
@@ -1299,6 +1330,12 @@ func (r *BookRepo) LivePathsUnderForOtherBooks(ctx context.Context, dir string, 
 // for a delete guard. See BookFileRepo.PathOwnedByLiveOtherBook.
 func (r *BookRepo) PathOwnedByLiveOtherBook(ctx context.Context, path string, excludeBookID int64) (bool, error) {
 	return r.files.PathOwnedByLiveOtherBook(ctx, path, excludeBookID)
+}
+
+// ListLiveFileOwners returns the (book, path, format) of every tracked file of
+// an existing book. See BookFileRepo.ListLiveFileOwners.
+func (r *BookRepo) ListLiveFileOwners(ctx context.Context) ([]FileOwner, error) {
+	return r.files.ListLiveFileOwners(ctx)
 }
 
 // ListAllBookFilePaths returns every path in book_files.
@@ -1829,33 +1866,13 @@ func (r *BookRepo) GetByCalibreID(ctx context.Context, calibreID int64) (*models
 	return &books[0], nil
 }
 
-// FindByAuthorAndTitle locates a book under authorID whose title matches
-// `title` case-insensitively (raw LOWER(title) = LOWER(?)).
-//
-// Deprecated for cross-source dedup: this exact-match-modulo-case lookup is
-// what caused #940 (it disagreed with the ABS importer's normalized match and
-// produced duplicate rows). Importers now use FindByAuthorAndDedupKey. Retained
-// only for callers that genuinely need a raw-title match.
-func (r *BookRepo) FindByAuthorAndTitle(ctx context.Context, authorID int64, title string) (*models.Book, error) {
-	books, err := r.query(ctx,
-		bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE author_id = ? AND LOWER(title) = LOWER(?)",
-		[]any{authorID, title})
-	if err != nil {
-		return nil, err
-	}
-	if len(books) == 0 {
-		return nil, nil
-	}
-	return &books[0], nil
-}
-
 // FindByAuthorAndDedupKey locates a book under authorID whose stored canonical
 // dedup_key equals the key computed for `title` by indexer.CanonicalDedupKey.
-// This is the cross-source bind used by both the Calibre and ABS importers
-// (#940): because both sides compute the key with the same function and the
-// key is persisted at create time, a book imported from one source binds to
-// the existing row from the other regardless of import order, subtitle, case,
-// bracketed qualifier, or umlaut form.
+// It is the unscoped form of FindByAuthorAndDedupKeyVisibleTo, which the add
+// and list-sync paths call (#940): because every writer computes the key with
+// the same function and the key is persisted at create time, a book added
+// from one source binds to the existing row from another regardless of order,
+// subtitle, case, bracketed qualifier, or umlaut form.
 //
 // An empty computed key (blank/whitespace title) never matches: the early
 // return avoids a query that would otherwise collapse every untitled row under

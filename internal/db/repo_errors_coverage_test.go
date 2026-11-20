@@ -132,7 +132,6 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"BlocklistRepo.IsBlocked", func() error { _, err := NewBlocklistRepo(closed).IsBlocked(ctx, "x"); return err }},
 		{"BlocklistRepo.List", func() error { _, err := NewBlocklistRepo(closed).List(ctx); return err }},
 		{"BookFileRepo.Add", func() error { return NewBookFileRepo(closed).Add(ctx, 1, "x", "x") }},
-		{"BookFileRepo.AddIfMissing", func() error { _, err := NewBookFileRepo(closed).AddIfMissing(ctx, 1, "x", "x"); return err }},
 		{"BookFileRepo.BookIDForFile", func() error { _, err := NewBookFileRepo(closed).BookIDForFile(ctx, 1); return err }},
 		{"BookFileRepo.DeleteByBook", func() error { return NewBookFileRepo(closed).DeleteByBook(ctx, 1) }},
 		{"BookFileRepo.DeleteByPath", func() error { _, err := NewBookFileRepo(closed).DeleteByPath(ctx, "x"); return err }},
@@ -166,7 +165,6 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 			_, err := NewBookRepo(closed).FindByAuthorAndDedupKeyVisibleTo(ctx, 1, "x", 1)
 			return err
 		}},
-		{"BookRepo.FindByAuthorAndTitle", func() error { _, err := NewBookRepo(closed).FindByAuthorAndTitle(ctx, 1, "x"); return err }},
 		{"BookRepo.GetBookIdentifier", func() error { _, err := NewBookRepo(closed).GetBookIdentifier(ctx, "x"); return err }},
 		{"BookRepo.GetByAnyForeignID", func() error { _, err := NewBookRepo(closed).GetByAnyForeignID(ctx, "x"); return err }},
 		{"BookRepo.GetByCalibreID", func() error { _, err := NewBookRepo(closed).GetByCalibreID(ctx, 1); return err }},
@@ -190,7 +188,6 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"BookRepo.ListByAuthorIncludingExcluded", func() error { _, err := NewBookRepo(closed).ListByAuthorIncludingExcluded(ctx, 1); return err }},
 		{"BookRepo.ListByStatus", func() error { _, err := NewBookRepo(closed).ListByStatus(ctx, "x"); return err }},
 		{"BookRepo.ListByStatusAndUser", func() error { _, err := NewBookRepo(closed).ListByStatusAndUser(ctx, "x", 1); return err }},
-		{"BookRepo.ListByStatusIncludingExcluded", func() error { _, err := NewBookRepo(closed).ListByStatusIncludingExcluded(ctx, "x"); return err }},
 		{"BookRepo.ListByStatusIncludingExcludedAndUser", func() error {
 			_, err := NewBookRepo(closed).ListByStatusIncludingExcludedAndUser(ctx, "x", 1)
 			return err
@@ -284,8 +281,6 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"DownloadClientRepo.Delete", func() error { return NewDownloadClientRepo(closed).Delete(ctx, 1) }},
 		{"DownloadClientRepo.GetByID", func() error { _, err := NewDownloadClientRepo(closed).GetByID(ctx, 1); return err }},
 		{"DownloadClientRepo.GetEnabledByProtocol", func() error { _, err := NewDownloadClientRepo(closed).GetEnabledByProtocol(ctx, "x"); return err }},
-		{"DownloadClientRepo.GetFirstEnabled", func() error { _, err := NewDownloadClientRepo(closed).GetFirstEnabled(ctx); return err }},
-		{"DownloadClientRepo.GetFirstEnabledByProtocol", func() error { _, err := NewDownloadClientRepo(closed).GetFirstEnabledByProtocol(ctx, "x"); return err }},
 		{"DownloadClientRepo.List", func() error { _, err := NewDownloadClientRepo(closed).List(ctx); return err }},
 		{"DownloadClientRepo.ListEnabled", func() error { _, err := NewDownloadClientRepo(closed).ListEnabled(ctx); return err }},
 		{"DownloadClientRepo.Update", func() error { return NewDownloadClientRepo(closed).Update(ctx, &models.DownloadClient{}) }},
@@ -296,7 +291,6 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"DownloadRepo.GetByGUID", func() error { _, err := NewDownloadRepo(closed).GetByGUID(ctx, "x"); return err }},
 		{"DownloadRepo.GetByID", func() error { _, err := NewDownloadRepo(closed).GetByID(ctx, 1); return err }},
 		{"DownloadRepo.GetByNzoID", func() error { _, err := NewDownloadRepo(closed).GetByNzoID(ctx, "x"); return err }},
-		{"DownloadRepo.GetByTorrentID", func() error { _, err := NewDownloadRepo(closed).GetByTorrentID(ctx, "x"); return err }},
 		{"DownloadRepo.GetOwnerByID", func() error { _, _, err := NewDownloadRepo(closed).GetOwnerByID(ctx, 1); return err }},
 		{"DownloadRepo.IncrementImportRetryCount", func() error { return NewDownloadRepo(closed).IncrementImportRetryCount(ctx, 1) }},
 		{"DownloadRepo.List", func() error { _, err := NewDownloadRepo(closed).List(ctx); return err }},
@@ -344,9 +338,7 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"HistoryRepo.GetOwnerByID", func() error { _, _, err := NewHistoryRepo(closed).GetOwnerByID(ctx, 1); return err }},
 		{"HistoryRepo.List", func() error { _, err := NewHistoryRepo(closed).List(ctx); return err }},
 		{"HistoryRepo.ListByBook", func() error { _, err := NewHistoryRepo(closed).ListByBook(ctx, 1); return err }},
-		{"HistoryRepo.ListByBookAndUser", func() error { _, err := NewHistoryRepo(closed).ListByBookAndUser(ctx, 1, 1); return err }},
 		{"HistoryRepo.ListByType", func() error { _, err := NewHistoryRepo(closed).ListByType(ctx, "x"); return err }},
-		{"HistoryRepo.ListByTypeAndUser", func() error { _, err := NewHistoryRepo(closed).ListByTypeAndUser(ctx, "x", 1); return err }},
 		{"HistoryRepo.ListForUser", func() error { _, err := NewHistoryRepo(closed).ListForUser(ctx, 1); return err }},
 		{"HistoryRepo.ListPage", func() error { _, _, err := NewHistoryRepo(closed).ListPage(ctx, HistoryListOpts{}); return err }},
 		{"ImportListRepo.Create", func() error { return NewImportListRepo(closed).Create(ctx, &models.ImportList{}) }},
@@ -520,7 +512,6 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 		{"UnmatchedUnitRepo.ResetToPending", func() error { _, err := NewUnmatchedUnitRepo(closed).ResetToPending(ctx, 1, "x", "x"); return err }},
 		{"UnmatchedUnitRepo.StaleClaims", func() error { _, err := NewUnmatchedUnitRepo(closed).StaleClaims(ctx, now); return err }},
 		{"UnmatchedUnitRepo.Summary", func() error { _, err := NewUnmatchedUnitRepo(closed).Summary(ctx); return err }},
-		{"UserRepo.BumpSessionEpoch", func() error { return NewUserRepo(closed).BumpSessionEpoch(ctx, 1) }},
 		{"UserRepo.Count", func() error { _, err := NewUserRepo(closed).Count(ctx); return err }},
 		{"UserRepo.CountAdmins", func() error { _, err := NewUserRepo(closed).CountAdmins(ctx); return err }},
 		{"UserRepo.Create", func() error { _, err := NewUserRepo(closed).Create(ctx, "x", "x"); return err }},
@@ -535,17 +526,15 @@ func TestReposSurfaceDatabaseErrors(t *testing.T) {
 			_, err := NewUserRepo(closed).GetOrCreateByOIDC(ctx, "x", "x", "x", "x", "x", "x")
 			return err
 		}},
-		{"UserRepo.GetOrCreateByUsername", func() error { _, err := NewUserRepo(closed).GetOrCreateByUsername(ctx, "x"); return err }},
 		{"UserRepo.GetSessionEpoch", func() error { _, err := NewUserRepo(closed).GetSessionEpoch(ctx, 1); return err }},
 		{"UserRepo.LinkOIDCSubject", func() error { return NewUserRepo(closed).LinkOIDCSubject(ctx, 1, "x", "x") }},
 		{"UserRepo.List", func() error { _, err := NewUserRepo(closed).List(ctx); return err }},
 		{"UserRepo.OwnedRows", func() error { _, err := NewUserRepo(closed).OwnedRows(ctx, 1); return err }},
 		{"UserRepo.PromoteFirstUser", func() error { return NewUserRepo(closed).PromoteFirstUser(ctx) }},
-		{"UserRepo.SetRequestsAutoApprove", func() error { return NewUserRepo(closed).SetRequestsAutoApprove(ctx, 1, true) }},
+		{"UserRepo.SetRequestsAutoApprove", func() error { return NewUserRepo(closed).SetRequestsAutoApprove(ctx, 1, new(bool)) }},
 		{"UserRepo.SetRole", func() error { return NewUserRepo(closed).SetRole(ctx, 1, "x") }},
 		{"UserRepo.SetRoleUnguarded", func() error { return NewUserRepo(closed).SetRoleUnguarded(ctx, 1, "x") }},
 		{"UserRepo.UpdatePassword", func() error { return NewUserRepo(closed).UpdatePassword(ctx, 1, "x") }},
-		{"UserRepo.UpdateUsername", func() error { return NewUserRepo(closed).UpdateUsername(ctx, 1, "x") }},
 	}
 	for _, c := range calls {
 		func() {

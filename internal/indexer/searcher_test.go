@@ -1546,23 +1546,15 @@ func TestFilterRelevantMixedScriptAuthorExpandsAliases(t *testing.T) {
 	}
 }
 
-// TestFilterRelevantAccentedLatinAuthorUsesTransliteration is the regression
-// guard for the route #2419 must not break. The release alphabet transliterates
-// German umlauts and nothing else, so "Jo Nesbø" tokenises to ["nesbø"] and
-// never meets a scene release named "Jo.Nesbo.-.…". The ASCII alias is the only
-// path from that release to the author, so it has to keep binding even though
-// both names are latin script.
+// TestFilterRelevantAccentedLatinAuthorUsesTransliteration guards the route
+// #2419 must not break: an ASCII alias beside an accented latin author keeps
+// binding. Since #3952 the accent fold also lets "Nesbø" meet "Nesbo" without
+// the alias, so the alias is no longer the only path, but it must still work.
 func TestFilterRelevantAccentedLatinAuthorUsesTransliteration(t *testing.T) {
 	results := toResults(
 		"Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP",
 		"Karin.Fossum.The.Snowman.epub",
 	)
-
-	// Without the alias the author anchor cannot be met at all: proves the
-	// alias is doing the work rather than the title carrying the match.
-	if got := filterRelevant(results, "The Snowman", "Jo Nesbø", nil); contains(got, "Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP") {
-		t.Error("setup wrong: the transliterated release should not match without the alias")
-	}
 
 	got := filterRelevant(results, "The Snowman", "Jo Nesbø", []string{"Jo Nesbo"})
 	if !contains(got, "Jo.Nesbo.-.The.Snowman.2007.RETAIL.EPUB-GRP") {
@@ -2526,5 +2518,37 @@ func TestSearchBook_FindsDecomposedReleaseTitle(t *testing.T) {
 	})
 	if len(results) != 1 || results[0].GUID != "guid-nfd" {
 		t.Fatalf("SearchBook = %v, want the decomposed release", resultTitles(results))
+	}
+}
+
+func seedCount(n int) *int { return &n }
+
+// Seeders are a capped tie-breaker (#3953): equal quality ranks by swarm, a
+// reported zero loses to an unreported count, usenet is untouched, and a
+// well-seeded lower format never beats a higher format.
+func TestScoreResultSeeders(t *testing.T) {
+	c := MatchCriteria{Title: "Dune", Author: "Frank Herbert"}
+	mk := func(title, proto string, s *int) newznab.SearchResult {
+		return newznab.SearchResult{Title: title, Protocol: proto, Seeders: s}
+	}
+	score := func(r newznab.SearchResult) float64 { return scoreResult(r, c, nil) }
+
+	seeded := score(mk("Dune.epub", "torrent", seedCount(13)))
+	unknown := score(mk("Dune.epub", "torrent", nil))
+	dead := score(mk("Dune.epub", "torrent", seedCount(0)))
+	if !(seeded > unknown && unknown > dead) {
+		t.Errorf("want seeded %v > unknown %v > dead %v", seeded, unknown, dead)
+	}
+	if a, b := score(mk("Dune.epub", "usenet", nil)), unknown; a != b {
+		t.Errorf("usenet %v should score like unknown-seeder torrent %v", a, b)
+	}
+	if a, b := score(mk("Dune.epub", "usenet", seedCount(0))), score(mk("Dune.epub", "usenet", nil)); a != b {
+		t.Errorf("usenet must ignore Seeders, got %v vs %v", a, b)
+	}
+	if hi, lo := score(mk("Dune.epub", "torrent", seedCount(1))), score(mk("Dune.mobi", "torrent", seedCount(5000))); hi <= lo {
+		t.Errorf("a higher format with 1 seeder (%v) must beat a lower format with a huge swarm (%v)", hi, lo)
+	}
+	if a, b := score(mk("Dune.epub", "torrent", seedCount(25))), score(mk("Dune.epub", "torrent", seedCount(5000))); a != b {
+		t.Errorf("the seeders term must be capped, got %v vs %v", a, b)
 	}
 }

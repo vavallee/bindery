@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/downloader/rttest"
 )
 
 func TestAuthError_Messages(t *testing.T) {
@@ -53,7 +55,7 @@ func rejectingQbit(t *testing.T) (*Client, *int) {
 func TestLoginFailureStopsEveryCall(t *testing.T) {
 	ctx := context.Background()
 	calls := map[string]func(*Client) error{
-		"SetShareLimits":    func(c *Client) error { return c.SetShareLimits(ctx, "h", 1.5) },
+		"SetShareLimits":    func(c *Client) error { return c.SetShareLimitsDetailed(ctx, "h", ratioLimit(1.5)) },
 		"AddTorrent":        func(c *Client) error { _, err := c.AddTorrent(ctx, "magnet:?xt=urn:btih:abc", "", ""); return err },
 		"DeleteTorrent":     func(c *Client) error { return c.DeleteTorrent(ctx, "h", false) },
 		"setCategory":       func(c *Client) error { return c.setCategory(ctx, "h", "books") },
@@ -78,7 +80,7 @@ func TestLoginFailureStopsEveryCall(t *testing.T) {
 // failingAfterLogin logs in successfully (v5 204) and then fails every other
 // request at the transport, standing in for qBittorrent dying mid-session.
 func failingAfterLogin() *Client {
-	return newTransportClient(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	return newTransportClient(rttest.Func(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == "/api/v2/auth/login" {
 			return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: r}, nil
 		}
@@ -93,7 +95,7 @@ func TestTransportErrorsAreWrapped(t *testing.T) {
 		call func(*Client) error
 		want string
 	}{
-		{"setShareLimits", func(c *Client) error { return c.SetShareLimits(ctx, "h", 2) }, "setShareLimits: "},
+		{"setShareLimits", func(c *Client) error { return c.SetShareLimitsDetailed(ctx, "h", ratioLimit(2)) }, "setShareLimits: "},
 		{"add", func(c *Client) error { _, err := c.AddTorrent(ctx, "magnet:?xt=urn:btih:abc", "", ""); return err }, "add torrent: "},
 		{"delete", func(c *Client) error { return c.DeleteTorrent(ctx, "h", true) }, "delete torrent: "},
 		{"setCategory", func(c *Client) error { return c.setCategory(ctx, "h", "b") }, "setCategory: "},
@@ -121,7 +123,7 @@ func TestBuildRequestErrors(t *testing.T) {
 
 	c.loggedIn = true
 	cases := map[string]func() error{
-		"build setShareLimits request":    func() error { return c.SetShareLimits(ctx, "h", 1) },
+		"build setShareLimits request":    func() error { return c.SetShareLimitsDetailed(ctx, "h", ratioLimit(1)) },
 		"build add request":               func() error { _, err := c.AddTorrent(ctx, "magnet:?xt=urn:btih:abc", "", ""); return err },
 		"build delete request":            func() error { return c.DeleteTorrent(ctx, "h", false) },
 		"build setCategory request":       func() error { return c.setCategory(ctx, "h", "b") },
@@ -413,7 +415,7 @@ func TestGet_RetryPaths(t *testing.T) {
 	})
 	t.Run("retry transport error", func(t *testing.T) {
 		versionHits := 0
-		c := newTransportClient(roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		c := newTransportClient(rttest.Func(func(r *http.Request) (*http.Response, error) {
 			switch r.URL.Path {
 			case "/api/v2/auth/login":
 				return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: r}, nil

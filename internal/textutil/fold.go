@@ -187,6 +187,7 @@ func foldTitle(s string, expandUmlauts bool) string {
 	} else {
 		s = eszettExpander.Replace(s)
 	}
+	s = foldLatinAccents(s, !expandUmlauts)
 	mapped := strings.Map(func(r rune) rune {
 		if unicode.IsLetter(r) || unicode.IsNumber(r) {
 			return r
@@ -194,6 +195,57 @@ func foldTitle(s string, expandUmlauts bool) string {
 		return ' '
 	}, s)
 	return strings.Join(strings.Fields(mapped), " ")
+}
+
+// foldLatinAccents drops the diacritics from LATIN letters only, so "vallée"
+// and "vallee", "señor" and "senor", "façade" and "facade" reduce to one
+// spelling on both sides of a title comparison (#3952), and folds the Latin
+// letters NFD cannot decompose (ø→o, æ→ae, œ→oe, ł→l and friends).
+//
+// Greek, Cyrillic, kana and every other script are left exactly as they were:
+// a mark there is part of the letter (й is not и, ズ is not ス), and a release
+// that spells a Greek or Russian title differently is not the same title.
+//
+// When keepUmlauts is set (the keyword side, see FoldForKeyword) ä, ö and ü
+// are left alone so indexer.keywordPattern can still tell a real umlaut from a
+// digraph that was ASCII all along (#3123). The release side has already
+// expanded them by the time this runs, so the two sides still meet.
+//
+// Input must be NFC-composed and lowercased, which foldTitle guarantees.
+func foldLatinAccents(s string, keepUmlauts bool) string {
+	if isASCII(s) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	prevLatin := false
+	for _, r := range s {
+		switch {
+		case keepUmlauts && (r == 'ä' || r == 'ö' || r == 'ü'):
+			b.WriteRune(r)
+			prevLatin = true
+		case r > unicode.MaxASCII && unicode.Is(unicode.Latin, r):
+			for _, dr := range norm.NFD.String(string(r)) {
+				if !unicode.Is(unicode.Mn, dr) {
+					b.WriteRune(dr)
+				}
+			}
+			prevLatin = true
+		case prevLatin && unicode.Is(unicode.Mn, r):
+			// A mark that did not compose onto its Latin base.
+		default:
+			b.WriteRune(r)
+			prevLatin = r < unicode.MaxASCII && unicode.IsLetter(r)
+		}
+	}
+	return FoldNonDecomposableLatin(b.String())
+}
+
+// FoldLatinAccents is the title-match accent fold for callers that build the
+// release alphabet by hand (newznab.foldForSigWordMatch). The input must be
+// NFC-composed, lowercased and already umlaut-expanded.
+func FoldLatinAccents(s string) string {
+	return foldLatinAccents(s, false)
 }
 
 // apostropheStripper removes both the ASCII apostrophe and the Unicode right

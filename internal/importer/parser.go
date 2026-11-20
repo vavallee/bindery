@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -45,7 +47,7 @@ var (
 	// Dot/underscore word-separator pattern (common in release filenames)
 	dotSepRe = regexp.MustCompile(`[._]+`)
 	// Clean up patterns
-	cleanRe = regexp.MustCompile(`[\[\(].*?[\]\)]`) // remove [brackets] and (parens)
+	cleanRe = regexp.MustCompile(`[\[\(\{].*?[\]\)\}]`) // remove [brackets], (parens) and {braces}
 	multiSp = regexp.MustCompile(`\s{2,}`)
 
 	// Series patterns extracted before bracket/paren stripping.
@@ -110,8 +112,7 @@ func ParseFilename(path string) ParsedFile {
 	}
 
 	// Work with the base name without extension
-	name := filepath.Base(path)
-	name = strings.TrimSuffix(name, filepath.Ext(name))
+	name := trimFileExt(path, filepath.Base(path))
 
 	// Normalize Unicode dash variants to a plain hyphen up front so every
 	// dash-based separator below (Title - Author, Author - [Series] - Title,
@@ -150,7 +151,7 @@ func ParseFilename(path string) ParsedFile {
 		if y := yearRe.FindString(titlePart); y != "" {
 			p.Year = y
 		}
-		titlePart = dotSepRe.ReplaceAllString(titlePart, " ")
+		titlePart = splitDotWords(titlePart)
 		titlePart = cleanRe.ReplaceAllString(titlePart, "")
 		titlePart = multiSp.ReplaceAllString(titlePart, " ")
 		p.Title = strings.TrimSpace(titlePart)
@@ -207,8 +208,9 @@ func ParseFilename(path string) ParsedFile {
 		p.Year = y
 	}
 
-	// Replace dots and underscores with spaces (common release filename separators)
-	name = dotSepRe.ReplaceAllString(name, " ")
+	// Replace dots and underscores with spaces (common release filename
+	// separators), keeping the dots of initials in a spaced name.
+	name = splitDotWords(name)
 
 	// Clean brackets/parens content
 	cleaned := cleanRe.ReplaceAllString(name, "")
@@ -254,6 +256,70 @@ func ParseFilename(path string) ParsedFile {
 	// Fallback: entire cleaned name is the title
 	p.Title = cleaned
 	return p
+}
+
+// trimFileExt drops name's file extension when it is a book or audio one. A
+// manual import scan hands ParseFilename folders as well as files, and a
+// folder has no extension: filepath.Ext only finds the last dot, so "The War
+// of the Worlds - H. G. Wells [m4b]" lost ". Wells [m4b]" and parsed as the
+// author "H G". Every file the importer parses is a book or audio file, so the
+// known list is the whole test; a shape match let ".WELLS" pass as one.
+func trimFileExt(path, name string) string {
+	if models.IsBookFilePath(path) || IsAudioFile(path) {
+		return strings.TrimSuffix(name, filepath.Ext(name))
+	}
+	return name
+}
+
+// splitDotWords turns the dots and underscores a release name puts between
+// words into spaces. A name with no spaces in it ("The.Martian.-.Andy.Weir")
+// uses them for every word break, so they all go, as they always have. In a
+// name that already has spaces a dot is punctuation unless it is glued between
+// two words: the dots of initials ("H. G. Wells", "J.R.R. Tolkien") and
+// abbreviations ("Dr. Sleep") stay, so the author reaches the metadata search
+// the way the providers spell it, while "Dune.Messiah" still splits.
+func splitDotWords(s string) string {
+	if !strings.ContainsRune(s, ' ') {
+		return dotSepRe.ReplaceAllString(s, " ")
+	}
+	// Work on bytes, not runes: a []rune round trip turns every invalid UTF-8
+	// byte (a Latin-1 file name is legal on Linux) into the 3 byte U+FFFD, so
+	// the title would no longer be a substring of the name it came from.
+	s = strings.ReplaceAll(s, "_", " ")
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '.' {
+			b.WriteByte(s[i])
+			continue
+		}
+		end := i
+		for end < len(s) && s[end] == '.' {
+			end++
+		}
+		// The word in front of the dot run, back to the last non letter.
+		word := 0
+		for k := i; k > 0; {
+			r, size := utf8.DecodeLastRuneInString(s[:k])
+			if !unicode.IsLetter(r) {
+				break
+			}
+			word++
+			k -= size
+		}
+		atBreak := end == len(s)
+		if !atBreak {
+			r, _ := utf8.DecodeRuneInString(s[end:])
+			atBreak = unicode.IsSpace(r)
+		}
+		initial := end-i == 1 && word == 1
+		if atBreak || initial {
+			b.WriteString(s[i:end])
+		} else {
+			b.WriteByte(' ')
+		}
+		i = end - 1
+	}
+	return b.String()
 }
 
 // IsBookFile returns true if the path has a recognized book extension. The

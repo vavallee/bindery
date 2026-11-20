@@ -717,7 +717,16 @@ type ScanItem struct {
 	// Such units are excluded by default; includeImported=true surfaces them
 	// instead, labelled, so a corrupt file or one needing a relink can still
 	// be found through this scan (#2480).
+	//
+	// A unit that was handed off to an external import tool (HandedOff) is
+	// reported as AlreadyImported too, so every client that leaves an already
+	// imported unit out of a bulk import leaves it out as well.
 	AlreadyImported bool `json:"alreadyImported"`
+	// HandedOff reports that this source was handed off to an external import
+	// tool by a download still waiting on it (see handedOffIndex), and is not
+	// otherwise in the library yet. It implies AlreadyImported and only says
+	// which of the two labels the unit gets.
+	HandedOff bool `json:"handedOff,omitempty"`
 }
 
 // ScanResponse is the result of scanning a folder for importable book units.
@@ -898,9 +907,15 @@ func isAlreadyTracked(path string, isDir bool, tracked map[string]struct{}, trac
 // a round, Scan re-walks (bounded by maxScanRounds) to refill the page rather
 // than return a short page while truncated is still true.
 //
-// includeImported=true disables both filters and labels each unit's
-// AlreadyImported status instead of excluding it, so an already-imported file
-// that's corrupt or needs a relink can still be found here.
+// Units whose source was handed off to an external import tool by a download
+// still waiting on it are filtered the same way (handedOffIndex): copy
+// placement keeps the source, so without this a rescan offered it as a fresh,
+// ticked match and a click dropped a second copy.
+//
+// includeImported=true disables these filters and labels each unit's
+// AlreadyImported (and HandedOff) status instead of excluding it, so an
+// already-imported file that's corrupt or needs a relink can still be found
+// here.
 func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	path, status, message := h.resolveImportFolder(r.Context(), r.URL.Query().Get("path"))
 	if status != 0 {
@@ -913,6 +928,12 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 	tracked, trackedFiles, err := h.trackedFileIndex(r.Context(), path)
 	if err != nil {
 		slog.Error("bulk folder import scan failed to load tracked files", "path", path, "error", err)
+		writeServerError(w, r, err)
+		return
+	}
+	handedOff, err := h.handedOffSources(r.Context())
+	if err != nil {
+		slog.Error("bulk folder import scan failed to load handed off downloads", "path", path, "error", err)
 		writeServerError(w, r, err)
 		return
 	}
@@ -942,7 +963,7 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		seen := 0
 		skipToOffset := alreadyConsumed
 		roundSkip := func(p string, isDir bool) bool {
-			if !includeImported && isAlreadyTracked(p, isDir, tracked, trackedFiles) {
+			if !includeImported && (isAlreadyTracked(p, isDir, tracked, trackedFiles) || handedOff.coversUnit(p, isDir)) {
 				return true
 			}
 			seen++
@@ -1000,6 +1021,12 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 				bookHasImportedFormat(res.Book, res.DetectedFormat, unitFile, filesByBook[res.Book.ID]) {
 				alreadyImported = true
 			}
+			// Without includeImported, roundSkip already dropped handed off
+			// units, so this only runs to label them.
+			unitHandedOff := includeImported && !alreadyImported && handedOff.coversUnit(c.path, c.isDir)
+			if unitHandedOff {
+				alreadyImported = true
+			}
 			if alreadyImported && !includeImported {
 				continue
 			}
@@ -1016,6 +1043,7 @@ func (h *ManualImportHandler) Scan(w http.ResponseWriter, r *http.Request) {
 				Book:            proxiedBook(res.Book),
 				Candidates:      proxiedBooks(res.Candidates),
 				AlreadyImported: alreadyImported,
+				HandedOff:       unitHandedOff,
 			})
 		}
 

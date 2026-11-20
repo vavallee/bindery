@@ -66,15 +66,15 @@ does ship is the failure that matters.
 | [github.com/prometheus/procfs](https://github.com/prometheus/procfs/blob/v0.22.0/LICENSE) | v0.22.0 | Apache-2.0 | yes |
 | [github.com/remyoudompheng/bigfft](https://github.com/remyoudompheng/bigfft/blob/24d4a6f8daec/LICENSE) | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | — |
 | [github.com/robfig/cron/v3](https://github.com/robfig/cron/blob/v3.0.1/LICENSE) | v3.0.1 | MIT | — |
-| [golang.org/x/crypto](https://cs.opensource.google/go/x/crypto/+/v0.58.0:LICENSE) | v0.58.0 | BSD-3-Clause | — |
-| [golang.org/x/oauth2](https://cs.opensource.google/go/x/oauth2/+/v0.37.0:LICENSE) | v0.37.0 | BSD-3-Clause | — |
-| [golang.org/x/sys](https://cs.opensource.google/go/x/sys/+/v0.49.0:LICENSE) | v0.49.0 | BSD-3-Clause | — |
-| [golang.org/x/text](https://cs.opensource.google/go/x/text/+/v0.43.0:LICENSE) | v0.43.0 | BSD-3-Clause | — |
+| [golang.org/x/crypto](https://cs.opensource.google/go/x/crypto/+/v0.59.0:LICENSE) | v0.59.0 | BSD-3-Clause | — |
+| [golang.org/x/oauth2](https://cs.opensource.google/go/x/oauth2/+/v0.38.0:LICENSE) | v0.38.0 | BSD-3-Clause | — |
+| [golang.org/x/sys](https://cs.opensource.google/go/x/sys/+/v0.50.0:LICENSE) | v0.50.0 | BSD-3-Clause | — |
+| [golang.org/x/text](https://cs.opensource.google/go/x/text/+/v0.44.0:LICENSE) | v0.44.0 | BSD-3-Clause | — |
 | [google.golang.org/protobuf](https://github.com/protocolbuffers/protobuf-go/blob/v1.36.12/LICENSE) | v1.36.12 | BSD-3-Clause | — |
-| [modernc.org/libc](https://gitlab.com/cznic/libc/-/blob/v1.79.0/LICENSE) | v1.79.0 | BSD-3-Clause | — |
+| [modernc.org/libc](https://gitlab.com/cznic/libc/-/blob/v1.80.1/LICENSE) | v1.80.1 | BSD-3-Clause | — |
 | [modernc.org/mathutil](https://gitlab.com/cznic/mathutil/-/blob/v1.7.1/LICENSE) | v1.7.1 | BSD-3-Clause | — |
 | [modernc.org/memory](https://gitlab.com/cznic/memory/-/blob/v1.12.1/LICENSE) | v1.12.1 | BSD-3-Clause | — |
-| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite/-/blob/v1.61.0/LICENSE) | v1.61.0 | BSD-3-Clause | — |
+| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite/-/blob/v1.62.0/LICENSE) | v1.62.0 | BSD-3-Clause | — |
 
 ### Notes on specific modules
 
@@ -95,14 +95,14 @@ does ship is the failure that matters.
 | cookie-es | 3.1.1 | MIT |
 | csstype | 3.2.3 | MIT |
 | html-parse-stringify | 4.0.1 | MIT |
-| i18next | 26.5.12 | MIT |
-| i18next-browser-languagedetector | 8.2.4 | MIT |
+| i18next | 26.7.2 | MIT |
+| i18next-browser-languagedetector | 8.3.0 | MIT |
 | react | 19.3.1 | MIT |
 | react-dom | 19.3.1 | MIT |
-| react-i18next | 17.1.9 | MIT |
+| react-i18next | 17.1.13 | MIT |
 | react-router | 8.5.1 | MIT |
 | scheduler | 0.28.0 | MIT |
-| tailwindcss | 4.3.3 | MIT |
+| tailwindcss | 4.3.5 | MIT |
 | typescript | 6.0.3 | Apache-2.0 |
 | use-sync-external-store | 1.6.0 | MIT |
 
@@ -1052,10 +1052,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 <summary>Applies to 5 dependencies</summary>
 
 - Go standard library and runtime (GOROOT/LICENSE)
-- golang.org/x/crypto@v0.58.0 (LICENSE)
-- golang.org/x/oauth2@v0.37.0 (LICENSE)
-- golang.org/x/sys@v0.49.0 (LICENSE)
-- golang.org/x/text@v0.43.0 (LICENSE)
+- golang.org/x/crypto@v0.59.0 (LICENSE)
+- golang.org/x/oauth2@v0.38.0 (LICENSE)
+- golang.org/x/sys@v0.50.0 (LICENSE)
+- golang.org/x/text@v0.44.0 (LICENSE)
 
 </details>
 
@@ -1121,7 +1121,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 12. BSD-3-Clause — modernc.org/libc@v1.79.0 (LICENSE)
+### 12. BSD-3-Clause — modernc.org/libc@v1.80.1 (LICENSE)
 
 ```
 Copyright (c) 2017 The Libc Authors. All rights reserved.
@@ -1278,7 +1278,7 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### 17. BSD-3-Clause — modernc.org/sqlite@v1.61.0 (LICENSE)
+### 17. BSD-3-Clause — modernc.org/sqlite@v1.62.0 (LICENSE)
 
 ```
 Copyright (c) 2017 The Sqlite Authors. All rights reserved.
@@ -1537,7 +1537,7 @@ SOFTWARE.
 <summary>Applies to 3 dependencies</summary>
 
 - npm:@tailwindcss/forms@0.5.11 (LICENSE)
-- npm:tailwindcss@4.3.3 (LICENSE)
+- npm:tailwindcss@4.3.5 (LICENSE)
 - vendored:Heroicons v2 (tools/licensegen/vendored/heroicons-v2.LICENSE)
 
 </details>
@@ -1684,13 +1684,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 32. MIT — npm:i18next-browser-languagedetector@8.2.4 (LICENSE)
+### 32. MIT — npm:i18next-browser-languagedetector@8.3.0 (LICENSE)
 
 <details>
 <summary>Applies to 2 dependencies</summary>
 
-- npm:i18next-browser-languagedetector@8.2.4 (LICENSE)
-- npm:react-i18next@17.1.9 (LICENSE)
+- npm:i18next-browser-languagedetector@8.3.0 (LICENSE)
+- npm:react-i18next@17.1.13 (LICENSE)
 
 </details>
 
@@ -1718,7 +1718,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 33. MIT — npm:i18next@26.5.12 (LICENSE)
+### 33. MIT — npm:i18next@26.7.2 (LICENSE)
 
 ```
 The MIT License (MIT)
@@ -1834,7 +1834,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### 37. SQLite public domain dedication — modernc.org/sqlite@v1.61.0 (LICENSE-SQLITE)
+### 37. SQLite public domain dedication — modernc.org/sqlite@v1.62.0 (LICENSE-SQLITE)
 
 ```
 SQLite Is Public Domain
@@ -1864,7 +1864,7 @@ public domain dedications on file. So the SQLite code base is clean and is
 uncontaminated with licensed code from other projects.
 ```
 
-### 38. Third-party notices (BSD-3-Clause, MIT) — modernc.org/libc@v1.79.0 (LICENSE-3RD-PARTY.md)
+### 38. Third-party notices (BSD-3-Clause, MIT) — modernc.org/libc@v1.80.1 (LICENSE-3RD-PARTY.md)
 
 ```
 # Third-Party Software Notices

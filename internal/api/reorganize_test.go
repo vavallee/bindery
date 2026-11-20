@@ -35,6 +35,11 @@ func (f *fakeReorganizeScanner) ApplyReorganize(_ context.Context, fileIDs []int
 	return f.applyResult
 }
 
+func (f *fakeReorganizeScanner) ExternalImportFormats(_ context.Context) []string { return nil }
+func (f *fakeReorganizeScanner) ReorganizeFileFormats(_ context.Context, _ []int64) []string {
+	return nil
+}
+
 func TestReorganizePreview_ScopeValidation(t *testing.T) {
 	h := NewReorganizeHandler(&fakeReorganizeScanner{})
 

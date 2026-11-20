@@ -188,6 +188,7 @@ func TestPipeline_GrabImportHistory(t *testing.T) {
 	host, port := hostPort(t, sabSrv.URL)
 	client := &models.DownloadClient{
 		Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true,
+		EnabledForBooks: true,
 	}
 	if err := clientRepo.Create(ctx, client); err != nil {
 		t.Fatalf("create download client: %v", err)
@@ -318,11 +319,13 @@ func TestPipeline_GrabImportHistory(t *testing.T) {
 	}
 	// The bookImported event must carry the format so the queue can show ebook
 	// vs audiobook (regression seam for the media_type='both' case).
-	var data map[string]string
+	var data struct {
+		Format string `json:"format"`
+	}
 	if err := json.Unmarshal([]byte(imported.Data), &data); err != nil {
 		t.Fatalf("unmarshal bookImported data %q: %v", imported.Data, err)
 	}
-	if data["format"] != models.MediaTypeEbook {
-		t.Errorf("history: bookImported format = %q, want %q", data["format"], models.MediaTypeEbook)
+	if data.Format != models.MediaTypeEbook {
+		t.Errorf("history: bookImported format = %q, want %q", data.Format, models.MediaTypeEbook)
 	}
 }

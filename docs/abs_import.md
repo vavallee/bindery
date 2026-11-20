@@ -165,7 +165,9 @@ ebook-only book to `both`, and because status is derived from the formats still
 missing, the book was then demoted from imported back to wanted while its ebook
 sat on disk and attached (#2169).
 
-The importer distinguishes an *unmatched* item from an *ambiguous* one. When the local matcher finds nothing close, the item is unmatched: the book is created directly (step 4 above) and `enrichBook` performs a confidence-gated upstream lookup. Only an *ambiguous* match — a close-but-uncertain local candidate — is parked in the review queue rather than guessed. The same distinction applies to author resolution. An ISBN match that only a fallback provider returned while the primary was not answering is not relinked: the row keeps its current identity, the result carries a `book relink skipped` reason naming the provider that failed, and the next import retries. A primary that answered without the ISBN still lets the fallback's record through (#2237).
+The importer distinguishes an *unmatched* item from an *ambiguous* one. When the local matcher finds nothing close, the item is unmatched: the book is created directly (step 4 above) and `enrichBook` performs a confidence-gated upstream lookup. Only an *ambiguous* match — a close-but-uncertain local candidate — is parked in the review queue rather than guessed. The same distinction applies to author resolution. An ISBN match that only a fallback provider returned while the primary was not answering is not relinked: the row keeps its current identity, the result carries a `book relink skipped` reason naming the provider that failed, and the next import retries. A primary that answered without the ISBN still lets the fallback's record through (#2237). When the title lookup finds several equally good works by the author (or several equally good authors for a name), nothing is guessed and the result says the book or author was "not linked to a metadata provider", with none picked. That line only appears for a book or author that has no provider identity yet. One that already has its own provider link is not waiting for a relink, so it says nothing. A dry run remembers the authors and books it would create, so a later item in the same run is matched against them as the real import matches the rows they become: a second item holding the same work (an ebook and an audiobook of one title) is counted as linked to the first book, its series membership is counted once, and an author spelled another way ("Austen, Jane" after "Jane Austen") is counted as linked to the author the first spelling would create. Where a dry run does less than the real import its counts are still estimates, for example the Hardcover part of an item it skips (see dry runs under Hardcover series matching above).
+
+Fields the user locked (see [Metadata-Editing-Wiki.md](Metadata-Editing-Wiki.md)) are left alone on update. Since the recording-field locks, that includes narrator, duration and ASIN, which the import otherwise takes from ABS. Rolling back a run leaves a locked narrator, duration or ASIN alone, even when its value is still the one the run wrote; every other field rolls back as before, locked or not, because the upstream metadata merge can still overwrite it and rollback is the way back. The importer's book writes carry the `updated_at` guard, so a lock set while a run is in progress is kept. A write the guard refuses three times is skipped by the import and retried on the next run; during a rollback it counts as failed and the book keeps its provenance link, so the run can be rolled back again.
 
 ### Series
 
@@ -301,6 +303,19 @@ Covered behaviors:
 - dry-run behavior
 - idempotent reruns
 - checkpoint-aware resume behavior
+
+## Other Sources On The Same Engine
+
+The BookOrbit import (`internal/bookorbit`, [BookOrbit-Import.md](./BookOrbit-Import.md)) is a second `abs.Importer` fed from a different server. Four hooks make that possible, and none of them changes an Audiobookshelf run:
+
+- `WithEnumerator` replaces the Audiobookshelf library walk with a function that yields `NormalizedLibraryItem` values from somewhere else.
+- `WithRunSource` scopes `RunsPage` to one `source_id`, so each source lists only its own rows from the shared `abs_import_runs` table. The Audiobookshelf importer is scoped to `DefaultSourceID`.
+- `WithRunGate` shares one `RunGate` between importers. They write the same authors, books and series, so only one may run at a time. The loser gets `ErrOtherImportRunning`, which also matches `ErrAlreadyRunning`.
+- `NormalizedLibraryItem.ExtraEbookPaths` registers further ebook formats of the same book. Audiobookshelf items never set it.
+
+A source built this way must keep its library ids out of the Audiobookshelf id space (BookOrbit prefixes them with `bookorbit-`), because provenance and checkpoints are keyed by source id plus library id. It gets no checkpoint or resume: `ResumeInterrupted` only picks up runs that stored a checkpoint, which the built in enumerator alone does.
+
+A dry run counts a new author once however many of their books it sees, tracked per run in `ImportStats`.
 
 ## Contributor Notes
 

@@ -1433,6 +1433,8 @@
       "audibleLabel": "Audible-katalogen",
       "audibleHint": "Lägger till ljudböcker i en författares katalog. Använder en opublicerad Amazon-slutpunkt, inte ett dokumenterat API.",
       "audnexHint": "Uppläsare, speltid och omslag för ljudböcker. En gemenskapsproxy över samma Audible-data.",
+      "audnexRegionLabel": "audnex-marknadsplats",
+      "audnexRegionHint": "Den Audible-marknadsplats där audnex slår upp ett ASIN. Ett ASIN som bara säljs på en annan marknadsplats, till exempel en tysk ljudbok, hittas inte i den amerikanska, så välj den dina ljudböcker kommer från. Bara den här marknadsplatsen tillfrågas. Gäller från nästa uppslagning, utan omstart.",
       "sourcesSaveFailed": "Det gick inte att spara ändringen, så den sattes tillbaka. Försök igen."
     },
     "import": {
@@ -1841,8 +1843,8 @@
       "authorProgress": "{{imported}} av {{total}} böcker finns här"
     },
     "confirm": {
-      "bookHint": "En administratör går igenom din förfrågan och lägger till boken om den godkänns. Du kan följa den under Mina förfrågningar.",
-      "authorHint": "En administratör går igenom din förfrågan och lägger till författarens böcker om den godkänns. Du kan följa den under Mina förfrågningar.",
+      "bookHint": "En administratör godkänner din förfrågan, eller så godkänner ditt konto den automatiskt om automatiskt godkännande är på. Du kan följa den under Mina förfrågningar.",
+      "authorHint": "En administratör godkänner din förfrågan, eller så godkänner ditt konto den automatiskt om automatiskt godkännande är på. Du kan följa den under Mina förfrågningar.",
       "format": "Format",
       "formatLabel": "Format att begära",
       "anyFormat": "Valfritt format",

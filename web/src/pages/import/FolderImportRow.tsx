@@ -60,7 +60,9 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
             </span>
             {item.alreadyImported && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-400">
-                {t('manualImport.alreadyImported', 'already imported')}
+                {item.handedOff
+                  ? t('manualImport.handedOff', 'already handed off to your import tool')
+                  : t('manualImport.alreadyImported', 'already imported')}
               </span>
             )}
           </div>

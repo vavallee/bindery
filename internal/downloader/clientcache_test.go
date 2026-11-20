@@ -206,22 +206,3 @@ func TestDownloader_DistinctIDsGetDistinctClients(t *testing.T) {
 		t.Fatalf("expected 2 cache entries, got %d", cache.Len())
 	}
 }
-
-func TestDownloader_EvictAllClears(t *testing.T) {
-	srv, _ := qbitLoginCounter(t)
-	cache := withIsolatedCache(t)
-	host, port := splitHostPort(t, srv.URL)
-
-	for i := int64(1); i <= 3; i++ {
-		_ = cache.QbittorrentFor(&models.DownloadClient{
-			ID: i, Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p",
-		})
-	}
-	if cache.Len() != 3 {
-		t.Fatalf("setup: expected 3 entries, got %d", cache.Len())
-	}
-	cache.EvictAll()
-	if cache.Len() != 0 {
-		t.Fatalf("EvictAll: expected 0 entries, got %d", cache.Len())
-	}
-}

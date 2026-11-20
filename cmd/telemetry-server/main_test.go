@@ -1705,8 +1705,7 @@ func TestBuildSHADefaultsToUnknown(t *testing.T) {
 }
 
 // TestHandlePing_AcceptsUnraidDeploy pins "unraid" as an accepted deploy
-// label, both on /api/ping and on the preview deploy filter, while an
-// unknown label is still blanked.
+// label, on /api/ping, while an unknown label is still blanked.
 func TestHandlePing_AcceptsUnraidDeploy(t *testing.T) {
 	s := newTestServer(t, "v1.49.0")
 	s.limiter = newRateLimiter(time.Hour, time.Minute)
@@ -1740,13 +1739,6 @@ func TestHandlePing_AcceptsUnraidDeploy(t *testing.T) {
 		if stored != tc.want {
 			t.Errorf("deploy %q stored as %q, want %q", tc.sent, stored, tc.want)
 		}
-	}
-
-	if f := parsePreviewFilters(map[string][]string{"deploy": {"unraid"}}); f.Deploy != "unraid" {
-		t.Errorf("preview filter deploy = %q, want unraid", f.Deploy)
-	}
-	if !strings.Contains(renderPreviewFilters(previewFilters{Range: "30d", OS: "all", Deploy: "unraid"}), `value="unraid" selected`) {
-		t.Error("preview filter has no selected Unraid option")
 	}
 }
 
@@ -1791,5 +1783,29 @@ func TestHandleHome(t *testing.T) {
 		if strings.Contains(body, bad) {
 			t.Errorf("home page contains %q", bad)
 		}
+	}
+}
+
+// TestRoutes_StatsPreviewRemoved pins that /stats/preview has no route of its
+// own. The "GET /" pattern is a catch-all that serves the home page for any
+// unregistered path, so the request returns 200 with the home page body (not
+// 404, and not the dashboard). /stats still answers with its own page.
+func TestRoutes_StatsPreviewRemoved(t *testing.T) {
+	mux := newTestServer(t, "").routes()
+	get := func(path string) *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		return rr
+	}
+
+	home, stats, preview := get("/"), get("/stats"), get("/stats/preview")
+	if stats.Code != http.StatusOK {
+		t.Fatalf("GET /stats status = %d, want 200", stats.Code)
+	}
+	if preview.Body.String() != home.Body.String() {
+		t.Error("GET /stats/preview did not fall through to the home page; a dedicated route exists")
+	}
+	if preview.Body.String() == stats.Body.String() {
+		t.Error("GET /stats/preview served the /stats page")
 	}
 }

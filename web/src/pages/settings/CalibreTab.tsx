@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import { restoreSetting, useAutoSave } from './useAutoSave'
 import RichText from '../../components/RichText'
 import Alert from '../../components/Alert'
 import {
@@ -96,6 +97,7 @@ function CalibreSection({
 }) {
   const fid = useId()
   const { t } = useTranslation()
+  const autoSave = useAutoSave()
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; detail?: string; warning?: string } | null>(null)
   const [saveError, setSaveError] = useState<{ key: string; msg: string } | null>(null)
@@ -328,17 +330,24 @@ function CalibreSection({
   const setMode = async (next: 'off' | 'calibredb' | 'plugin') => {
     setSettings(s => ({ ...s, 'calibre.mode': next }))
     setCalibredbMissing(null)
-    try {
-      applyCalibredbWarning(await api.setSetting('calibre.mode', next))
-    } catch (err) {
-      console.error(err)
-    }
+    const label = {
+      off: t('settings.calibre.mode.off', 'Off'),
+      calibredb: t('settings.calibre.mode.calibredb', 'calibredb CLI'),
+      plugin: t('settings.calibre.mode.plugin', 'Calibre Bridge plugin'),
+    }[next]
+    const res = await autoSave('calibre.mode', () => api.setSetting('calibre.mode', next), {
+      value: label,
+      previous: settings['calibre.mode'],
+      next,
+      revert: to => restoreSetting(setSettings, 'calibre.mode', to),
+    })
+    if (res) applyCalibredbWarning(res)
   }
 
   const setTransport = async (next: 'push' | 'pull') => {
     setTestResult(null)
     setSettings(s => ({ ...s, 'calibre.plugin_transport': next }))
-    await api.setSetting('calibre.plugin_transport', next).catch(console.error)
+    await autoSave('calibre.plugin_transport', () => api.setSetting('calibre.plugin_transport', next), { value: t(next === 'push' ? 'settings.calibre.transport.push' : 'settings.calibre.transport.pull'), previous: settings['calibre.plugin_transport'], next, revert: to => restoreSetting(setSettings, 'calibre.plugin_transport', to) })
   }
 
   return (
@@ -590,7 +599,7 @@ function CalibreSection({
               <button
                 onClick={startSync}
                 disabled={!!syncProgress?.queueing || (!pulling && !pluginURL)}
-                className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+                className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
                 title={!pulling && !pluginURL ? t('settings.calibre.pushAll.needPluginUrl') : ''}
               >
                 {syncProgress?.queueing ? t('settings.calibre.pushAll.queueing') : t('settings.calibre.pushAll.label')}
@@ -617,7 +626,7 @@ function CalibreSection({
               onChange={async () => {
                 const next = libraryImportEnabled ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'calibre.library_import_enabled': next }))
-                await api.setSetting('calibre.library_import_enabled', next).catch(console.error)
+                await autoSave('calibre.library_import_enabled', () => api.setSetting('calibre.library_import_enabled', next), { previous: settings['calibre.library_import_enabled'], next, revert: to => restoreSetting(setSettings, 'calibre.library_import_enabled', to) })
               }}
               title={libraryImportEnabled ? t('settings.calibre.import.disable', 'Disable library import') : t('settings.calibre.import.enable', 'Enable library import')}
             />
@@ -635,7 +644,7 @@ function CalibreSection({
                   onChange={async () => {
                     const next = syncOnStartup ? 'false' : 'true'
                     setSettings(s => ({ ...s, 'calibre.sync_on_startup': next }))
-                    await api.setSetting('calibre.sync_on_startup', next).catch(console.error)
+                    await autoSave('calibre.sync_on_startup', () => api.setSetting('calibre.sync_on_startup', next), { previous: settings['calibre.sync_on_startup'], next, revert: to => restoreSetting(setSettings, 'calibre.sync_on_startup', to) })
                   }}
                   title={syncOnStartup ? t('common.disable', 'Disable') : t('common.enable', 'Enable')}
                 />
@@ -652,7 +661,7 @@ function CalibreSection({
                 <button
                   onClick={startImport}
                   disabled={importProgress?.running || !settings['calibre.library_path']}
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+                  className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
                 >
                   {importProgress?.running ? t('settings.calibre.import.running', 'Importing…') : t('settings.calibre.import.start', 'Import library')}
                 </button>
@@ -842,7 +851,7 @@ function CalibreRunsList({
                 onClick={() => onRollback(run)}
                 disabled={rolledBack || running}
                 className={`px-3 py-1.5 rounded text-xs font-medium text-white disabled:opacity-50 ${
-                  rolledBack ? 'bg-slate-500 cursor-not-allowed' : 'bg-amber-600 hover:bg-amber-500'
+                  rolledBack ? 'bg-slate-500 cursor-not-allowed' : 'bg-amber-700 hover:bg-amber-800'
                 }`}
                 title={rolledBack ? t('settings.calibre.runs.rolledBack') : ''}
               >
@@ -1025,7 +1034,7 @@ export function CalibreRollbackModal({
             <button
               onClick={apply}
               disabled={applying || previewLoading || !!error || nothingToRollBack}
-              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 rounded text-sm font-medium text-white disabled:opacity-50"
+              className="px-3 py-1.5 bg-amber-700 hover:bg-amber-800 rounded text-sm font-medium text-white disabled:opacity-50"
             >
               {applying ? t('settings.calibre.runs.applying') : t('settings.calibre.runs.applyRollback')}
             </button>

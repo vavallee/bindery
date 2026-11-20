@@ -202,8 +202,6 @@ func TestAPICall_ErrorPaths(t *testing.T) {
 	ctx := context.Background()
 
 	calls := map[string]func() error{
-		"pause":          func() error { return c.Pause(ctx, "n") },
-		"resume":         func() error { return c.Resume(ctx, "n") },
 		"delete":         func() error { return c.Delete(ctx, "n", true) },
 		"delete history": func() error { return c.DeleteHistory(ctx, "n", true) },
 		"history":        func() error { _, err := c.GetHistory(ctx, "books", 10); return err },
@@ -219,7 +217,7 @@ func TestAPICall_ErrorPaths(t *testing.T) {
 	// A base URL that cannot form a request fails before any I/O, and the
 	// message must not carry the API key.
 	c.baseURL = "http://bad host"
-	err := c.Pause(ctx, "n")
+	err := c.Delete(ctx, "n", false)
 	if err == nil || !strings.Contains(err.Error(), "build request") {
 		t.Fatalf("err = %v, want a build-request error", err)
 	}

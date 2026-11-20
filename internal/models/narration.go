@@ -1,11 +1,6 @@
 package models
 
-import (
-	"strings"
-	"unicode"
-
-	"golang.org/x/text/unicode/norm"
-)
+import "strings"
 
 // Edition types (#1358). The empty string is "unknown" and is what every
 // existing row holds. A parser that cannot tell returns it rather than guess.
@@ -80,21 +75,4 @@ func EffectiveNarrators(stored []string, bookNarrator string) []string {
 		return c
 	}
 	return SplitNarrators(bookNarrator)
-}
-
-// FoldName reduces a person's name to a comparison key: lower case, accents
-// removed, punctuation dropped, whitespace collapsed. Two names match only when
-// their keys are equal; there is no fuzzy step.
-func FoldName(s string) string {
-	var b strings.Builder
-	for _, r := range norm.NFD.String(s) {
-		switch {
-		case unicode.Is(unicode.Mn, r):
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			b.WriteRune(unicode.ToLower(r))
-		default:
-			b.WriteByte(' ')
-		}
-	}
-	return strings.Join(strings.Fields(b.String()), " ")
 }

@@ -29,10 +29,10 @@ func (a *aggregatorCore) EnrichAudiobook(ctx context.Context, book *models.Book)
 	if err != nil || b == nil {
 		return err
 	}
-	if narr := b.NarratorList(); narr != "" {
+	if narr := b.NarratorList(); narr != "" && book.CanWrite(models.BookFieldNarrator) {
 		book.Narrator = narr
 	}
-	if dur := b.DurationSeconds(); dur > 0 {
+	if dur := b.DurationSeconds(); dur > 0 && book.CanWrite(models.BookFieldDurationSeconds) {
 		book.DurationSeconds = dur
 	}
 	if book.ImageURL == "" && b.Image != "" {
@@ -41,8 +41,8 @@ func (a *aggregatorCore) EnrichAudiobook(ctx context.Context, book *models.Book)
 	// Fill only when empty AND the user has not locked the field. The two are
 	// separate tests: clearing a description by hand locks it, so an empty
 	// description can be a decision rather than a gap (#2767, same shape as
-	// #2757 one field over). Narrator, duration and cover are not in
-	// models.LockableBookFields, so they are unguarded.
+	// #2757 one field over). Narrator and duration are lockable too and are
+	// guarded above; the cover is not in models.LockableBookFields.
 	if book.Description == "" && b.Summary != "" && book.CanWrite(models.BookFieldDescription) {
 		book.Description = b.Summary
 	}
@@ -99,6 +99,18 @@ func (a *aggregatorCore) GetCanonicalBookByASIN(ctx context.Context, asin string
 // AudnexDisabled reports whether the operator turned audnex off (#2015), so a
 // caller can say why an ASIN lookup found nothing.
 func (a *aggregatorCore) AudnexDisabled() bool { return a != nil && a.audnexOff }
+
+// AudnexRegion is the marketplace the built in audnex client asks, or "" when
+// the audnex client is a test double (#3982).
+func (a *aggregatorCore) AudnexRegion() string {
+	if a == nil {
+		return ""
+	}
+	if cl, ok := a.audnex.(*audnex.Client); ok && cl != nil {
+		return cl.Region()
+	}
+	return ""
+}
 
 func (a *aggregatorCore) getAudnexBookByASIN(ctx context.Context, asin string) (*audnex.Book, error) {
 	asin = normalizeASIN(asin)

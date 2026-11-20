@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router'
 import { useConfirmDialog } from '../components/useConfirmDialog'
-import { api, Book, PendingRelease, QueueItem } from '../api/client'
+import { api, ApiError, Book, PendingRelease, QueueItem } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -12,7 +12,7 @@ import { usePolling } from '../components/usePolling'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
 import { btn, btnSize, primaryFill } from '../components/buttons'
 import { formatBytes } from '../util/format'
-import { downloadStatusBadge, isFailed, isMatchable, isResendable, isRetryable } from '../components/downloadStatus'
+import { downloadStatusBadge, inQueueView, isFailed, isMatchable, isResendable, isRetryable, parseQueueView, QUEUE_VIEWS, type QueueView } from '../components/downloadStatus'
 import { ModalPanel } from '../components/useModal'
 import { errorText } from '../util/errorText'
 import { notifyFailedQueueChanged } from '../components/useFailedQueueCount'
@@ -20,10 +20,14 @@ import BulkActionBar from '../components/BulkActionBar'
 import FilterBar from '../components/FilterBar'
 import EmptyState from '../components/EmptyState'
 import Checkbox from '../components/Checkbox'
+import { useIsAdmin } from '../auth/AuthContext'
 
 export default function QueuePage() {
   const { t } = useTranslation()
   const { confirm, confirmDialog } = useConfirmDialog()
+  // The library scan is one library wide walk, not a per row call, and its
+  // status is admin only on the server. The button follows that (#3993).
+  const isAdmin = useIsAdmin()
   const [queue, setQueue] = useState<QueueItem[]>([])
   // The queue envelope's partial flag and the clients behind it (#2376). The
   // API has always sent these; the page threw them away, so an unreachable
@@ -36,6 +40,7 @@ export default function QueuePage() {
   const [grabbingPending, setGrabbingPending] = useState<number | null>(null)
   const [retryingImportIds, setRetryingImportIds] = useState<Set<number>>(() => new Set())
   const [retryImportErrors, setRetryImportErrors] = useState<Record<number, string>>({})
+  const [scanErrors, setScanErrors] = useState<Record<number, string>>({})
   const [matchMessages, setMatchMessages] = useState<Record<number, string>>({})
   const [deleteTarget, setDeleteTarget] = useState<QueueItem | null>(null)
   const [deleteFiles, setDeleteFiles] = useState(false)
@@ -53,7 +58,7 @@ export default function QueuePage() {
   // the URL rather than left there.
   const [searchParams, setSearchParams] = useSearchParams()
   const viewParam = searchParams.get('view')
-  const statusView: '' | 'active' | 'failed' = viewParam === 'active' || viewParam === 'failed' ? viewParam : ''
+  const statusView = parseQueueView(viewParam)
   useEffect(() => {
     if (viewParam !== null && statusView === '') {
       setSearchParams(prev => {
@@ -102,16 +107,14 @@ export default function QueuePage() {
 
   // Paginate the queue client-side so a large queue (hundreds/thousands of
   // items) doesn't render every row at once and blow up the DOM.
-  const shownQueue = statusView === 'failed'
-    ? queue.filter(q => isFailed(q.status))
-    : statusView === 'active' ? queue.filter(q => !isFailed(q.status)) : queue
+  const shownQueue = statusView === '' ? queue : queue.filter(q => inQueueView(q.status, statusView))
   const { pageItems: queuePage, paginationProps: queuePaginationProps, reset: resetQueuePage } = usePagination(shownQueue, 50, 'queue')
 
   // Changing the view clears the selection. Rows selected under All and then
   // hidden by Failed must not ride along into Remove selected: the dialog
   // would name rows the list no longer shows, and remove them. It also goes
   // back to the first page: page 5 of All clamped to the last page of Failed.
-  const setStatusView = (next: '' | 'active' | 'failed') => {
+  const setStatusView = (next: QueueView) => {
     setSelectedIds(new Set())
     resetQueuePage()
     setSearchParams(prev => {
@@ -239,6 +242,44 @@ export default function QueuePage() {
     }
   }
 
+  // handleScanLibrary is the next step for a handed off row (#3993): the
+  // external import tool files the book on its own schedule, and the library
+  // scan is what picks the result up and settles the row. It is the same call
+  // the Settings scan button makes; there is no narrower endpoint. Busy state
+  // and the success note share the per-row slots the other row actions use.
+  const handleScanLibrary = async (id: number) => {
+    setRetryingImportIds(prev => new Set(prev).add(id))
+    setScanErrors(prev => { const n = { ...prev }; delete n[id]; return n })
+    setMatchMessages(prev => { const n = { ...prev }; delete n[id]; return n })
+    try {
+      const res = await api.triggerLibraryScan()
+      const message = res?.queued
+        ? t('queue.scanQueued', 'A scan is already running. Another one starts as soon as it finishes, so the file is picked up either way.')
+        : t('queue.scanStarted', 'Library scan started. It picks up the file the external tool placed in your library and the book then shows as owned. This row stays under Handed off until you remove it.')
+      setMatchMessages(prev => ({ ...prev, [id]: message }))
+      load()
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        // ErrScanAlreadyRunning: not a failure, so no raw server text.
+        setMatchMessages(prev => ({
+          ...prev,
+          [id]: t('queue.scanRunning', 'A scan is already running. Try again once it has finished.'),
+        }))
+      } else {
+        setScanErrors(prev => ({
+          ...prev,
+          [id]: errorText(e, t('queue.scanFailedFallback', 'Scan failed')),
+        }))
+      }
+    } finally {
+      setRetryingImportIds(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
   // handleMatch attaches an unmatched download to the picked book and imports its
   // files against it (#1589), then surfaces the outcome inline so the user gets
   // feedback rather than a silent no-op.
@@ -274,6 +315,25 @@ export default function QueuePage() {
   // from one table keyed by every state internal/models/download_state.go
   // defines, so they cannot drift apart (#2342).
   const failedItems = queue.filter(q => isFailed(q.status))
+  // One chip per real state group, with its count (#3992). The five new ones
+  // are hidden while empty, unless one is selected (a shared link or a poll
+  // that emptied it), so the bar never grows rows of zeros. All, Active and
+  // Failed always show, as they did.
+  const viewCount = (v: QueueView) => queue.filter(q => inQueueView(q.status, v)).length
+  const viewLabels: Record<QueueView, [string, string]> = {
+    '': ['queue.viewAll', 'All ({{count}})'],
+    active: ['queue.viewActive', 'Active ({{count}})'],
+    downloading: ['queue.viewDownloading', 'Downloading ({{count}})'],
+    importing: ['queue.viewImporting', 'Importing ({{count}})'],
+    held: ['queue.viewHeld', 'Held ({{count}})'],
+    external: ['queue.viewExternal', 'Handed off ({{count}})'],
+    attention: ['queue.viewAttention', 'Needs attention ({{count}})'],
+    failed: ['queue.viewFailed', 'Failed ({{count}})'],
+  }
+  const alwaysShown: QueueView[] = ['', 'active', 'failed']
+  const viewOptions = QUEUE_VIEWS
+    .filter(v => alwaysShown.includes(v) || v === statusView || viewCount(v) > 0)
+    .map(v => ({ value: v, label: t(viewLabels[v][0], { count: viewCount(v), defaultValue: viewLabels[v][1] }) }))
   // The selected rows a retry can actually do something with. Remove selected
   // works on anything; a retry only applies to a failed row, so the button is
   // offered only when the selection holds one (#2295).
@@ -463,7 +523,7 @@ export default function QueuePage() {
                       <button
                         onClick={retryAllFailed}
                         disabled={bulkBusy}
-                        className="touch-target px-2.5 py-1 text-xs rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium"
+                        className="touch-target px-2.5 py-1 text-xs rounded bg-sky-700 hover:bg-sky-800 disabled:opacity-50 text-white font-medium"
                       >
                         {t('queue.retryAllFailed', 'Retry all failed')}
                       </button>
@@ -493,11 +553,7 @@ export default function QueuePage() {
                     value: statusView,
                     onChange: setStatusView,
                     label: t('queue.statusView', 'Show'),
-                    options: [
-                      { value: '', label: t('queue.viewAll', { count: queue.length, defaultValue: 'All ({{count}})' }) },
-                      { value: 'active', label: t('queue.viewActive', { count: queue.length - failedItems.length, defaultValue: 'Active ({{count}})' }) },
-                      { value: 'failed', label: t('queue.viewFailed', { count: failedItems.length, defaultValue: 'Failed ({{count}})' }) },
-                    ],
+                    options: viewOptions,
                   }}
                 />
               </div>
@@ -511,7 +567,11 @@ export default function QueuePage() {
                   variant="no-match"
                   title={statusView === 'failed'
                     ? t('queue.viewFailedEmpty', 'No failed downloads')
-                    : t('queue.viewActiveEmpty', 'No downloads in progress')}
+                    : statusView === 'attention'
+                      ? t('queue.viewAttentionEmpty', 'Nothing needs attention')
+                      : statusView === '' || statusView === 'active'
+                        ? t('queue.viewActiveEmpty', 'No downloads in progress')
+                        : t('queue.viewStateEmpty', 'No downloads in this state')}
                   action={
                     <button type="button" onClick={() => setStatusView('')} className={btn.secondary}>
                       {t('queue.viewShowAll', 'Show all')}
@@ -610,8 +670,13 @@ export default function QueuePage() {
                         {t('queue.retryImportError', { error: retryImportErrors[item.id] })}
                       </div>
                     )}
+                    {scanErrors[item.id] && (
+                      <div role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400 bg-red-400/10 rounded px-2 py-1 break-words">
+                        {t('queue.scanError', { error: scanErrors[item.id], defaultValue: 'Scan failed: {{error}}' })}
+                      </div>
+                    )}
                     {matchMessages[item.id] && (
-                      <div className="mt-1 text-xs text-accent-text bg-emerald-400/10 rounded px-2 py-1 break-words">
+                      <div role="status" className="mt-1 text-xs text-accent-text bg-emerald-400/10 rounded px-2 py-1 break-words">
                         {matchMessages[item.id]}
                       </div>
                     )}
@@ -647,7 +712,7 @@ export default function QueuePage() {
                         onClick={() => item.book ? handleMatch(item.id, item.book.id) : handleRetryImport(item.id)}
                         disabled={retryingImportIds.has(item.id)}
                         title={t('queue.retryImportHint')}
-                        className="px-3 py-2 text-xs bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded font-medium touch-manipulation"
+                        className="px-3 py-2 text-xs bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 rounded font-medium touch-manipulation"
                       >
                         {retryingImportIds.has(item.id) ? t('queue.retryingImport') : t('queue.retryImport')}
                       </button>
@@ -657,9 +722,21 @@ export default function QueuePage() {
                         onClick={() => handleRetryDownload(item.id)}
                         disabled={retryingImportIds.has(item.id)}
                         title={t('queue.retryDownloadHint')}
-                        className="px-3 py-2 text-xs bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded font-medium touch-manipulation"
+                        className="px-3 py-2 text-xs bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 rounded font-medium touch-manipulation"
                       >
                         {retryingImportIds.has(item.id) ? t('queue.retryingDownload') : t('queue.retryDownload')}
+                      </button>
+                    )}
+                    {item.status === 'importExternal' && isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleScanLibrary(item.id)}
+                        disabled={retryingImportIds.has(item.id)}
+                        aria-label={t('queue.scanLibraryFor', { title: item.title, defaultValue: 'Scan library for {{title}}' })}
+                        title={t('queue.scanLibraryHint', 'Runs a library scan so the file the external tool placed is picked up.')}
+                        className="px-3 py-2 text-xs bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 rounded font-medium touch-manipulation"
+                      >
+                        {retryingImportIds.has(item.id) ? t('queue.scanningLibrary', 'Scanning…') : t('queue.scanLibrary', 'Scan library')}
                       </button>
                     )}
                     <button
@@ -762,7 +839,7 @@ export default function QueuePage() {
               <button
                 onClick={confirmDelete}
                 disabled={deleting}
-                className="px-3 py-2 text-xs rounded font-medium bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
+                className="px-3 py-2 text-xs rounded font-medium bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
               >
                 {t('queue.removeConfirm')}
               </button>

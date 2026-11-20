@@ -60,10 +60,12 @@ export const FIELDS: FieldEntry[] = [
   { key: 'default.media_type_strict', tab: 'metadata', label: G + 'strictMediaTypeLabel', help: G + 'strictMediaTypeHint' },
   { key: 'author.default_monitor_mode', tab: 'metadata', label: G + 'defaultMonitorModeLabel', help: G + 'defaultMonitorModeHint' },
   { key: 'author.default_monitor_latest_count', tab: 'metadata', label: G + 'defaultMonitorLatestCountLabel' },
+  { key: 'author.default_monitor_new_items', tab: 'metadata', label: G + 'defaultMonitorNewItemsLabel', help: G + 'defaultMonitorNewItemsHint' },
   { key: 'autoGrab.enabled', tab: 'metadata', label: G + 'autoGrabLabel', help: G + 'autoGrabHint' },
   { key: 'recommendations.enabled', tab: 'metadata', label: G + 'recommendationsLabel', help: G + 'recommendationsHint' },
   { key: 'metadata.author_enrichment.wikidata', tab: 'metadata', label: G + 'authorWikidataLabel', help: G + 'authorWikidataHint' },
   { key: 'metadata.book_enrichment.ranobedb', tab: 'metadata', label: G + 'bookRanobeDBLabel', help: G + 'bookRanobeDBHint' },
+  { key: 'metadata.audnex_region', tab: 'metadata', label: G + 'audnexRegionLabel', help: G + 'audnexRegionHint' },
   { key: 'metadata.enrichers_disabled', tab: 'metadata', label: G + 'enrichersHeading' },
 
   // Quality

@@ -754,8 +754,8 @@ describe('SettingsPage', () => {
 
     const autoBtn = fileNaming.getByRole('button', { name: 'Auto' })
     const moveBtn = fileNaming.getByRole('button', { name: 'Move' })
-    expect(autoBtn.className).toContain('bg-emerald-600')
-    expect(moveBtn.className).not.toContain('bg-emerald-600')
+    expect(autoBtn.className).toContain('bg-emerald-700')
+    expect(moveBtn.className).not.toContain('bg-emerald-700')
 
     // Clicking Auto writes the explicit value so the choice round-trips through
     // the settings table rather than relying on an absent key.
@@ -1034,16 +1034,18 @@ describe('SettingsPage', () => {
 
     const authorDefaults = sectionForHeading('Library Defaults')
     const selects = authorDefaults.getAllByRole('combobox')
-    // [0] metadata provider, [1] default media type, [2] default monitor mode.
-    fireEvent.change(selects[1], { target: { value: 'audiobook' } })
+    // [0] metadata provider, [1] audnex marketplace, [2] default media type,
+    // [3] default monitor mode.
+    fireEvent.change(selects[2], { target: { value: 'audiobook' } })
     await waitFor(() => {
     expect(api.setSetting).toHaveBeenCalledWith('default.media_type', 'audiobook')
     })
-    fireEvent.change(selects[2], { target: { value: 'latest' } })
+    fireEvent.change(selects[3], { target: { value: 'latest' } })
     await waitFor(() => {
     expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_mode', 'latest')
     })
     fireEvent.change(authorDefaults.getByRole('spinbutton'), { target: { value: '3' } })
+    fireEvent.blur(authorDefaults.getByRole('spinbutton'))
     await waitFor(() => {
     expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_latest_count', '3')
     })

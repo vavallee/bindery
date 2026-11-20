@@ -12,7 +12,7 @@ const sources = import.meta.glob('./*.tsx', { query: '?raw', import: 'default', 
 const TAB_FILE: Record<SettingsTabId, string> = {
   general: 'GeneralTab', indexers: 'IndexersTab', clients: 'ClientsTab', notifications: 'NotificationsTab',
   quality: 'QualityTab', metadata: 'MetadataTab', import: 'ImportTab', rootfolders: 'RootFoldersTab',
-  logs: 'LogsTab', blocklist: 'BlocklistTab', calibre: 'CalibreTab', abs: 'ABSTab', grimmory: 'GrimmoryTab',
+  logs: 'LogsTab', blocklist: 'BlocklistTab', calibre: 'CalibreTab', abs: 'ABSTab', bookorbit: 'BookOrbitTab', grimmory: 'GrimmoryTab',
   'api-keys': 'ApiKeysTab', advanced: 'AdvancedTab', about: 'AboutTab',
 }
 const source = (file: string) => {

@@ -140,10 +140,11 @@
     "scan": "Scan folder",
     "scanning": "Scanning…",
     "empty": "No book files or folders found here.",
-    "emptyHidesImported": "Nothing new to import here. Files already in your library are hidden; tick Show already imported to list them.",
+    "emptyHidesImported": "Nothing new to import here. Files already in your library or already handed off to your import tool are hidden; tick Show already imported to list them.",
     "truncated": "Showing the first 1000 units; narrow the folder to see the rest.",
     "showImported": "Show already imported",
     "alreadyImported": "already imported",
+    "handedOff": "already handed off to your import tool",
     "selectAll": "Select all matched",
     "importSelected": "Import {{count}} selected",
     "group": {
@@ -411,6 +412,8 @@
     "pageTitle": "Search",
     "searchFailed": "Search failed",
     "grabFailed": "Grab failed",
+    "grabFailedStatus": "The server could not start that download ({{status}}). Try again.",
+    "grabFailedNetwork": "Could not reach the server to start that download. Check your connection and try again.",
     "indexerLink": "indexer",
     "grabs": "{{n}} grabs",
     "seeders_one": "{{count}} seeder",
@@ -915,6 +918,7 @@
     "contentCheckAudiobookEntry": "{{title}} ({{count}})",
     "contentCheckRetitled": "Every file is titled \"{{title}}\" ({{count}} files), so it was imported as a retitled edition",
     "contentCheckTruncated": "The content check was cut short and skipped",
+    "heldDetail": "Finished downloading. Waiting for the other format before dropping it.",
     "allEventTypes": "All event types",
     "events": {
       "grabbed": "Grabbed",
@@ -922,6 +926,7 @@
       "downloadStalled": "Download Stalled",
       "downloadRequeued": "Download Requeued",
       "downloadFolderImported": "Folder Imported",
+      "downloadHeld": "Held for pair",
       "importFailed": "Import Failed",
       "bookImported": "Book Imported",
       "bookFileDeleted": "File Deleted",
@@ -974,6 +979,15 @@
     "retryImportError": "Retry failed: {{error}}",
     "retryDownload": "Retry download",
     "retryingDownload": "Retrying…",
+    "scanLibrary": "Scan library",
+    "scanningLibrary": "Scanning…",
+    "scanLibraryFor": "Scan library for {{title}}",
+    "scanLibraryHint": "Runs a library scan so the file the external tool placed is picked up.",
+    "scanStarted": "Library scan started. It picks up the file the external tool placed in your library and the book then shows as owned. This row stays under Handed off until you remove it.",
+    "scanQueued": "A scan is already running. Another one starts as soon as it finishes, so the file is picked up either way.",
+    "scanRunning": "A scan is already running. Try again once it has finished.",
+    "scanError": "Scan failed: {{error}}",
+    "scanFailedFallback": "Scan failed",
     "retryDownloadHint": "Sends this same release to your download client again. It does not search for a different release; use Search on the book for that.",
     "partialWarning": "Could not reach {{clients}}. This list may be incomplete, so a download missing from it is not necessarily gone.",
     "partialWarningUnnamed": "A download client did not answer. This list may be incomplete, so a download missing from it is not necessarily gone.",
@@ -1033,6 +1047,13 @@
     "viewAll": "All ({{count}})",
     "viewActive": "Active ({{count}})",
     "viewFailed": "Failed ({{count}})",
+    "viewDownloading": "Downloading ({{count}})",
+    "viewImporting": "Importing ({{count}})",
+    "viewHeld": "Held ({{count}})",
+    "viewExternal": "Handed off ({{count}})",
+    "viewAttention": "Needs attention ({{count}})",
+    "viewAttentionEmpty": "Nothing needs attention",
+    "viewStateEmpty": "No downloads in this state",
     "viewFailedEmpty": "No failed downloads",
     "viewActiveEmpty": "No downloads in progress",
     "viewShowAll": "Show all"
@@ -1333,6 +1354,7 @@
       "calibre": "Calibre",
       "abs": "Audiobookshelf",
       "grimmory": "Grimmory",
+      "bookorbit": "BookOrbit",
       "blocklist": "Blocklist",
       "apiKeys": "API Keys",
       "about": "About",
@@ -1954,7 +1976,9 @@
       "transmissionDirHint": "Optional absolute path override. Leave blank to use Transmission's configured default download directory.",
       "delugeLabelHint": "Applied via the Deluge label plugin. Leave blank if the plugin is not installed.",
       "pathRemapLabel": "Download client path remap",
+      "slskdHint": "Needs slskd 0.26.0 or newer and an API key with the readwrite role. Searches send your wanted titles to the Soulseek network, and downloading shows your IP address to peers, so run slskd behind a VPN with a forwarded port.",
       "remapHelp": {
+        "slskd": "Map slskd's downloads folder to the path Bindery can read. Example: if slskd saves to /app/downloads but Bindery sees that folder at /media/soulseek, use /app/downloads:/media/soulseek. Leave empty when both already see the same mount.",
         "qbittorrent": "Map the path qBittorrent reports to the path Bindery can read. Example: if qBittorrent shows /downloads/books but Bindery sees that folder at /media/books, use /downloads:/media/books. Bindery also uses this in reverse when sending new torrents.",
         "rtorrent": "Map the path rTorrent reports to the path Bindery can read. Seedbox installs almost always need this — e.g. rTorrent writes to /home/user/downloads while Bindery mounts that share at /media/books, so use /home/user/downloads:/media/books. Bindery also uses this in reverse when setting a new torrent's download directory, and to locate files when you remove a download with its data.",
         "other": "Map the path this client reports to the path Bindery can read: the client's path, a colon, then Bindery's. Example: if the client shows /downloads/books but Bindery sees that folder at /media/books, use /downloads:/media/books. A Windows path works on the client side, such as S:\\Downloads:/downloads. Leave empty when both already see the same mount. Diagnose checks the mapping end to end."
@@ -2388,6 +2412,8 @@
       "audibleHint": "Adds audiobooks to an author's catalogue. It uses an unpublished Amazon endpoint, not a documented API.",
       "audnexLabel": "audnex",
       "audnexHint": "Narrator, runtime and cover for audiobooks. A community proxy over the same Audible data.",
+      "audnexRegionLabel": "audnex marketplace",
+      "audnexRegionHint": "The Audible marketplace audnex looks an ASIN up in. An ASIN sold only on another marketplace, such as a German audiobook, is not found in the US one, so pick the one your audiobooks come from. Only this one marketplace is asked. Takes effect from the next lookup, with no restart.",
       "sourcesSaveFailed": "Could not save that change, so it was put back. Try again.",
       "enhancedHardcoverStatusEnabled": "Enabled",
       "enhancedHardcoverStatusEnvDisabled": "Disabled by BINDERY_ENHANCED_HARDCOVER_API=false.",
@@ -2412,6 +2438,9 @@
       "defaultMonitorModeLabel": "Default monitor mode",
       "defaultMonitorModeHint": "Applied to newly added authors. Existing authors keep their current mode unless edited.",
       "defaultMonitorLatestCountLabel": "Latest book count",
+      "defaultMonitorLatestCountInvalid": "Enter a whole number of 1 or more.",
+      "defaultMonitorNewItemsLabel": "Default for monitoring newly discovered books",
+      "defaultMonitorNewItemsHint": "Applied to newly added authors. Choose whether a metadata refresh may add books it discovers later. Existing authors keep their own setting.",
       "audiobookFileTemplate": "Audiobook file naming (per track)",
       "audiobookFileTemplateHint": "Leave empty to keep the download’s original file layout. Set a template to rename every audiobook track in playback order; it must include {Part}. A single-file audiobook is renamed too, as part 1, unless {Part} sits in a group with its own text, such as {Title}{ - Pt. Part:3}.{ext}, which is left out when there is only one file.",
       "saveFailed": "Save failed",
@@ -2688,6 +2717,74 @@
         "totalLast_other": "{{count}} files pushed so far, last at {{last}}."
       }
     },
+    "bookorbit": {
+      "intro": "Learn what you already own from a <site>BookOrbit</site> library. Bindery reads the books, authors, series and file paths BookOrbit holds and registers each file where it already sits. It <b>never writes to BookOrbit</b> and never moves, renames or deletes a file.",
+      "fields": {
+        "serverUrl": "Server URL",
+        "apiKey": "API key",
+        "configured": "(configured, leave blank to keep)",
+        "apiKeyHint": "Create a key in BookOrbit under Settings, You, API keys. Keep its access at <b>Read only</b>, give it no permissions, and limit it to the libraries you import. Bindery stores it and never shows it again.",
+        "pathRemap": "BookOrbit path remap",
+        "pathRemapHelp": "BookOrbit reports paths as its own container sees them. Rewrite them to where Bindery sees the same files, under one of its library or root folders.",
+        "publicUrl": "BookOrbit address for your browser",
+        "publicUrlHint": "Optional. Set it if your browser uses a different address than the server URL above. Leave it empty to use the server URL for the Open in BookOrbit link on the book page."
+      },
+      "testConnection": "Test connection",
+      "testOk_one": "Connected as {{username}}. The key can see {{count}} library.",
+      "testOk_other": "Connected as {{username}}. The key can see {{count}} libraries.",
+      "saveUrlFirst": "Save the server URL before testing: the test always uses the saved address.",
+      "errors": {
+        "save": "Save failed",
+        "test": "Test failed",
+        "libraries": "Could not list libraries",
+        "start": "The import could not start"
+      },
+      "libraries": {
+        "heading": "Libraries to import",
+        "hint": "Only ticked libraries are read. Load the list from BookOrbit, tick the ones Bindery should learn from, then save.",
+        "load": "Load libraries",
+        "none": "No library is selected yet. Load the list from BookOrbit to choose.",
+        "unnamed": "Library {{id}}"
+      },
+      "import": {
+        "heading": "Import",
+        "hint": "Preview first. A preview reads BookOrbit and reports what an import would do without changing anything. An import matches or creates each author and book, links series, and registers every file Bindery can see at its remapped path. Files it cannot see are counted and left alone. Running it again is safe.",
+        "preview": "Preview changes",
+        "run": "Import libraries",
+        "running": "Running…",
+        "working": "Working…",
+        "processed_one": "{{count}} book processed",
+        "processed_other": "{{count}} books processed",
+        "saveFirst": "Save your changes before starting, so the run uses the saved settings.",
+        "configureFirst": "Save a server URL, an API key and at least one library first.",
+        "dryRunFailed": "Preview failed: {{error}}",
+        "failed": "Import failed: {{error}}",
+        "dryRunComplete": "Preview complete. Nothing was changed.",
+        "complete": "Import complete.",
+        "sample_one": "Last book",
+        "sample_other": "Last {{count}} books"
+      },
+      "stats": {
+        "itemsSeen": "Books listed by BookOrbit",
+        "booksCreated": "Books created",
+        "booksLinked": "Books matched",
+        "booksUpdated": "Books already imported",
+        "authorsCreated": "Authors created",
+        "seriesCreated": "Series created",
+        "ownedMarked": "Files registered",
+        "ownedMarkedDryRun": "Files to register",
+        "pendingManual": "Files not found",
+        "failed": "Books failed"
+      },
+      "runs": {
+        "heading": "Run history",
+        "empty": "No BookOrbit import has run yet.",
+        "dryRun": "Preview",
+        "import": "Import",
+        "newer": "Newer",
+        "older": "Older"
+      }
+    },
     "rootFolders": {
       "addFailed": "Failed to add folder"
     },
@@ -2696,11 +2793,17 @@
     },
     "pathRemap": {
       "syntaxHint": "Use comma-separated <code>from:to</code> prefix rewrites."
+    },
+    "toast": {
+      "saved": "{{name}} saved",
+      "set": "{{name}} set to {{value}}",
+      "failed": "Couldn't save {{name}}",
+      "genericName": "Setting"
     }
   },
   "addToLibrary": {
     "title": "Add to library",
-    "description": "Search by author, title, ISBN, or ASIN. Pick an author to monitor their catalogue, or a single book to add just that one.",
+    "description": "Search by author, title, ISBN, or ASIN, or paste a Hardcover book link. Pick an author to monitor their catalogue, or a single book to add just that one.",
     "searchPlaceholder": "Author, title, ISBN, or ASIN (for example, Le Guin, Dune, 9780441478125, B0DBJBFHGT)",
     "addBook": "Add Book",
     "booksDivider": "Books",
@@ -2932,8 +3035,13 @@
     "roleFor": "Role for {{username}}",
     "roleRequesterHint": "A requester can browse the library and ask for books and authors. An admin approves or declines each request. Needs the auth mode set to enabled.",
     "autoApprove": "Auto",
+    "autoApproveDefault": "Use default",
+    "autoApproveAlways": "Always",
+    "autoApproveNever": "Never",
+    "autoApproveEffectiveOn": "Approves on its own",
+    "autoApproveEffectiveOff": "Waits for an admin",
     "autoApproveFor": "Auto-approve requests for {{username}}",
-    "autoApproveHint": "Adds this requester's requests straight away instead of queueing them. Requests already waiting stay in the queue.",
+    "autoApproveHint": "Use default follows the requests.auto_approve_default setting in Settings, Advanced, which covers requesters only. Always adds this requester's requests straight away, Never queues them for an admin whatever the default says. A request for a book an admin excluded or skipped still waits for a person, and requests already waiting stay in the queue.",
     "autoApproveFail": "Failed to change auto-approve",
     "createButton": "Create User",
     "promote": "Make admin",
@@ -2982,8 +3090,8 @@
       "authorProgress": "{{imported}} of {{total}} books here"
     },
     "confirm": {
-      "bookHint": "An admin will look at your request and add the book if they agree. You can follow it under My requests.",
-      "authorHint": "An admin will look at your request and add this author's books if they agree. You can follow it under My requests.",
+      "bookHint": "An admin approves your request, or your account approves it on its own if auto approve is on. You can follow it under My requests.",
+      "authorHint": "An admin approves your request, or your account approves it on its own if auto approve is on. You can follow it under My requests.",
       "format": "Format",
       "formatLabel": "Format to request",
       "anyFormat": "Any format",
@@ -3087,6 +3195,8 @@
     "excludeFailed": "Failed to toggle exclude",
     "publishedDate": "Published {{date}}",
     "narratedBy": "Narrated by {{narrator}}",
+    "openInBookOrbit": "Open in BookOrbit",
+    "openInBookOrbitLabel": "Open this book in BookOrbit (opens in a new tab)",
     "excludedBadge": "Excluded",
     "excludedFromSearches": "Excluded from searches",
     "languageUnknown": "Language unknown",
@@ -3248,7 +3358,15 @@
       "renamed": "File renamed",
       "bookFileRenamed": "File renamed",
       "ignored": "Release ignored",
-      "importRejected": "Import rejected"
+      "importRejected": "Import rejected",
+      "bookRenamed": "File renamed",
+      "downloadFolderImported": "Folder imported",
+      "bookFileDeleted": "File deleted",
+      "downloadStalled": "Download stalled",
+      "downloadRequeued": "Download requeued",
+      "bookRebound": "Rebound",
+      "bookFileMoved": "File moved",
+      "bookLanguageCorrected": "Language corrected"
     },
     "seriesPosition": "{{series}} #{{position}}",
     "description": {
@@ -3374,6 +3492,12 @@
     "both": "Ebook + Audiobook"
   },
   "renameFiles": {
+    "externalWarning": "Import mode is External, so another tool owns this layout. Renaming here can fight that tool.",
+    "externalWarningFor": "Import mode is External for {{formats}}, so another tool owns this layout. Renaming here can fight that tool.",
+    "formatEbook": "ebook files",
+    "formatAudiobook": "audiobook files",
+    "formatsJoin": "{{first}} and {{second}}",
+    "externalConfirm": "I understand, rename these files anyway",
     "status": {
       "move": "Will move",
       "moved": "Moved",
@@ -3391,6 +3515,17 @@
     "none": "No tracked files to rename.",
     "appliedSummary": "{{moved}} moved, {{failed}} failed",
     "previewSummary": "{{movable}} of {{total}} will move",
+    "sidecarPreview": "{{count}} metadata.opf to write",
+    "sidecarSummary": "{{written}} metadata.opf written, {{skipped}} skipped, {{failed}} failed",
+    "applySidecars_one": "Write {{count}} metadata.opf",
+    "applySidecars_other": "Write {{count}} metadata.opf",
+    "sidecar": {
+      "written": "metadata.opf written",
+      "unchanged": "metadata.opf already up to date",
+      "foreign": "metadata.opf left alone, Bindery did not write it",
+      "shared": "metadata.opf skipped, this folder holds more than one book",
+      "failed": "metadata.opf could not be written"
+    },
     "apply_one": "Rename {{count}} file",
     "apply_other": "Rename {{count}} files",
     "renaming": "Renaming…",

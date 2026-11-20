@@ -5,6 +5,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/abs"
 	"github.com/vavallee/bindery/internal/indexer"
+	"github.com/vavallee/bindery/internal/metadata/audnex"
 )
 
 // SettingType is the shape of a stored setting value. Every value in the
@@ -136,6 +137,12 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingAuthorDefaultMonitorNewItems, Type: SettingTypeEnum, Default: "all",
+		Values:      []string{"all", "none"},
+		Description: "Whether a metadata refresh may add books it newly discovers, for authors added without an explicit monitor new items choice. Authors that already exist keep their own value.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: SettingAuthorDefaultQualityProfileID, Type: SettingTypeInt, Default: "", Min: "1",
 		Description: "quality_profiles.id given to authors added without a quality profile. Empty means none, and an author with no quality profile accepts every format at grab and at import. A deleted profile is treated as empty.",
 		State:       SettingStateActive,
@@ -143,6 +150,11 @@ var settingDescriptors = []SettingDescriptor{
 	{
 		Key: SettingRequestsMaxPendingPerUser, Type: SettingTypeInt, Default: "25", Min: "1", Max: "10000",
 		Description: "How many requests one requester may have waiting for an admin's decision. Further requests answer 429 until some are decided.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingRequestsAutoApproveDefault, Type: SettingTypeBool, Default: "false",
+		Description: "Approve requests without an admin for every requester account that has no auto approve setting of its own. Admin and user accounts are not covered, and an account set to Always or Never ignores this. Requests for books already in the catalogue auto approve too, except books an admin excluded or skipped, which wait for a person. requests.max_pending_per_user still caps how many auto approve each day.",
 		State:       SettingStateActive,
 	},
 	{
@@ -168,7 +180,13 @@ var settingDescriptors = []SettingDescriptor{
 	},
 	{
 		Key: SettingMetadataBookRanobeDB, Type: SettingTypeBool, Default: "false",
-		Description: "Give light novels their official English title from RanobeDB. A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a locked title. Two requests per book, paced to RanobeDB's 60 a minute. Off by default: while off, RanobeDB is sent no request. A change applies to the next metadata lookup, without a restart.",
+		Description: "Give light novels their official English title from RanobeDB. It applies to books added after it is switched on, never to a book already in the library. A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a locked title. Two requests per book, paced to RanobeDB's 60 a minute. Off by default: while off, RanobeDB is sent no request. A change applies to the next metadata lookup, without a restart.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingMetadataAudnexRegion, Type: SettingTypeEnum, Default: audnex.DefaultRegion,
+		Values:      audnex.Regions,
+		Description: "Audible marketplace audnex looks an ASIN up in: us, ca, uk, au, fr, de, jp, it, in or es. An ASIN sold only on another marketplace is a 404 in the US one, so set this to the marketplace your audiobooks come from. Only one marketplace is asked, with no fallback to the others. A change applies to the next metadata lookup, without a restart.",
 		State:       SettingStateActive,
 	},
 	{
@@ -539,6 +557,33 @@ var settingDescriptors = []SettingDescriptor{
 		Key: abs.SettingABSLastImportAt, Type: SettingTypeString, Default: "",
 		Description: "RFC3339 timestamp written after each Audiobookshelf import. Nothing reads it: unlike calibre.last_import_at it never grew a display.",
 		State:       SettingStateInert,
+	},
+
+	// BookOrbit import.
+	{
+		Key: SettingBookOrbitBaseURL, Type: SettingTypeString, Default: "",
+		Description: "Base URL of the BookOrbit server to import from.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingBookOrbitAPIKey, Type: SettingTypeString, Default: "",
+		Description: "BookOrbit API key. Written by the BookOrbit import screen, never returned.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingBookOrbitLibraryIDs, Type: SettingTypeString, Default: "[]",
+		Description: "JSON array of the BookOrbit library IDs to import from.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingBookOrbitPathRemap, Type: SettingTypeString, Default: "",
+		Description: "Path rewrites applied to BookOrbit file paths, in from:to[,from:to] form.",
+		State:       SettingStateActive,
+	},
+	{
+		Key: SettingBookOrbitPublicURL, Type: SettingTypeString, Default: "",
+		Description: "Address a browser uses to reach BookOrbit, for the Open in BookOrbit link on the book page. Empty means the base URL. Only http and https are accepted.",
+		State:       SettingStateActive,
 	},
 
 	// Hardcover.

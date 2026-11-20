@@ -1,0 +1,2 @@
+### Added
+- A Queue row handed off to your external import tool now has a Scan library button, so the next step is on the row instead of only Remove (#3993). It runs the same library scan as Settings, which picks up the file the external tool placed in your library so the book shows as owned. The row itself stays under Handed off until you remove it. The button is shown to admins, because the scan walks the whole library, and it says so plainly when a scan is already running.

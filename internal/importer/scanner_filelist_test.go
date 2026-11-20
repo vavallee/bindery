@@ -327,7 +327,7 @@ func TestResolveAudiobookSource_SingleFileReturnsFileItself(t *testing.T) {
 
 // TestResolveAudiobookSource_CommonSubdirAcceptedAsSource — multi-file
 // torrent whose files share a strict subdir of the download root: the
-// helper returns that subdir so MoveDir handles the whole folder.
+// helper returns that subdir so MoveDirCtx handles the whole folder.
 func TestResolveAudiobookSource_CommonSubdirAcceptedAsSource(t *testing.T) {
 	s, _, _, _ := scannerFixture(t, t.TempDir())
 	got, perFile := s.resolveAudiobookSource("/data/downloads", []string{

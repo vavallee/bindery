@@ -169,3 +169,27 @@ func TestRank_EditionPreference(t *testing.T) {
 		t.Fatal("unknown edition type scored")
 	}
 }
+
+// TestNarratorRank_KanaVoicingMarksAreDistinct: a dakuten or handakuten
+// changes the kana it sits on, so a preference for one narrator must not match
+// another whose name differs only by that mark. Narrator names were folded by
+// models.FoldName, which dropped every combining mark (the #2452 bug class).
+func TestNarratorRank_KanaVoicingMarksAreDistinct(t *testing.T) {
+	cases := []struct {
+		narrator, preferred string
+		want                int
+	}{
+		{"がっこう", "かっこう", -1},
+		{"ヴィクトル", "ウィクトル", -1},
+		{"パン", "ハン", -1},
+		// The same name in composed and decomposed form still matches.
+		{"ズ", "ズ", 0},
+		// Latin accents and case still fold away.
+		{"José Núñez", "jose nunez", 0},
+	}
+	for _, c := range cases {
+		if got := narratorRank([]string{c.narrator}, []string{c.preferred}); got != c.want {
+			t.Errorf("narratorRank(%q, preferred %q) = %d, want %d", c.narrator, c.preferred, got, c.want)
+		}
+	}
+}

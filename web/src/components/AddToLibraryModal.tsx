@@ -4,7 +4,7 @@ import { api, Author, Book } from '../api/client'
 import BookRating from './BookRating'
 import type { LibraryRequest } from '../api/client'
 import { useIsRequester } from '../auth/AuthContext'
-import { isbnFromQuery, resolveBookQuery } from '../api/booklookup'
+import { hardcoverSlugFromQuery, isbnFromQuery, resolveBookQuery } from '../api/booklookup'
 import { splitAuthorSearchResults } from './addAuthorTitleGuard'
 import { groupAddResults } from './addToLibraryGrouping'
 import type { AddResultFilter } from './addToLibraryGrouping'
@@ -57,7 +57,7 @@ function basePath(): string {
 }
 
 function isIdentifierQuery(q: string): boolean {
-  return isbnFromQuery(q) !== null || ASIN_RE.test(q)
+  return isbnFromQuery(q) !== null || ASIN_RE.test(q) || hardcoverSlugFromQuery(q) !== null
 }
 
 export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode, onRequested, standalone = false }: Props) {
@@ -116,9 +116,10 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
     setShowHidden(false)
     try {
       if (isIdentifierQuery(q)) {
-        // An ISBN or ASIN names one edition; the author endpoint has nothing
-        // to say about it. resolveBookQuery owns the lookup dispatch so this
-        // dialog and Manual Import accept exactly the same inputs.
+        // An ISBN or ASIN names one edition, and a Hardcover reference one
+        // book; the author endpoint has nothing to say about either.
+        // resolveBookQuery owns the lookup dispatch so this dialog and Manual
+        // Import accept exactly the same inputs.
         const found = await resolveBookQuery(q)
         setAuthors([])
         setHiddenAuthors([])
@@ -357,7 +358,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
                   aria-pressed={filter === value}
                   onClick={() => setFilter(value)}
                   className={`touch-target px-3 py-1 rounded-full text-xs font-medium border ${filter === value
-                    ? 'bg-emerald-600 border-emerald-600 text-white'
+                    ? 'bg-emerald-700 border-emerald-700 text-white'
                     : 'border-slate-300 dark:border-zinc-700 text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60'}`}
                 >
                   {label}{count !== null && ` (${count})`}

@@ -27,13 +27,14 @@ const downloadClientSelectColumns = `
 // client type has to be added here or it will never be picked for a grab even
 // though the rest of the stack supports it.
 var (
-	torrentClientTypes = []string{"qbittorrent", "transmission", "deluge", "rtorrent"}
-	usenetClientTypes  = []string{"sabnzbd", "nzbget"}
+	torrentClientTypes  = []string{"qbittorrent", "transmission", "deluge", "rtorrent"}
+	usenetClientTypes   = []string{"sabnzbd", "nzbget"}
+	soulseekClientTypes = []string{"slskd"}
 )
 
 // clientTypesForProtocol returns the SQL placeholder list and bound arguments
-// for the given protocol. Anything that is not "torrent" is usenet, matching
-// selectClient's default.
+// for the given protocol. "torrent" and "soulseek" have their own lists;
+// anything else is usenet, matching selectClient's default.
 //
 // The returned string is only ever "?" repeated — the type names themselves are
 // bound as query arguments and never interpolated — so splicing it into the
@@ -42,8 +43,11 @@ var (
 // place and not the other.
 func clientTypesForProtocol(protocol string) (string, []any) {
 	types := usenetClientTypes
-	if protocol == "torrent" {
+	switch protocol {
+	case "torrent":
 		types = torrentClientTypes
+	case "soulseek":
+		types = soulseekClientTypes
 	}
 	args := make([]any, 0, len(types))
 	for _, t := range types {
@@ -106,7 +110,7 @@ func hydrateClientCredentials(c *models.DownloadClient) {
 		// (Deluge only has a password; rTorrent authenticates with HTTP basic
 		// auth on the RPC endpoint, so both fields are meaningful.)
 	default:
-		// SABnzbd authenticates via api_key, not username/password.
+		// SABnzbd and slskd authenticate via api_key, not username/password.
 		c.Username = ""
 		c.Password = ""
 	}
@@ -230,60 +234,6 @@ func (r *DownloadClientRepo) ListEnabled(ctx context.Context) ([]models.Download
 	return clients, rows.Err()
 }
 
-func (r *DownloadClientRepo) GetFirstEnabled(ctx context.Context) (*models.DownloadClient, error) {
-	var c models.DownloadClient
-	var enabled, useSSL, enabledForBooks, enabledForAudiobooks, removeOnImport int
-	err := r.db.QueryRowContext(ctx, `
-		SELECT `+downloadClientSelectColumns+`
-		FROM download_clients WHERE enabled=1 ORDER BY priority LIMIT 1`).
-		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
-			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt,
-			&c.ProxyUsername, &c.ProxyPassword)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	c.Enabled = enabled == 1
-	c.UseSSL = useSSL == 1
-	c.EnabledForBooks = enabledForBooks == 1
-	c.EnabledForAudiobooks = enabledForAudiobooks == 1
-	c.RemoveOnImport = removeOnImport == 1
-	hydrateClientCredentials(&c)
-	return &c, nil
-}
-
-// GetFirstEnabledByProtocol returns the highest-priority enabled client that
-// matches the given protocol ("usenet" → sabnzbd, "torrent" → qbittorrent).
-// Returns (nil, nil) if no matching client is configured.
-func (r *DownloadClientRepo) GetFirstEnabledByProtocol(ctx context.Context, protocol string) (*models.DownloadClient, error) {
-	var c models.DownloadClient
-	var enabled, useSSL, enabledForBooks, enabledForAudiobooks, removeOnImport int
-	placeholders, args := clientTypesForProtocol(protocol)
-	err := r.db.QueryRowContext(ctx, `
-		SELECT `+downloadClientSelectColumns+`
-		FROM download_clients WHERE enabled=1 AND type IN (`+placeholders+`) ORDER BY priority LIMIT 1`, args...).
-		Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &c.APIKey,
-			&useSSL, &c.URLBase, &c.Username, &c.Password, &c.Category, &c.CategoryAudiobook, &c.PathRemap, &c.Priority,
-			&enabled, &enabledForBooks, &enabledForAudiobooks, &removeOnImport, &c.CreatedAt, &c.UpdatedAt,
-			&c.ProxyUsername, &c.ProxyPassword)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	c.Enabled = enabled == 1
-	c.UseSSL = useSSL == 1
-	c.EnabledForBooks = enabledForBooks == 1
-	c.EnabledForAudiobooks = enabledForAudiobooks == 1
-	c.RemoveOnImport = removeOnImport == 1
-	hydrateClientCredentials(&c)
-	return &c, nil
-}
-
 // GetEnabledByProtocol returns all enabled clients matching the given protocol,
 // ordered by priority. Used when multiple clients of the same type exist and
 // the caller needs to pick the best one by category.
@@ -369,28 +319,12 @@ func (r *DownloadClientRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// PickClientForMediaType selects the best client from a list for the given
-// media type. The explicit per-media-type CategoryAudiobook field (added in
-// #700) is the strongest signal: a client with that field populated can
-// handle audiobooks regardless of its primary Category name. As a fallback
-// for clients that have not opted into the new field, we keep the legacy
-// fuzzy "audio in category" heuristic so existing single-client setups keep
-// working.
-func PickClientForMediaType(clients []models.DownloadClient, mediaType string) *models.DownloadClient {
-	ranked := RankClientsForMediaType(clients, mediaType)
-	if len(ranked) == 0 {
-		return nil
-	}
-	return &ranked[0]
-}
-
 // RankClientsForMediaType orders clients by Priority first (lower is tried
 // first — the user-controlled ordering signal), and only falls back to the
 // category heuristic to break a tie between clients that share the same
 // Priority: an explicit CategoryAudiobook match, then the legacy "audio in
-// category" heuristic, then everything else. Unlike PickClientForMediaType it
-// returns every client, so a caller can retry the next-best one if sending to
-// the first choice fails.
+// category" heuristic, then everything else. It returns every client, so a
+// caller can retry the next-best one if sending to the first choice fails.
 //
 // Priority must win outright over the category hint — #2412 was a client
 // with CategoryAudiobook set jumping ahead of a higher-priority (lower

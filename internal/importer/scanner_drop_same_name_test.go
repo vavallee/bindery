@@ -44,7 +44,7 @@ func placeDropEbook(t *testing.T, s *Scanner, book *models.Book, dropDir, layout
 	downloadDir := t.TempDir()
 	writeEbook(t, filepath.Join(downloadDir, "release.epub"), marker)
 	files := discoverBookFiles(ctx, downloadDir, nil)
-	if _, _, err := s.placeDroppedFormat(ctx, book, author, downloadDir, files, nil, models.MediaTypeEbook, dropDir, layout, "copy"); err != nil {
+	if _, _, _, err := s.placeDroppedFormat(ctx, book, author, downloadDir, files, nil, models.MediaTypeEbook, dropDir, layout, "copy"); err != nil {
 		t.Fatalf("place %s: %v", marker, err)
 	}
 }

@@ -77,7 +77,7 @@ func TestDrop_TemplatedLayoutKeepsTheMatchingBook(t *testing.T) {
 	writeEbook(t, filepath.Join(downloadPath, "Origin (1)", "Origin - Author A.epub"), "origin")
 	folder := t.TempDir()
 
-	_, _, err := s.placeDroppedFormat(t.Context(), book, &models.Author{Name: "Author A"}, downloadPath, discoverBookFiles(t.Context(), downloadPath, nil), nil, models.MediaTypeEbook, folder, "templated", "copy")
+	_, _, _, err := s.placeDroppedFormat(t.Context(), book, &models.Author{Name: "Author A"}, downloadPath, discoverBookFiles(t.Context(), downloadPath, nil), nil, models.MediaTypeEbook, folder, "templated", "copy")
 	if err != nil {
 		t.Fatal(err)
 	}

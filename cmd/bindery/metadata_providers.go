@@ -9,6 +9,7 @@ import (
 	"github.com/vavallee/bindery/internal/api"
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/metadata"
+	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/metadata/bnf"
 	"github.com/vavallee/bindery/internal/metadata/googlebooks"
 	"github.com/vavallee/bindery/internal/metadata/nb"
@@ -83,6 +84,8 @@ type metadataProviderSet struct {
 	// metadata.enrichers_disabled (#1890, #2015).
 	audibleOff bool
 	audnexOff  bool
+	// audnexRegion is metadata.audnex_region, normalised (#3982).
+	audnexRegion string
 }
 
 // build reads the settings and returns the provider set they select. It is
@@ -106,6 +109,10 @@ func (m *metadataProviders) build(ctx context.Context) metadataProviderSet {
 	// Audible and audnex are not enrichers, so assemble does not see them.
 	set.audibleOff = disabled["audible"]
 	set.audnexOff = disabled["audnex"]
+	set.audnexRegion = audnex.DefaultRegion
+	if s, _ := m.settings.Get(ctx, api.SettingMetadataAudnexRegion); s != nil {
+		set.audnexRegion = audnex.NormalizeRegion(s.Value)
+	}
 	if s, _ := m.settings.Get(ctx, api.SettingMetadataAuthorWikidata); s != nil && strings.EqualFold(strings.TrimSpace(s.Value), "true") {
 		set.authorEnrichers = append(set.authorEnrichers, m.wikidata)
 	}
@@ -206,6 +213,7 @@ func (m *metadataProviders) apply(ctx context.Context, agg *metadata.Aggregator)
 	}
 	agg.SetAuthorEnrichers(set.authorEnrichers...)
 	agg.SetAudiobookSourcesDisabled(set.audibleOff, set.audnexOff)
+	agg.SetAudnexRegion(set.audnexRegion)
 	set.log("metadata providers reconfigured")
 	return nil
 }
@@ -243,6 +251,7 @@ var metadataProviderSettingKeys = map[string]bool{
 	api.SettingMetadataAuthorWikidata:    true,
 	api.SettingMetadataBookRanobeDB:      true,
 	api.SettingMetadataEnrichersDisabled: true,
+	api.SettingMetadataAudnexRegion:      true,
 }
 
 // metadataProvidersReconfigurer adapts metadataProviders to the settings

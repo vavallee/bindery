@@ -9,6 +9,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/grimmory"
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 const (
@@ -146,7 +147,7 @@ func (h *GrimmoryHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		set(SettingGrimmoryBaseURL, u)
 	}
 	if req.APIKey != nil {
-		k, err := grimmory.NormalizeAPIKey(*req.APIKey)
+		k, err := httpsec.NormalizeAPIKey(*req.APIKey)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

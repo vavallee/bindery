@@ -24,6 +24,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	oidcauth "github.com/vavallee/bindery/internal/auth/oidc"
 	"github.com/vavallee/bindery/internal/bookhydrate"
+	"github.com/vavallee/bindery/internal/bookorbit"
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/covers"
@@ -315,6 +316,7 @@ func main() {
 	metaAgg := metadata.NewAggregator(bootProviders.primary, bootProviders.enrichers...)
 	metaAgg.SetAuthorEnrichers(bootProviders.authorEnrichers...)
 	metaAgg.SetAudiobookSourcesDisabled(bootProviders.audibleOff, bootProviders.audnexOff)
+	metaAgg.SetAudnexRegion(bootProviders.audnexRegion)
 
 	// Optional CLI subcommand: `bindery migrate {csv,readarr} <path>`.
 	// Runs the import and exits; does not start the HTTP server. Useful
@@ -490,6 +492,10 @@ func main() {
 			slog.Warn("calibre cover repair failed", "error", err)
 		}
 	})
+	// One gate for every importer built on the Audiobookshelf engine: each
+	// run matches against an author list loaded once, so two at a time could
+	// each create the author the other just made.
+	importRunGate := abs.NewRunGate()
 	absImporter := abs.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, seriesRepo, settingsRepo, absImportRunRepo, absImportRunEntityRepo, absProvenanceRepo, absReviewRepo, absConflictRepo).
 		WithVersion(version).
 		WithStoragePaths(cfg.LibraryDir, cfg.AudiobookDir, rootFolderRepo).
@@ -498,7 +504,22 @@ func main() {
 		WithEnhancedHardcoverSeriesEnabled(func(ctx context.Context) bool {
 			return api.HardcoverFeatureStateFor(ctx, settingsRepo, cfg.EnhancedHardcoverAPI).EnhancedHardcoverAPI
 		}).
-		WithJobs(bgJobs) // drain in-flight imports on shutdown (#1458)
+		WithJobs(bgJobs). // drain in-flight imports on shutdown (#1458)
+		WithRunGate(importRunGate).
+		WithRunSource(abs.DefaultSourceID)
+	// The BookOrbit importer (#1927) drives a second instance of the same
+	// engine, so authors, books and series dedupe exactly as they do for
+	// Audiobookshelf. It gets no review queue and no conflict store: both
+	// screens act on Audiobookshelf's configuration. An ambiguous match is
+	// reported on the run instead.
+	bookOrbitImporter := bookorbit.NewImporter(
+		abs.NewImporter(authorRepo, authorAliasRepo, bookRepo, editionRepo, seriesRepo, settingsRepo, absImportRunRepo, absImportRunEntityRepo, absProvenanceRepo, nil, nil).
+			WithVersion(version).
+			WithStoragePaths(cfg.LibraryDir, cfg.AudiobookDir, rootFolderRepo).
+			WithMetadata(metaAgg).
+			WithJobs(bgJobs).
+			WithRunGate(importRunGate),
+	).WithUserAgent(abs.UserAgent(version))
 	storedABS := api.LoadABSConfig(ctxBoot, settingsRepo)
 	resumeCfg := abs.ImportConfig{
 		SourceID:   abs.DefaultSourceID,
@@ -660,6 +681,7 @@ func main() {
 		WithOIDCGroupClaim(cfg.OIDCGroupClaim).
 		WithLifetimeCtx(appCtx)
 	userMgmtHandler := api.NewUserManagementHandler(userRepo).
+		WithSettings(settingsRepo).
 		WithLocalAuthEnabled(cfg.LocalAuthEnabled)
 	searchHandler := api.NewSearchHandler(metaAgg, bookRepo, authorRepo)
 	librarySearchHandler := api.NewLibrarySearchHandler(authorRepo, bookRepo, seriesRepo)
@@ -690,6 +712,7 @@ func main() {
 		WithEditionHydration(editionRepo).
 		WithRoots(libraryRoots).
 		WithCoverStore(coverStore).
+		WithBookOrbitLinks(absProvenanceRepo).
 		WithLifetimeCtx(appCtx)
 	// Interactive search records what it returns here, and a grab from a
 	// non-admin account is held to it: it can grab a search result, not make
@@ -843,6 +866,7 @@ func main() {
 	grimmorySyncHandler := api.NewGrimmorySyncHandler(grimmorySyncer, grimmoryLoadPushCfg).
 		WithLastPush(grimmoryPushRepo.LastPush)
 	absHandler := api.NewABSHandler(settingsRepo).WithVersion(version)
+	bookOrbitHandler := api.NewBookOrbitHandler(settingsRepo, bookOrbitImporter).WithUserAgent(abs.UserAgent(version))
 	absConflictHandler := api.NewABSConflictHandler(absConflictRepo, authorRepo, bookRepo)
 	absImportHandler := api.NewABSImportHandler(absImporter, func(ctx context.Context) api.ABSStoredConfig {
 		return api.LoadABSConfig(ctx, settingsRepo)
@@ -872,7 +896,9 @@ func main() {
 		WithFinder(seriesRepo, importScanner).
 		WithEditionHydration(editionRepo, metaAgg).
 		WithAppContext(appCtx)
-	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir).WithLocalCovers(coverStore)
+	imageProxyHandler := api.NewImageProxyHandler(cfg.DataDir).
+		WithLocalCovers(coverStore).
+		WithMaxCacheBytes(int64(cfg.ImageCacheMaxMB) << 20)
 	imageProxyHandler.StartEviction(24 * time.Hour)
 	// Proxied cover URLs must carry the path prefix so they resolve under a
 	// subpath deploy (BINDERY_URL_BASE). No-op when URLBase is empty.
@@ -947,8 +973,11 @@ func main() {
 				// by the telemetry ping server. Empty when no ping has
 				// succeeded yet or telemetry is disabled — the frontend
 				// shows an update badge only when it is set and newer.
-				LatestVersion                   string `json:"latestVersion,omitempty"`
-				ImageCacheBytes                 int64  `json:"imageCacheBytes"`
+				LatestVersion   string `json:"latestVersion,omitempty"`
+				ImageCacheBytes int64  `json:"imageCacheBytes"`
+				// ImageCacheMaxBytes is the cap the cover cache stops
+				// growing at, so an admin can see when it is full.
+				ImageCacheMaxBytes              int64  `json:"imageCacheMaxBytes"`
 				EnhancedHardcoverAPI            bool   `json:"enhancedHardcoverApi"`
 				HardcoverTokenConfigured        bool   `json:"hardcoverTokenConfigured"`
 				HardcoverPausedUntil            string `json:"hardcoverPausedUntil,omitempty"`
@@ -963,6 +992,7 @@ func main() {
 				BuildDate:                       date,
 				LatestVersion:                   telemetryClient.LatestVersion(),
 				ImageCacheBytes:                 cacheBytes,
+				ImageCacheMaxBytes:              imageProxyHandler.MaxCacheBytes(),
 				EnhancedHardcoverAPI:            hardcoverState.EnhancedHardcoverAPI,
 				HardcoverTokenConfigured:        hardcoverState.HardcoverTokenConfigured,
 				HardcoverPausedUntil:            pausedUntil,
@@ -1049,6 +1079,7 @@ func main() {
 		r.Delete("/book/{id}/file", bookHandler.DeleteFile)
 		r.Put("/book/{id}/exclude", bookHandler.ToggleExcluded)
 		r.Get("/book/{id}/series-exclusions", bookHandler.SeriesExclusions)
+		r.Put("/book/{id}/edition/{editionId}", bookHandler.UpdateEdition)
 		r.Post("/book/{id}/rebind", bookHandler.Rebind)
 		r.Post("/book/{id}/enrich-audiobook", bookHandler.EnrichAudiobook)
 		registerBookCoverRoutes(r, bookHandler)
@@ -1249,9 +1280,9 @@ func main() {
 		// registerDBIntegrityRoutes).
 		registerDBIntegrityRoutes(r, api.NewDBIntegrityHandler(database, cfg.DBPath, backupHandler))
 
-		// Library. The scan status returns server filesystem paths, so it is
-		// admin only (#2361); see registerLibraryScanStatusRoute.
-		r.Post("/library/scan", libraryHandler.Scan)
+		// Library scan and scan status, admin only: the status returns server
+		// filesystem paths (#2361) and the scan walks the global library; see
+		// registerLibraryScanStatusRoute.
 		registerLibraryScanStatusRoute(r, libraryHandler)
 		// Library adoption, admin only (see registerAdoptionRoutes).
 		registerAdoptionRoutes(r, adoptionHandler)
@@ -1265,6 +1296,8 @@ func main() {
 		// Grimmory integration — GetConfig open (redacts the key), writes admin.
 		// See registerGrimmoryRoutes.
 		registerGrimmoryRoutes(r, grimmoryHandler)
+		// BookOrbit import (#1927): admin only. See registerBookOrbitRoutes.
+		registerBookOrbitRoutes(r, bookOrbitHandler)
 		registerGrimmorySyncRoutes(r, grimmorySyncHandler)
 
 		// Calibre integration (probe + library import + bulk push) — all

@@ -12,6 +12,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/abs"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 const (
@@ -140,11 +141,19 @@ func (h *ABSHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	if req.APIKey != nil {
 		apiKey = strings.TrimSpace(*req.APIKey)
 		if apiKey != "" {
-			if _, err := abs.NormalizeAPIKey(apiKey); err != nil {
+			if _, err := httpsec.NormalizeAPIKey(apiKey); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
 		}
+	}
+	// A saved key belongs to the server it was issued for. When the URL moves
+	// and no replacement key came with it, drop the saved key rather than
+	// send it to the new address.
+	newKeySupplied := req.APIKey != nil && strings.TrimSpace(*req.APIKey) != ""
+	clearKey := !newKeySupplied && baseURL != current.BaseURL && apiKey != ""
+	if clearKey {
+		apiKey = ""
 	}
 	label := current.Label
 	if req.Label != nil {
@@ -193,7 +202,7 @@ func (h *ABSHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		{Key: SettingABSLibraryIDs, Value: string(libraryIDsJSON)},
 		{Key: SettingABSPathRemap, Value: pathRemap},
 	}
-	if req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "" {
+	if newKeySupplied || clearKey {
 		kvs = append(kvs, db.SettingKV{Key: SettingABSAPIKey, Value: apiKey})
 	}
 	if err := h.settings.SetMany(r.Context(), kvs); err != nil {
@@ -348,7 +357,7 @@ func (h *ABSHandler) newConfiguredClient(baseURL, apiKey string) (absClient, err
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, errors.New("base_url is required")
 	}
-	apiKey, err := abs.NormalizeAPIKey(apiKey)
+	apiKey, err := httpsec.NormalizeAPIKey(apiKey)
 	if err != nil {
 		return nil, err
 	}

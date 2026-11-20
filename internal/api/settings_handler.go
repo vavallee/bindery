@@ -19,6 +19,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/importer"
+	"github.com/vavallee/bindery/internal/metadata/audnex"
 	"github.com/vavallee/bindery/internal/metadata/hardcover"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
@@ -56,6 +57,9 @@ const SettingDefaultMediaTypeStrict = "default.media_type_strict"
 const (
 	SettingAuthorDefaultMonitorMode        = db.SettingAuthorDefaultMonitorMode
 	SettingAuthorDefaultMonitorLatestCount = db.SettingAuthorDefaultMonitorLatestCount
+	// SettingAuthorDefaultMonitorNewItems is the "Monitor newly discovered
+	// books" policy, all or none, for authors created without one (#3958).
+	SettingAuthorDefaultMonitorNewItems = db.SettingAuthorDefaultMonitorNewItems
 )
 
 // SettingAuthorDefaultQualityProfileID is the quality profile given to authors
@@ -100,6 +104,13 @@ const SettingMetadataAuthorWikidata = "metadata.author_enrichment.wikidata"
 // with a clear winner, the same volume numbers and a matching author. Off by
 // default, so an install that has not chosen it sends RanobeDB nothing.
 const SettingMetadataBookRanobeDB = "metadata.book_enrichment.ranobedb"
+
+// SettingMetadataAudnexRegion is the Audible marketplace audnex is asked for
+// an ASIN (#3982). Default "us". A German or French ASIN is a 404 in the US
+// catalogue and resolves in its own, so an operator whose library is bought
+// from another marketplace sets this to match. The values are
+// audnex.Regions.
+const SettingMetadataAudnexRegion = "metadata.audnex_region"
 
 // SettingMetadataEnrichersDisabled lists the metadata enrichers an operator
 // has turned off (#1890): a comma separated list of names from
@@ -642,7 +653,8 @@ const SettingRecommendationsEnabled = "recommendations.enabled"
 //   - metadata.primary_provider: AddToLibraryModal, for the provider notice.
 //   - library.defaultRootFolderId, library.defaultAudiobookRootFolderId,
 //     default.media_type, author.default_monitor_mode and
-//     author.default_monitor_latest_count: authorAddDefaults, which preselects
+//     author.default_monitor_latest_count and author.default_monitor_new_items:
+//     authorAddDefaults, which preselects
 //     the add author dialog. Root folder ids are numbers, not paths; the paths
 //     themselves live behind GET /rootfolder.
 //   - author.default_quality_profile_id: authorAddDefaults again, for the
@@ -661,6 +673,7 @@ var nonAdminReadableSettings = map[string]bool{
 	SettingDefaultMediaType:                true,
 	SettingAuthorDefaultMonitorMode:        true,
 	SettingAuthorDefaultMonitorLatestCount: true,
+	SettingAuthorDefaultMonitorNewItems:    true,
 	SettingAuthorDefaultQualityProfileID:   true,
 }
 
@@ -1185,6 +1198,13 @@ func validateSettingValue(key, value string) error {
 		if !models.IsAuthorMonitorModeValidAsGlobalDefault(value) {
 			return fmt.Errorf("author.default_monitor_mode %q is not one of: all, future, latest, none (series is per-author only)", value)
 		}
+	case SettingAuthorDefaultMonitorNewItems:
+		if value == "" {
+			return nil
+		}
+		if !models.IsAuthorMonitorNewItemsValid(value) {
+			return fmt.Errorf("author.default_monitor_new_items %q is not one of: all, none", value)
+		}
 	case SettingAuthorDefaultMonitorLatestCount:
 		if value == "" {
 			return nil
@@ -1203,6 +1223,13 @@ func validateSettingValue(key, value string) error {
 		if err != nil || id <= 0 {
 			return fmt.Errorf("%s %q must be a quality profile id or empty", key, value)
 		}
+	case SettingRequestsAutoApproveDefault:
+		// Only the two canonical values (or empty, meaning off), so a typo
+		// cannot be misread as truthy.
+		if value == "" || value == "true" || value == "false" {
+			return nil
+		}
+		return fmt.Errorf("requests.auto_approve_default %q is not one of: true, false", value)
 	case SettingRequestsMaxPendingPerUser:
 		if value == "" {
 			return nil
@@ -1227,6 +1254,12 @@ func validateSettingValue(key, value string) error {
 		// this pure validator can't see — Set() enforces that separately.
 		if !IsMetadataPrimaryProviderValid(value) {
 			return fmt.Errorf("metadata.primary_provider %q is not one of: %s", value, strings.Join(MetadataPrimaryProviders, ", "))
+		}
+	case SettingMetadataAudnexRegion:
+		// Empty means us. Anything else must be a marketplace audnex accepts,
+		// since it answers 400 to the rest and every lookup would fail.
+		if value != "" && !audnex.ValidRegion(value) {
+			return fmt.Errorf("%s %q is not one of: %s", key, value, strings.Join(audnex.Regions, ", "))
 		}
 	case SettingMetadataEnrichersDisabled:
 		// Unknown names are refused rather than dropped, like an unknown

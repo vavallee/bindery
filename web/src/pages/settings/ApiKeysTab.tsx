@@ -9,10 +9,12 @@ import { useSaveResult } from './useSaveResult'
 import { secretInputAttrs } from '../../util/inputAttrs'
 import { slateFill } from '../../components/buttons'
 import { errorText } from '../../util/errorText'
+import { restoreSetting, useAutoSave } from './useAutoSave'
 
 export default function ApiKeysTab() {
   const fid = useId()
   const { t } = useTranslation()
+  const autoSave = useAutoSave()
   const opdsClipboard = useClipboardCopy()
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -114,7 +116,12 @@ export default function ApiKeysTab() {
     setSettings(s => ({ ...s, 'hardcover.enhanced_series_enabled': next }))
     setSaving('hardcover.enhanced_series_enabled')
     try {
-      await api.setSetting('hardcover.enhanced_series_enabled', next)
+      await autoSave('hardcover.enhanced_series_enabled', () => api.setSetting('hardcover.enhanced_series_enabled', next), {
+        rethrow: true,
+        previous: settings['hardcover.enhanced_series_enabled'],
+        next,
+        revert: to => restoreSetting(setSettings, 'hardcover.enhanced_series_enabled', to),
+      })
       await refreshSystemStatus()
     } catch (err) {
       console.error(err)

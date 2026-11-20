@@ -119,6 +119,7 @@ If you want to keep running Readarr itself, Readarr Redux and Bookshelf are the 
 | [Audiobookshelf](https://github.com/advplyr/audiobookshelf) | Audiobook server and player with mobile apps and progress sync | Bindery imports an existing Audiobookshelf library and asks it to rescan after every audiobook import |
 | [Calibre](https://calibre-ebook.com) | Desktop ebook manager and converter | Each import is registered through `calibredb` or the [Bindery Bridge plugin](https://github.com/vavallee/bindery-plugins), even with Calibre on another machine |
 | [Calibre-Web Automated](https://github.com/crocodilestick/Calibre-Web-Automated) | Web library and reader with Kobo and KOReader sync | Bindery copies each ebook into its ingest folder |
+| [BookOrbit](https://github.com/bookorbit/bookorbit) | Self hosted library for ebooks and audiobooks | Bindery imports an existing BookOrbit library and registers its files as owned, read only ([guide](docs/BookOrbit-Import.md)) |
 | [Grimmory](https://grimmory.org) | Web library for ebooks, comics and audiobooks | Bindery pushes imports to its BookDrop inbox (preview) |
 | [Kavita](https://github.com/Kareadita/Kavita), [Komga](https://github.com/gotson/komga) | Reading servers | Point them at Bindery's ebook folder |
 | [Shelfmark](https://github.com/calibrain/shelfmark) | On demand search and download across many sources | A different shape: Shelfmark for one off finds, Bindery for the authors you follow |
@@ -135,7 +136,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 - **Grouping editions and translations** of one work under a single book ([#1358](https://github.com/vavallee/bindery/issues/1358)).
 - **Audio conversion, M4B merging and chapter editing.** Audiobookshelf's M4B encoder covers this well.
 - **A built in reader or player, or reading progress sync.** Audiobookshelf, Calibre-Web Automated, Kavita and Komga do this, and Bindery feeds them.
-- **Shadow libraries, IRC, Soulseek and magazines** are out of scope; see the roadmap's standing answers.
+- **Shadow libraries, IRC and magazines** are out of scope; see the roadmap's standing answers.
 
 ## Features
 
@@ -154,7 +155,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 <summary><strong>Search and downloads</strong></summary>
 
 - Newznab and Torznab indexers queried in parallel and ranked by your format order, edition tags (RETAIL, UNABRIDGED, ABRIDGED), year, grabs, size and ISBN match. Prowlarr can sync its indexers into Bindery, with seed ratio and seed time per indexer.
-- SABnzbd, NZBGet, qBittorrent, Transmission, Deluge and rTorrent or ruTorrent, with SSL and URL base support. Pin an indexer to a download client, and remove a torrent once it is imported and seeded.
+- SABnzbd, NZBGet, qBittorrent, Transmission, Deluge and rTorrent or ruTorrent, with SSL and URL base support, plus Soulseek through slskd as an opt in client (0.26.0 or newer; adding the client is as far as it goes in this release). Pin an indexer to a download client, and remove a torrent once it is imported and seeded.
 - **Diagnose** on each download client checks the connection, the category, where grabs land, the path remap, read access, and whether imports can hardlink, then names the first thing to fix. No shell needed, which matters in a distroless image.
 - Automatic search on an interval and on add, interactive search per book, and a global pause. Quality profiles per media type, language filter, delay profiles, freeleech only indexers, a blocklist, and a per indexer daily query limit with polite back off when an indexer refuses.
 - Failed downloads can be retried one at a time or all at once. Releases the filters set aside stay visible in interactive search with the reason, and you can still grab them.
@@ -249,6 +250,7 @@ Almost everything is set in the web UI under **Settings**. A few bootstrap setti
 | `BINDERY_OUTBOUND_PROXY` | _(empty)_ | Send outbound HTTP through an `http`, `https` or `socks5` proxy; LAN destinations bypass it by default |
 | `BINDERY_ENFORCE_TENANCY` | `false` | Give each user a separate library; see [docs/multi-user.md](docs/multi-user.md) |
 | `BINDERY_DOWNLOAD_RETENTION_DAYS` | `90` | Days to keep a finished download row; `0` keeps them all. Read [DEPLOYMENT.md](docs/DEPLOYMENT.md#environment-variables) before changing it on a long running install |
+| `BINDERY_IMAGE_CACHE_MAX_MB` | `2048` | Ceiling, in megabytes, on the cover cache kept under the data dir; when it is full the oldest covers make way |
 | `BINDERY_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `BINDERY_PUID` / `BINDERY_PGID` | _(unset)_ | Assert the container UID and GID; set the UID itself with `--user` or Compose's `user:` |
 
@@ -260,8 +262,9 @@ The full reference, including path remapping, API key seeding, trusted proxies a
 |---|---|
 | **Usenet clients** | SABnzbd, NZBGet |
 | **Torrent clients** | qBittorrent, Transmission, Deluge, rTorrent and ruTorrent (XML-RPC over HTTP or SCGI) |
+| **Soulseek (opt in)** | slskd 0.26.0 or newer, added as a download client. It is off until you add one, and the [setup guide](docs/DEPLOYMENT.md#slskd-soulseek) covers the privacy cost |
 | **Indexers** | Newznab and Torznab, with per indexer categories; Prowlarr indexer sync |
-| **Lists and imports** | Hardcover lists (synced), Goodreads CSV, Readarr database, Calibre `metadata.db`, Audiobookshelf |
+| **Lists and imports** | Hardcover lists (synced), Goodreads CSV, Readarr database, Calibre `metadata.db`, Audiobookshelf, BookOrbit |
 | **Library tools** | Calibre (`calibredb` or the Bindery Bridge plugin), Calibre-Web Automated ingest, Grimmory (preview), a post import drop folder for anything that watches one ([guide](docs/Calibre-Integration-Wiki.md)) |
 | **Notifications** | Webhooks for Apprise, ntfy, Home Assistant, Slack and Discord |
 | **Authentication** | Local accounts, API keys, OIDC, forward auth proxy |
@@ -320,6 +323,8 @@ Endpoints, authentication and integration examples are in **[docs/API.md](docs/A
 | **Calibre and CWA**: the hand off options and troubleshooting | [docs/Calibre-Integration-Wiki.md](docs/Calibre-Integration-Wiki.md) |
 | **Calibre on a Windows desktop**: plugin install, pull mode, push with a share | [docs/Calibre-Windows-Desktop-Wiki.md](docs/Calibre-Windows-Desktop-Wiki.md) |
 | **Audiobookshelf import**: what comes across, review queue, rollback | [docs/ABS-Import-Wiki.md](docs/ABS-Import-Wiki.md) |
+| **BookOrbit import**: read only key, path remap, what comes across, known limits | [docs/BookOrbit-Import.md](docs/BookOrbit-Import.md) |
+| **BookOrbit integration**: Bindery files and BookOrbit reads, External mode with the Book Dock, converting audiobooks, Kubernetes | [docs/BookOrbit-Integration-Wiki.md](docs/BookOrbit-Integration-Wiki.md) |
 | **Hardcover series**: token setup, series linking, missing books | [docs/Hardcover-Series-Wiki.md](docs/Hardcover-Series-Wiki.md) |
 | **Metadata editing**: manual edits, field locks, genre overrides | [docs/Metadata-Editing-Wiki.md](docs/Metadata-Editing-Wiki.md) |
 | **Multi user and requests**: roles, isolation, requesters | [docs/multi-user.md](docs/multi-user.md) |

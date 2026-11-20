@@ -3,8 +3,8 @@ import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { api, Book, SearchResult } from '../api/client'
 import { useConfirmDialog } from '../components/useConfirmDialog'
-import { confirmPackGrab, grabWithForceConfirm } from '../util/forceGrab'
-import { calendarYear } from '../util/calendarDate'
+import { confirmPackGrab, grabErrorText, grabWithForceConfirm } from '../util/forceGrab'
+import { calendarYear, formatCalendarDate } from '../util/calendarDate'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
 import ReleaseSwarm from '../components/ReleaseSwarm'
@@ -232,7 +232,7 @@ export default function WantedPage() {
         load()
       }, 1200)
     } catch (err: unknown) {
-      alert(errorText(err, t('wanted.grabFailed', 'Grab failed')))
+      alert(grabErrorText(err, t))
     } finally {
       setGrabbingGuid(null)
     }
@@ -485,7 +485,7 @@ export default function WantedPage() {
                     </div>
                     {book.searchHeldUntil && (
                       <div className="truncate text-[10px] text-sky-700 dark:text-sky-400" data-testid="wanted-upcoming">
-                        {t('wanted.upcomingNote', { date: new Date(book.searchHeldUntil).toLocaleDateString() })}
+                        {t('wanted.upcomingNote', { date: formatCalendarDate(book.searchHeldUntil) ?? '' })}
                       </div>
                     )}
                     {book.authorUnmonitored && (
@@ -595,7 +595,7 @@ export default function WantedPage() {
                             grabbedGuid === r.guid
                               ? 'bg-emerald-700 text-white'
                               : grabbingGuid === r.guid
-                              ? 'bg-emerald-600/60 text-white/70'
+                              ? 'bg-emerald-800 text-white/80'
                               : `${primaryFill}`
                           }`}
                         >

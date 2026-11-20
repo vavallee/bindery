@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { COVER_COLORS, COVER_FG, coverColorFor } from '../components/coverPalette'
 import { SELECTED_HOVER_DARK } from '../components/DataTable'
+import { TOAST_FILL } from '../pages/settings/toastBus'
 import dataTableSource from '../components/DataTable.tsx?raw'
 import postcss from 'postcss'
 import tailwindcss from '@tailwindcss/postcss'
@@ -214,6 +215,8 @@ const NOT_TEXT = new Set([
   // The recommendation card's stars are decoration beside the rating, which
   // is stated as text (#3396).
   '../components/RecommendationCard.tsx text-amber-500',
+  // The upgrade checkboxes' tick (#3661).
+  '../pages/settings/QualityTab.tsx text-emerald-600',
 ])
 
 const GREYS = /^(?:slate|zinc|gray|neutral|stone)-/
@@ -261,32 +264,92 @@ describe('explicit text colours on the background in the same string', () => {
     expect(failures, failures.join('\n')).toEqual([])
   })
 
-  // Text that names a colour for each theme (text-amber-700
-  // dark:text-amber-400) but no background of its own sits on whatever its
-  // parent paints, which a string cannot show. It is measured on the page and
-  // on the card of each theme, the two surfaces nearly all of it lands on.
+  // The case above finds a string by its hued text class, so white text on a
+  // fill (bg-amber-500 text-white, a banner or a pill) was never seen: white
+  // is 2.1:1 on amber-500 and 3.7:1 on emerald-600. A hover fill is the
+  // ground while the pointer is on it, so it is measured too, with the hover
+  // text colour when the string sets one (hover:bg-emerald-600
+  // hover:text-white). Picked per theme as above, the dark: class when the
+  // string has one, else the shared class; text and fill opacity are mixed in.
+  it('white and black text stay AA on the fill in the same string, resting and hovered', () => {
+    const HOVER_TEXT = /^(dark:)?hover:text-([a-z]+-\d+|white|black)$/
+    const HOVER_BG = /^(dark:)?hover:bg-([a-z]+-\d+|white|black)$/
+    const failures: string[] = []
+    let checked = 0
+    for (const [file, source] of Object.entries(sources)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      const code = source.replace(/^\s*\/\/.*$/gm, '')
+      for (const [, str] of code.matchAll(/["'`]([^"'`]*\btext-(?:white|black)\b[^"'`]*)["'`]/g)) {
+        const classes = str.split(/\s+/)
+        const opacityOf = (m: RegExpMatchArray) => classes.find(c => c.split('/')[0] === m[0])?.split('/')[1]
+        for (const theme of ['light', 'dark'] as const) {
+          const pick = (pattern: RegExp) => {
+            const matches = classes.map(c => c.split('/')[0].match(pattern)).filter((m): m is RegExpMatchArray => m !== null)
+            const own = matches.find(m => Boolean(m[1]) === (theme === 'dark'))
+            return own ?? (theme === 'dark' ? matches.find(m => !m[1]) : undefined)
+          }
+          const restText = pick(HUE_TEXT)
+          const restBg = pick(HUE_BG)
+          const hoverText = pick(HOVER_TEXT) ?? restText
+          const hoverBg = pick(HOVER_BG) ?? restBg
+          const pairs: Array<[RegExpMatchArray | undefined, RegExpMatchArray | undefined]> = [[restText, restBg]]
+          if (hoverText !== restText || hoverBg !== restBg) pairs.push([hoverText, hoverBg])
+          const card = theme === 'dark' ? SURFACES.darkCard : SURFACES.lightCard
+          for (const [text, ground] of pairs) {
+            // Only white and black: a hued text colour is the case above.
+            if (!text || !ground || (text[2] !== 'white' && text[2] !== 'black')) continue
+            const fgBase = TAILWIND.get(text[2])
+            const base = TAILWIND.get(ground[2])
+            if (!fgBase || !base) continue
+            const bgOpacity = opacityOf(ground)
+            const bg = bgOpacity ? mix(base, card, Number(bgOpacity) / 100) : base
+            const fgOpacity = opacityOf(text)
+            const fg = fgOpacity ? mix(fgBase, bg, Number(fgOpacity) / 100) : fgBase
+            checked++
+            const ratio = contrast(fg, bg)
+            const shown = (m: RegExpMatchArray, o?: string) => (o ? `${m[0]}/${o}` : m[0])
+            if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${shown(text, fgOpacity)} on ${shown(ground, bgOpacity)} is ${ratio.toFixed(2)}:1`)
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(50)
+    expect(failures, failures.join('\n')).toEqual([])
+  })
+
+  // Coloured text with no background of its own sits on whatever its parent
+  // paints, which a string cannot show. It is measured on the page and on the
+  // card of each theme, the two surfaces nearly all of it lands on: the dark:
+  // class on dark when the string has one, else the one class it has, which
+  // shows in both themes. Text opacity (dark:text-amber-500/90) is mixed in.
   // Greys are left to the tokens above.
   it('stay AA on the page and on cards when the string has no background', () => {
     const failures: string[] = []
     let checked = 0
     for (const [file, source] of Object.entries(sources)) {
       if (/\.test\.tsx?$/.test(file)) continue
-      for (const [, str] of source.matchAll(/["'`]([^"'`]*\btext-[a-z]+-\d+[^"'`]*)["'`]/g)) {
+      // Comments quote old class strings (buttons.ts does); skip them.
+      const code = source.replace(/^\s*\/\/.*$/gm, '')
+      for (const [, str] of code.matchAll(/["'`]([^"'`]*\btext-[a-z]+-\d+[^"'`]*)["'`]/g)) {
         const classes = str.split(/\s+/)
         if (classes.some(c => HUE_BG.test(c.split('/')[0]))) continue
-        const texts = classes.map(c => c.match(HUE_TEXT)).filter((m): m is RegExpMatchArray => m !== null)
-        const light = texts.find(m => !m[1])
-        const dark = texts.find(m => m[1])
-        if (!light || !dark) continue
-        for (const [theme, text] of [['light', light], ['dark', dark]] as const) {
+        const texts = classes
+          .map(c => ({ m: c.split('/')[0].match(HUE_TEXT), opacity: c.split('/')[1] }))
+          .filter((t): t is { m: RegExpMatchArray, opacity: string } => t.m !== null)
+        const light = texts.find(t => !t.m[1])
+        const dark = texts.find(t => t.m[1]) ?? light
+        for (const [theme, t] of [['light', light], ['dark', dark]] as const) {
+          if (!t) continue
+          const text = t.m
           if (GREYS.test(text[2]) || NOT_TEXT.has(`${file} ${text[0]}`)) continue
-          const fg = TAILWIND.get(text[2])
-          if (!fg) continue
+          const colour = TAILWIND.get(text[2])
+          if (!colour) continue
           const grounds = theme === 'dark'
             ? [['the page', SURFACES.darkPage], ['a card', SURFACES.darkCard]]
             : [['the page', SURFACES.lightPage], ['a card', SURFACES.lightCard]]
           for (const [name, bg] of grounds) {
             checked++
+            const fg = t.opacity ? mix(colour, bg, Number(t.opacity) / 100) : colour
             const ratio = contrast(fg, bg)
             if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${text[0]} on ${name} is ${ratio.toFixed(2)}:1`)
           }
@@ -388,6 +451,16 @@ describe('grey text colours that have no background in their string', () => {
     expect(checked).toBeGreaterThan(100)
     expect(failures, failures.join('\n')).toEqual([])
   })
+
+  // The BulkActionBar exemption above rests on the bar's own fill, so measure
+  // it: if the bar moves to a lighter fill, the clear button has to follow.
+  it('the bulk action bar clear button stays AA on the bar in both themes', () => {
+    const bar = sources['../components/BulkActionBar.tsx']
+    expect(bar).toContain('bg-slate-800 dark:bg-zinc-950')
+    expect(bar).toMatch(/clearClass = '[^']*\btext-slate-400\b/)
+    expect(contrast(TAILWIND.get('slate-400')!, TAILWIND.get('slate-800')!)).toBeGreaterThanOrEqual(AA_NORMAL)
+    expect(contrast(TAILWIND.get('slate-400')!, TAILWIND.get('zinc-950')!)).toBeGreaterThanOrEqual(AA_NORMAL)
+  })
 })
 
 // CoverPlaceholder paints its own ground, so its text contrast is
@@ -431,5 +504,31 @@ describe('DataTable selected row hover', () => {
   it('keeps muted text AA in dark mode', () => {
     expect(dataTableSource).toContain(`dark:hover:bg-[${SELECTED_HOVER_DARK}]`)
     expect(contrast(token('fg-muted', 'dark'), SELECTED_HOVER_DARK)).toBeGreaterThanOrEqual(AA_NORMAL)
+  })
+})
+
+// The Settings save toast (#3991) sets white text on a red or emerald fill. The
+// scanners above read a text colour and a fill out of one quoted string, and
+// the toast's classes used to be split across a ternary where they saw
+// neither, so the fills are named whole in toastBus.ts and measured here.
+describe('Settings save toast', () => {
+  for (const kind of ['success', 'error'] as const) {
+    it(`${kind}: white on its fill is at least ${AA_NORMAL}:1`, () => {
+      const classes = TOAST_FILL[kind].split(/\s+/)
+      const fill = classes.find(c => HUE_BG.test(c))
+      const text = classes.find(c => HUE_TEXT.test(c))
+      expect(fill, TOAST_FILL[kind]).toBeTruthy()
+      expect(text).toBe('text-white')
+      const base = TAILWIND.get(fill!.slice(3))
+      expect(base, fill).toBeTruthy()
+      expect(contrast('#ffffff', base!)).toBeGreaterThanOrEqual(AA_NORMAL)
+    })
+  }
+
+  it('is reachable by the white-on-fill scanner (one string holds both classes)', () => {
+    for (const kind of ['success', 'error'] as const) {
+      expect(TOAST_FILL[kind]).toMatch(/\btext-white\b/)
+      expect(TOAST_FILL[kind]).toMatch(/\bbg-(?:emerald|red)-\d+\b/)
+    }
   })
 })

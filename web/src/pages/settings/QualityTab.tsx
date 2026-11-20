@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAutoSave } from './useAutoSave'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, QualityProfile } from '../../api/client'
 import { inputCls, labelCls } from './formStyles'
@@ -113,6 +114,7 @@ const DEFAULT_QUALITY_PROFILE_SETTING = 'author.default_quality_profile_id'
 // section simply stays quiet instead of breaking the profile list below it.
 function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) {
   const { t } = useTranslation()
+  const autoSave = useAutoSave()
   const fid = useId()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [defaultId, setDefaultId] = useState<number | null>(null)
@@ -157,7 +159,7 @@ function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) 
     setDefaultId(value ? Number(value) : null)
     setDefaultErr(null)
     try {
-      await api.setSetting(DEFAULT_QUALITY_PROFILE_SETTING, value)
+      await autoSave('author.default_quality_profile_id', () => api.setSetting(DEFAULT_QUALITY_PROFILE_SETTING, value), { rethrow: true })
     } catch (e) {
       // Put the select back on what the server still holds, so it never
       // shows a default that was not saved.

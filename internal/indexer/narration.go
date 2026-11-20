@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/textutil"
 )
 
 // Narration is what a release title says about the recording (#1358). Both
@@ -155,7 +156,7 @@ func sameNames(a, b []string) bool {
 		return false
 	}
 	for i := range a {
-		if models.FoldName(a[i]) != models.FoldName(b[i]) {
+		if textutil.NormalizeAuthorName(a[i]) != textutil.NormalizeAuthorName(b[i]) {
 			return false
 		}
 	}
@@ -331,7 +332,7 @@ func isNameParticle(w string) bool {
 func hasAuthor(names, authors []string) bool {
 	for _, n := range names {
 		for _, a := range authors {
-			if k := models.FoldName(a); k != "" && k == models.FoldName(n) {
+			if k := textutil.NormalizeAuthorName(a); k != "" && k == textutil.NormalizeAuthorName(n) {
 				return true
 			}
 		}
@@ -389,10 +390,10 @@ func narratorRank(narrators, preferred []string) int {
 	}
 	want := make(map[string]bool, len(narrators))
 	for _, n := range narrators {
-		want[models.FoldName(n)] = true
+		want[textutil.NormalizeAuthorName(n)] = true
 	}
 	for i, p := range preferred {
-		if k := models.FoldName(p); k != "" && want[k] {
+		if k := textutil.NormalizeAuthorName(p); k != "" && want[k] {
 			return i
 		}
 	}

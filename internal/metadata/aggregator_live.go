@@ -87,6 +87,34 @@ func (a *Aggregator) SetAudiobookSourcesDisabled(audibleOff, audnexOff bool) {
 	})
 }
 
+// SetAudnexRegion points the audnex lookup at an Audible marketplace (#3982).
+// Like SetAudiobookSourcesDisabled it publishes a new core, so the next lookup
+// uses it without a restart. A change also starts a fresh cache: audnex answers
+// per marketplace, so a 404 or a record cached under the old one must not be
+// served for the new one. Setting the region it already has changes nothing.
+// A client that is not the built in audnex client (a test double) is left as
+// it is.
+func (a *Aggregator) SetAudnexRegion(region string) {
+	a.update(func(c *aggregatorCore) {
+		cl, ok := c.audnex.(*audnex.Client)
+		if !ok || cl == nil {
+			return
+		}
+		region = audnex.NormalizeRegion(region)
+		if cl.Region() == region {
+			return
+		}
+		c.audnex = cl.WithRegion(region)
+		c.cache = newTTLCache(24 * time.Hour)
+	})
+}
+
+// AudnexRegion is the marketplace the built in audnex client asks, or "" when
+// the audnex client is a test double.
+func (a *Aggregator) AudnexRegion() string {
+	return a.load().AudnexRegion()
+}
+
 // load returns the core every part of one lookup runs on. A nil Aggregator
 // yields a nil core, whose methods behave as a nil Aggregator's always did.
 func (a *Aggregator) load() *aggregatorCore {

@@ -405,19 +405,22 @@ func TestToRequestResponse_ApproverFieldsStayOffRequesterResponses(t *testing.T)
 	}
 }
 
-// An auto approval that meets a book already in the library resolves the
-// request, and the create response the requester gets carries no notice. Under
-// tenancy the create check lets this through (it only sees the requester's own
-// rows), so it is reachable through the real handler path.
-func TestRequestsCreate_AutoApproveInLibraryGivesTheRequesterNoNotice(t *testing.T) {
+// A skipped book that reaches the library between the create check and the
+// answer is not auto approved (#3898, #3954): Skipped is an admin's decision,
+// so the request stays pending, the existing row is not touched, and the
+// create response the requester gets carries no notice. This test used to pin
+// a monitored book here, which the old rule kept pending as any existing book;
+// that rule is gone, so it now uses the case that still waits.
+func TestRequestsCreate_AutoApproveInLibraryStaysPendingWithNoNotice(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
-	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
+	adder := &fakeAdder{}
+	f := newRequestsFixture(t, wellsRequestStub(), adder)
 	setAutoApprove(t, f, f.requester.ID, true)
 	ctx := context.Background()
 	author := seedWells(t, f.authors)
 	if err := f.books.Create(ctx, &models.Book{
 		ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war",
-		OwnerUserID: f.admin.ID, MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusWanted,
+		OwnerUserID: f.admin.ID, MediaType: models.MediaTypeEbook, Monitored: false, Status: models.BookStatusSkipped,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -429,12 +432,15 @@ func TestRequestsCreate_AutoApproveInLibraryGivesTheRequesterNoNotice(t *testing
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	f.h.writeCreated(ctx, rec, req, f.requester.ID)
+	f.h.writeCreated(ctx, rec, req, f.requester.ID, "")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
-	if got := decodeRequest(t, rec); got.Status != models.RequestStatusApproved {
-		t.Fatalf("status %q, want approved by the auto approval: %s", got.Status, rec.Body.String())
+	if got := decodeRequest(t, rec); got.Status != models.RequestStatusPending {
+		t.Fatalf("status %q, want pending for an existing book: %s", got.Status, rec.Body.String())
+	}
+	if n := adder.calls.Load() + adder.existingCalls.Load(); n != 0 {
+		t.Fatalf("the add ran %d times for a request that must wait", n)
 	}
 	if strings.Contains(rec.Body.String(), "notice") {
 		t.Fatalf("the requester's create response carries a notice: %s", rec.Body.String())
@@ -557,6 +563,213 @@ func TestMissingRequestFormats(t *testing.T) {
 			e, a := missingRequestFormats(&tc.book, tc.asked)
 			if e != tc.wantEbook || a != tc.wantAud {
 				t.Fatalf("missing = (ebook %v, audiobook %v), want (%v, %v)", e, a, tc.wantEbook, tc.wantAud)
+			}
+		})
+	}
+}
+
+// #3898: a book the library holds as metadata only (no file, not monitored)
+// is not covered, so a requester can ask for it. A book with its file is.
+func TestRequestsCreate_BookWithoutFileCanBeRequested(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	author := seedWells(t, f.authors)
+	book := &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war of the worlds", Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}
+	if err := f.books.Create(context.Background(), book); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("file-less book request: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRequestsCreate_CoveredBookStillRefused(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	// Monitored for the default format: someone is already getting it.
+	author := seedWells(t, f.authors)
+	book := &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war of the worlds", Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeEbook}
+	if err := f.books.Create(context.Background(), book); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
+	if rec.Code != http.StatusConflict || requestErrorBody(rec) != "This book is already in the library." {
+		t.Fatalf("covered book: %d %q", rec.Code, requestErrorBody(rec))
+	}
+}
+
+// A requester picks the format, so the in library check is judged against the
+// format named, not only the default (#3898).
+func TestRequestsCreate_ExplicitMediaTypeAgainstExistingBook(t *testing.T) {
+	const covered = "This book is already in the library."
+	cases := []struct {
+		name      string
+		book      models.Book
+		ebookFile bool
+		mediaType string
+		want      int
+	}{
+		{"ebook on disk, audiobook asked", models.Book{Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}, true, "audiobook", http.StatusCreated},
+		{"ebook on disk, both asked", models.Book{Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}, true, "both", http.StatusCreated},
+		{"ebook on disk, ebook asked", models.Book{Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}, true, "ebook", http.StatusConflict},
+		{"ebook on disk, default asked", models.Book{Status: models.BookStatusImported, MediaType: models.MediaTypeEbook}, true, "", http.StatusConflict},
+		{"audiobook monitored, audiobook asked", models.Book{Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeAudiobook}, false, "audiobook", http.StatusConflict},
+		{"audiobook monitored, ebook asked", models.Book{Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeAudiobook}, false, "ebook", http.StatusCreated},
+		{"audiobook monitored, default asked", models.Book{Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeAudiobook}, false, "", http.StatusCreated},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRequestsFixture(t, wellsRequestStub(), nil)
+			ctx := context.Background()
+			author := seedWells(t, f.authors)
+			book := tc.book
+			book.ForeignID, book.AuthorID, book.Title, book.SortTitle = "OL27482W", author.ID, "The War of the Worlds", "war of the worlds"
+			if err := f.books.Create(ctx, &book); err != nil {
+				t.Fatal(err)
+			}
+			if tc.ebookFile {
+				if err := f.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, "/books/wotw.epub"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W","mediaType":"`+tc.mediaType+`"}`)
+			if rec.Code != tc.want {
+				t.Fatalf("create: %d %s, want %d", rec.Code, rec.Body.String(), tc.want)
+			}
+			if tc.want == http.StatusConflict && requestErrorBody(rec) != covered {
+				t.Fatalf("refusal sentence %q, want %q", requestErrorBody(rec), covered)
+			}
+		})
+	}
+}
+
+// Under tenancy a book another account holds without the requested format
+// refuses a create with the same status as a covered book but its own
+// sentence, which tells the requester to ask an admin instead of claiming the
+// format is in the library.
+func TestRequestsCreate_HeldElsewhereAnswersWithItsOwnSentence(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	ctx := context.Background()
+	author := seedWells(t, f.authors)
+	held := &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war of the worlds", Status: models.BookStatusImported, MediaType: models.MediaTypeEbook, OwnerUserID: f.other.ID}
+	if err := f.books.Create(ctx, held); err != nil {
+		t.Fatal(err)
+	}
+	heldElsewhere := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
+
+	// The same book once it is covered, asked for by its own account.
+	if err := f.books.AddBookFile(ctx, held.ID, models.MediaTypeEbook, "/books/wotw.epub"); err != nil {
+		t.Fatal(err)
+	}
+	covered := f.create(t, f.other, `{"kind":"book","foreignId":"OL27482W"}`)
+
+	if heldElsewhere.Code != http.StatusConflict || covered.Code != http.StatusConflict {
+		t.Fatalf("held elsewhere %d, covered %d, want 409 for both", heldElsewhere.Code, covered.Code)
+	}
+	if got := requestErrorBody(heldElsewhere); got != bookHeldCreateMessage {
+		t.Fatalf("held elsewhere said %q, want %q", got, bookHeldCreateMessage)
+	}
+	if got := requestErrorBody(covered); got != "This book is already in the library." {
+		t.Fatalf("covered said %q", got)
+	}
+}
+
+// #3961: approving with search on add must start a search whenever a
+// requested format is monitored on the book but has no file, whether or not
+// the author is monitored. A format on disk is never searched again, and a
+// format the book does not monitor is added through the monitor core, which
+// does its own search.
+func TestRequestsApprove_InLibrarySearchOnAddMatrix(t *testing.T) {
+	const ebookPath, audioPath = "/library/war.epub", "/library/war.m4b"
+	cases := []struct {
+		name          string
+		requested     string
+		book          models.Book
+		authorMon     bool
+		body          string
+		heldElsewhere bool
+		wantSearch    int32 // searchExistingBookCore calls
+		wantWiden     int32 // monitorExistingBookCore calls
+	}{
+		{name: "reported case: monitored wanted book, author not monitored, no file", requested: "ebook",
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusWanted}, wantSearch: 1},
+		{name: "monitored wanted book, author monitored, no file", requested: "ebook", authorMon: true,
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusWanted}, wantSearch: 1},
+		{name: "audiobook wanted, no file, author not monitored", requested: "audiobook",
+			book: models.Book{MediaType: models.MediaTypeAudiobook, Monitored: true, Status: models.BookStatusWanted}, wantSearch: 1},
+		{name: "both asked, ebook on disk, audiobook monitored without a file", requested: "both",
+			book: models.Book{MediaType: models.MediaTypeBoth, Monitored: true, Status: models.BookStatusWanted, EbookFilePath: ebookPath}, wantSearch: 1},
+		{name: "imported with the requested ebook on disk does not search", requested: "ebook",
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusImported, EbookFilePath: ebookPath}},
+		{name: "unmonitored book holding the file does not search", requested: "ebook",
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: false, Status: models.BookStatusImported, EbookFilePath: ebookPath}},
+		{name: "both asked and both on disk does not search", requested: "both",
+			book: models.Book{MediaType: models.MediaTypeBoth, Monitored: true, Status: models.BookStatusImported, EbookFilePath: ebookPath, AudiobookFilePath: audioPath}},
+		{name: "search on add off does not search", requested: "ebook", body: `{}`,
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusWanted}},
+		{name: "unmonitored book without a file goes through the monitor core", requested: "ebook",
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: false, Status: models.BookStatusWanted}, wantWiden: 1},
+		{name: "skipped book goes through the monitor core", requested: "ebook",
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusSkipped}, wantWiden: 1},
+		{name: "missing format goes through the monitor core, not a bare search", requested: "audiobook",
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusImported, EbookFilePath: ebookPath}, wantWiden: 1},
+		{name: "another account's monitored book is not searched", requested: "ebook", heldElsewhere: true,
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusWanted}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.heldElsewhere {
+				auth.SetEnforceTenancyForTests(t, true)
+			}
+			adder := &fakeAdder{}
+			f := newRequestsFixture(t, wellsRequestStub(), adder)
+			book := tc.book
+			if tc.heldElsewhere {
+				book.OwnerUserID = f.other.ID
+			}
+			created, stored := pendingRequestThenInLibrary(t, f, tc.requested, book)
+			ctx := context.Background()
+			author, err := f.authors.GetByID(ctx, stored.AuthorID)
+			if err != nil || author == nil {
+				t.Fatalf("author: %v", err)
+			}
+			author.Monitored = tc.authorMon
+			if err := f.authors.Update(ctx, author); err != nil {
+				t.Fatal(err)
+			}
+			body := tc.body
+			if body == "" {
+				body = `{"searchOnAdd":true}`
+			}
+
+			rec := f.approve(f.admin, created.ID, body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
+			}
+			got := decodeRequest(t, rec)
+			if got.Status != "approved" || got.ResultBookID == nil || *got.ResultBookID != stored.ID {
+				t.Fatalf("approved = %+v", got)
+			}
+			if n := adder.searchCalls.Load(); n != tc.wantSearch {
+				t.Errorf("searches = %d, want %d", n, tc.wantSearch)
+			}
+			if n := adder.existingCalls.Load(); n != tc.wantWiden {
+				t.Errorf("monitor core calls = %d, want %d", n, tc.wantWiden)
+			}
+			if adder.calls.Load() != 0 {
+				t.Errorf("addBookCore ran %d times, want 0", adder.calls.Load())
+			}
+			if tc.wantSearch > 0 && got.SearchRunID != "run-existing" {
+				t.Errorf("searchRunId = %q, want the run the search started", got.SearchRunID)
+			}
+			// A bare search writes nothing to the book or its author.
+			after, _ := f.books.GetByID(ctx, stored.ID)
+			if tc.wantWiden == 0 && (after.UpdatedAtRaw != stored.UpdatedAtRaw || after.Monitored != stored.Monitored ||
+				after.Status != stored.Status || after.MediaType != stored.MediaType) {
+				t.Errorf("book changed: %+v -> %+v", stored, after)
+			}
+			if a2, _ := f.authors.GetByID(ctx, stored.AuthorID); a2.Monitored != tc.authorMon {
+				t.Errorf("author monitored = %v, want %v", a2.Monitored, tc.authorMon)
 			}
 		})
 	}

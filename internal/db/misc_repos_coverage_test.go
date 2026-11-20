@@ -34,13 +34,9 @@ func TestMiscRepos_Coverage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		plain, err := users.GetOrCreateByUsername(ctx, "misc-proxy")
-		if err != nil || plain == nil || plain.Role != "user" || plain.PasswordHash != "" {
-			t.Fatalf("GetOrCreateByUsername(new) = %+v, %v", plain, err)
-		}
-		again, err := users.GetOrCreateByUsername(ctx, "misc-proxy")
-		if err != nil || again == nil || again.ID != plain.ID {
-			t.Fatalf("GetOrCreateByUsername(existing) = %+v, %v; want id %d", again, err, plain.ID)
+		plain, err := users.Create(ctx, "misc-proxy", "")
+		if err != nil {
+			t.Fatal(err)
 		}
 		// A later admin does not displace the lowest id.
 		if err := users.SetRoleUnguarded(ctx, plain.ID, "admin"); err != nil {

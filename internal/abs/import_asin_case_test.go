@@ -60,7 +60,7 @@ func TestImporter_UpsertBookStoresUpperCaseASIN(t *testing.T) {
 	item.Title = "Artemis"
 	item.ASIN = lowerASIN
 
-	result, created, _, _, err := importer.upsertBook(context.Background(), asinTestConfig(), 0, author, item, true)
+	result, created, _, _, err := importer.upsertBook(context.Background(), asinTestConfig(), 0, author, item, true, nil)
 	if err != nil {
 		t.Fatalf("upsertBook: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestImporter_UpsertBookDryRunPreviewsUpperCaseASIN(t *testing.T) {
 
 	cfg := asinTestConfig()
 	cfg.DryRun = true
-	result, created, _, _, err := importer.upsertBook(context.Background(), cfg, 0, author, item, true)
+	result, created, _, _, err := importer.upsertBook(context.Background(), cfg, 0, author, item, true, nil)
 	if err != nil {
 		t.Fatalf("upsertBook: %v", err)
 	}

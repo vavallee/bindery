@@ -168,7 +168,7 @@ func foldForSigWordMatch(s string) string {
 	s = strings.ToLower(norm.NFC.String(s))
 	s = strings.ReplaceAll(s, "'", "")
 	s = strings.ReplaceAll(s, "’", "")
-	return textutil.TransliterateUmlauts(s)
+	return textutil.FoldLatinAccents(textutil.TransliterateUmlauts(s))
 }
 
 // queryUmlautReplacer expands German umlauts (both cases, plus ß/ẞ) to the
@@ -191,13 +191,12 @@ var queryUmlautReplacer = strings.NewReplacer(
 // still matches the replacer instead of slipping through and being queried as
 // a bare "o".
 //
-// Only German umlauts are transliterated; other Latin diacritics (é, ñ, ç) are
-// left ALONE. The result-matching side (textutil.FoldForTitleMatch, via
-// SigWords / NormalizeRelease) expands umlauts but keeps é/ñ as-is, so folding
-// those here — but not there — would make the query ask the indexer for
-// "Senor" and then discard every "Senor" release as irrelevant. Scoping to
-// umlauts keeps the two alphabets symmetric (#1610 review). Non-Latin scripts
-// (CJK, Cyrillic, …) pass through unchanged.
+// Only German umlauts are transliterated here; other Latin diacritics (é, ñ, ç)
+// are left ALONE in the outgoing query. The result-matching side
+// (textutil.FoldForTitleMatch, via SigWords / NormalizeRelease) now folds those
+// accents too (#3952), so a release written "Senor" matches a title typed
+// "Señor" even though the query asked the indexer for the accented spelling.
+// Non-Latin scripts (CJK, Cyrillic, ...) pass through unchanged everywhere.
 //
 // Only outgoing BookSearch queries use this (#1610): release names are almost
 // universally ASCII-transliterated and indexers match query terms close to

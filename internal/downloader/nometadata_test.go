@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
+
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -186,10 +188,8 @@ func TestGetStalledTorrents_Transmission_NoMetadataFieldsRequested(t *testing.T)
 // same torrent: it parks a magnet awaiting metadata in metaDL, which is not
 // stalledDL and so was never reported.
 func TestGetStalledTorrents_QBittorrent_MetaDL(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/info":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"hash": "AAA111", "state": "metaDL", "size": 0, "progress": 0},
@@ -199,8 +199,7 @@ func TestGetStalledTorrents_QBittorrent_MetaDL(t *testing.T) {
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{

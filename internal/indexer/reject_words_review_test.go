@@ -36,7 +36,8 @@ func TestRejectWords_AccentsFoldBothWays(t *testing.T) {
 }
 
 // The documented limits of accent folding: umlauts follow the shared
-// transliteration, and letters without a decomposition stay as they are.
+// transliteration, and the letters NFD cannot decompose fold through the shared
+// table (ø→o), so Soren and Søren meet (#3952).
 func TestRejectWords_AccentFoldLimits(t *testing.T) {
 	if _, d := rejectRun("Mueller", "Frank Herbert - Dune Müller"); len(d) != 1 {
 		t.Error("Mueller should match Müller")
@@ -44,8 +45,8 @@ func TestRejectWords_AccentFoldLimits(t *testing.T) {
 	if _, d := rejectRun("Muller", "Frank Herbert - Dune Müller"); len(d) != 0 {
 		t.Error("Muller should not match Müller")
 	}
-	if _, d := rejectRun("Soren", "Frank Herbert - Dune Søren"); len(d) != 0 {
-		t.Error("Soren should not match Søren")
+	if _, d := rejectRun("Soren", "Frank Herbert - Dune Søren"); len(d) != 1 {
+		t.Error("Soren should match Søren")
 	}
 }
 

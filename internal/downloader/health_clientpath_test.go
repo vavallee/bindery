@@ -3,11 +3,12 @@ package downloader
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -71,17 +72,14 @@ func TestQbittorrentCategoryPath_UnsetDownloadDir(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/auth/login":
-					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/torrents/categories":
 					_, _ = w.Write([]byte(`{"books":{"name":"books","savePath":"` + tc.savePath + `"}}`))
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer srv.Close()
+			})
 			h, port := serverHostPort(t, srv.URL)
 			client := &models.DownloadClient{
 				Type: "qbittorrent", Host: h, Port: port, Username: "u", Password: "p",

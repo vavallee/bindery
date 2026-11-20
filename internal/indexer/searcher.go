@@ -1044,6 +1044,7 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	// way, or a spelled out series title would never equal the folded release.
 	// Author aliases are names, not titles, and are deliberately not folded.
 	bc.seriesTitle = newznab.FoldNumberWords(bc.seriesTitle)
+	bc.authorNames = append([]string{author}, aliases...)
 	if len(bc.otherTitles) > 0 {
 		folded := make([]string, len(bc.otherTitles))
 		for i, t := range bc.otherTitles {
@@ -1381,6 +1382,8 @@ const (
 	// about 20 points and stops there, so a release with thousands of grabs
 	// cannot outweigh the format it carries (#2740).
 	maxGrabCount = 100
+	// maxSeedersCredit caps the seeders term the same way (#3953).
+	maxSeedersCredit = 25
 )
 
 // scoreResult computes the composite ranking score for a single result.
@@ -1480,6 +1483,23 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria, ranks *profileRanks) f
 			grabs = maxGrabCount
 		}
 		score += math.Log10(float64(grabs+1)) * 10
+	}
+
+	// Seeders term (#3953), torrents only. A small capped tie-breaker, never
+	// enough to outrank a quality step (100 points): a swarm of 25 or more
+	// adds about 14, a lone seeder about 3. A count the indexer reported as 0
+	// costs 10, so a dead torrent sorts below one whose count is unknown, and
+	// an unreported count adds nothing either way. Usenet carries no count.
+	if r.Protocol != "usenet" && r.Seeders != nil {
+		if *r.Seeders <= 0 {
+			score -= 10
+		} else {
+			seeders := *r.Seeders
+			if seeders > maxSeedersCredit {
+				seeders = maxSeedersCredit
+			}
+			score += math.Log10(float64(seeders+1)) * 10
+		}
 	}
 
 	// Size term. Total size rewards a long book for being long, so when the

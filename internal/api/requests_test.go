@@ -222,6 +222,10 @@ func TestRequestsCreate_Conflicts(t *testing.T) {
 	if err := f.books.Create(ctx, book); err != nil {
 		t.Fatal(err)
 	}
+	// Covered means a file on disk (or monitored), not just a row (#3898).
+	if err := f.books.AddBookFile(ctx, book.ID, models.MediaTypeEbook, "/books/in-library.epub"); err != nil {
+		t.Fatal(err)
+	}
 	rec = f.create(t, f.requester, `{"kind":"book","foreignId":"OL-INLIB"}`)
 	if rec.Code != http.StatusConflict || requestErrorBody(rec) != "This book is already in the library." {
 		t.Fatalf("book in library: %d %q", rec.Code, requestErrorBody(rec))
@@ -396,6 +400,13 @@ type fakeAdder struct {
 	// is the media type the last one was asked to monitor.
 	existingCalls    atomic.Int32
 	lastExistingType string
+	// searchCalls counts searchExistingBookCore calls.
+	searchCalls atomic.Int32
+}
+
+func (a *fakeAdder) searchExistingBookCore(_ context.Context, _ *models.Book) string {
+	a.searchCalls.Add(1)
+	return "run-existing"
 }
 
 func (a *fakeAdder) monitorExistingBookCore(_ context.Context, _ *models.Book, mediaType string, _ bool) (addBookResult, error) {

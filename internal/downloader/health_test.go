@@ -3,11 +3,12 @@ package downloader
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vavallee/bindery/internal/downloader/qbittest"
 
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -104,10 +105,8 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/auth/login":
-					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/torrents/categories":
 					_, _ = w.Write([]byte(tc.categories))
 				case "/api/v2/app/defaultSavePath":
@@ -115,8 +114,7 @@ func TestCheckDownloadClientHealth_QBittorrentCategoryPath(t *testing.T) {
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer srv.Close()
+			})
 
 			host, port := serverHostPort(t, srv.URL)
 			client := &models.DownloadClient{
@@ -194,10 +192,8 @@ func TestCheckDownloadClientHealth_QBittorrentAudiobookCategory(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/api/v2/auth/login":
-					_, _ = w.Write([]byte("Ok."))
 				case "/api/v2/torrents/categories":
 					_, _ = w.Write([]byte(tc.categories))
 				case "/api/v2/app/defaultSavePath":
@@ -205,8 +201,7 @@ func TestCheckDownloadClientHealth_QBittorrentAudiobookCategory(t *testing.T) {
 				default:
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer srv.Close()
+			})
 			host, port := serverHostPort(t, srv.URL)
 			client := &models.DownloadClient{
 				Type:              "qbittorrent",
@@ -257,17 +252,14 @@ func TestQbittorrentCategoryPath_DetectsCaseMismatch(t *testing.T) {
 	configuredDir := filepath.Join(tmp, "downloads")       // BINDERY_DOWNLOAD_DIR (wrong case)
 	qbSavePath := filepath.Join(tmp, "downloads", "books") // qBit reports lowercase
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/categories":
 			_, _ = w.Write([]byte(`{"books":{"name":"books","savePath":"` + qbSavePath + `"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{
@@ -294,10 +286,8 @@ func TestQbittorrentCategoryPath_DetectsCaseMismatch(t *testing.T) {
 // what was wrong but not how to fix it; reporter at #800 and #704 both bounced
 // off it.
 func TestQbittorrentCategoryPath_MismatchMessageGuidesUserToPathRemap(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/categories":
 			_, _ = w.Write([]byte(`{"library":{"name":"library","savePath":"/torrents/complete/library"}}`))
 		case "/api/v2/app/defaultSavePath":
@@ -305,8 +295,7 @@ func TestQbittorrentCategoryPath_MismatchMessageGuidesUserToPathRemap(t *testing
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{
@@ -436,17 +425,14 @@ func TestQbittorrentCategoryPath_GlobalRemapOnly(t *testing.T) {
 	if err := os.MkdirAll(local, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/categories":
 			_, _ = w.Write([]byte(`{"books":{"name":"books","savePath":"/qbit/books"}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p", Category: "books"}
 
@@ -461,10 +447,8 @@ func TestQbittorrentCategoryPath_GlobalRemapOnly(t *testing.T) {
 // download folder as the save path. The health job failed it with "category
 // is empty" while Test passed it (#2664); both now check that folder.
 func TestCheckDownloadClientHealth_QBittorrentWithoutCategory(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := qbittest.New(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v2/auth/login":
-			_, _ = w.Write([]byte("Ok."))
 		case "/api/v2/torrents/categories":
 			_, _ = w.Write([]byte(`{}`))
 		case "/api/v2/app/defaultSavePath":
@@ -472,8 +456,7 @@ func TestCheckDownloadClientHealth_QBittorrentWithoutCategory(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 	host, port := serverHostPort(t, srv.URL)
 	client := &models.DownloadClient{Type: "qbittorrent", Host: host, Port: port, Username: "u", Password: "p"}
 

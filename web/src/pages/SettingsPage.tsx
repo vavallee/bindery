@@ -2,6 +2,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { lazyWithReload } from '../util/lazyWithReload'
 import { useTranslation } from 'react-i18next'
+import { SettingsToastHost } from './settings/autoSave'
 import { api, DownloadClient, Indexer, ProwlarrInstance } from '../api/client'
 import SettingsSearch, { SettingsSearchPick } from './settings/SettingsSearch'
 import { fieldForAnchor } from './settings/settingsFieldIndex'
@@ -35,6 +36,7 @@ const RootFoldersTab = lazyWithReload(() => import('./settings/RootFoldersTab'),
 const CalibreTab = lazyWithReload(() => import('./settings/CalibreTab'), './settings/CalibreTab')
 const ABSTab = lazyWithReload(() => import('./settings/ABSTab'), './settings/ABSTab')
 const GrimmoryTab = lazyWithReload(() => import('./settings/GrimmoryTab'), './settings/GrimmoryTab')
+const BookOrbitTab = lazyWithReload(() => import('./settings/BookOrbitTab'), './settings/BookOrbitTab')
 const ApiKeysTab = lazyWithReload(() => import('./settings/ApiKeysTab'), './settings/ApiKeysTab')
 const ImportTab = lazyWithReload(() => import('./settings/ImportTab'), './settings/ImportTab')
 const BlocklistTab = lazyWithReload(() => import('./settings/BlocklistTab'), './settings/BlocklistTab')
@@ -42,13 +44,13 @@ const LogsTab = lazyWithReload(() => import('./settings/LogsTab'), './settings/L
 const AdvancedTab = lazyWithReload(() => import('./settings/AdvancedTab'), './settings/AdvancedTab')
 const AboutTab = lazyWithReload(() => import('./settings/AboutTab'), './settings/AboutTab')
 
-type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'grimmory' | 'api-keys' | 'advanced' | 'about'
+type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'bookorbit' | 'grimmory' | 'api-keys' | 'advanced' | 'about'
 
 // Classes added to a field for a moment after search or a deep link lands on it.
 const HIGHLIGHT_CLASSES = ['ring-2', 'ring-emerald-500', 'ring-offset-2', 'dark:ring-offset-zinc-950', 'rounded-md']
 const FOCUSABLE = 'input:not([type=hidden]):not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)'
 
-const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'grimmory', 'api-keys', 'advanced']
+const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'bookorbit', 'grimmory', 'api-keys', 'advanced']
 
 // 'general' and 'about' are visible to every authenticated user — About is where
 // the in-app update message and bug_report.yml ("check Settings → About") point
@@ -72,7 +74,7 @@ const ADMIN_GROUPS: TabGroup[] = [
   // Clients, which it is not: nothing comes in from it. A webhook, Discord or
   // Apprise target is an outbound connection to another service, so it
   // belongs here.
-  { key: 'integrations', tabs: ['notifications', 'calibre', 'abs', 'grimmory', 'api-keys'] },
+  { key: 'integrations', tabs: ['notifications', 'calibre', 'abs', 'bookorbit', 'grimmory', 'api-keys'] },
   // Advanced is last on purpose: it is the escape hatch for the rare keys,
   // not a place to start (#2311).
   { key: 'system', tabs: ['import', 'blocklist', 'logs', 'advanced'] },
@@ -169,11 +171,16 @@ export default function SettingsPage() {
   const [clients, setClients] = useState<DownloadClient[]>([])
   const [prowlarrInstances, setProwlarrInstances] = useState<ProwlarrInstance[]>([])
 
+  // All three lists are admin only on the server and only the admin tabs
+  // read them, so a non admin never asks: each ask was a 403 logged to the
+  // console. Keyed on isAdmin so an admin whose auth status resolves after
+  // mount still loads them.
   useEffect(() => {
+    if (!isAdmin) return
     api.listIndexers().then(setIndexers).catch(console.error)
     api.listDownloadClients().then(setClients).catch(console.error)
     api.listProwlarr().then(r => setProwlarrInstances(r ?? [])).catch(console.error)
-  }, [])
+  }, [isAdmin])
 
   useEffect(() => {
     document.title = `${t('nav.settings', 'Settings')} · Bindery`
@@ -317,8 +324,13 @@ export default function SettingsPage() {
     setPendingHeading(pick.heading ?? null)
   }, [setTab, navigate, location.pathname, searchParams])
 
+  // A non admin on an admin tab link renders General straight away instead of
+  // mounting the admin tab for the one render before the redirect below lands,
+  // which would start that tab's admin only fetches.
+  const shownTab: Tab = !isAdmin && ADMIN_TABS.includes(tab) ? 'general' : tab
+
   const renderTab = () => {
-    switch (tab) {
+    switch (shownTab) {
       case 'general': return <GeneralTab onNavigate={navigateToTab} />
       case 'indexers': return (
         <>
@@ -338,6 +350,7 @@ export default function SettingsPage() {
       case 'rootfolders': return <RootFoldersTab />
       case 'calibre': return <CalibreTab />
       case 'abs': return <ABSTab />
+      case 'bookorbit': return <BookOrbitTab />
       case 'grimmory': return <GrimmoryTab />
       case 'import': return <ImportTab onNavigate={navigateToTab} />
       case 'blocklist': return <BlocklistTab />
@@ -412,6 +425,7 @@ export default function SettingsPage() {
 
         {/* Tab content */}
         <div ref={contentRef} className="flex-1 min-w-0">
+          <SettingsToastHost />
           <Suspense fallback={<TabFallback label={t('settings.loadingTab')} />}>
             {renderTab()}
           </Suspense>

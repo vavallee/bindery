@@ -20,7 +20,7 @@ the difference was accidental and undocumented.
 
 | # | Function | Case | Marks | Non-decomposable Latin (ø ł ß æ) | Compatibility (NFKC) | Apostrophe | `&` | Stored? |
 |---|----------|------|-------|-----------------------------------|----------------------|-----------|-----|---------|
-| 1 | `textutil.FoldForTitleMatch` | lower | kept | kept | no | deleted | separator | no |
+| 1 | `textutil.FoldForTitleMatch` | lower | stripped for Latin only | folded | no | deleted | separator | no |
 | 1a | `indexer.CanonicalDedupKey` / `NormalizeTitleForDedup` | lower | kept | kept | no | deleted | `" and "` | `books.dedup_key` |
 | 2 | `textutil.NormalizeAuthorName` | lower | stripped | kept | no | separator | separator | no |
 | 3 | `db.authorSortKey` / `db.bookSortKey` | lower | stripped | folded | no | separator | separator | `authors.sort_key`, `authors.name_sort_key`, `books.sort_key` |
@@ -33,6 +33,12 @@ indexers write in release names. Alphabet 2 strips them (ö→o) because author
 names arrive from providers in every romanisation and the goal is one identity
 per human. That divergence is deliberate and is asserted by
 `TestDiacriticSchemesAreTheDocumentedOnes`.
+
+Alphabet 1 also folds the other Latin accents (é→e, ñ→n, ç→c, ø→o, œ→oe) on
+both the release and the wanted title or author, because release names are very
+often written without them ("Vallee du silicium" for "Vallée du silicium",
+#3952). Only Latin letters fold: Cyrillic, Greek, kana and the rest keep their
+marks, since there the mark is part of the letter.
 
 Alphabet 1 has one variant, `textutil.FoldForKeyword`, for the keyword side
 (`newznab.SigWords`, `indexer.authorTokens`, the title identity keywords). It is

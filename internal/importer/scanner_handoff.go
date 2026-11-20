@@ -294,7 +294,7 @@ func discoverBookFilesSized(downloadPath string, explicitFiles []string, dropTin
 		files = append(files, path)
 	}
 	if len(explicitFiles) > 0 {
-		paths, infos := filterImportableFilesInfo(explicitFiles)
+		paths, infos := filterImportableFilesIn(downloadPath, explicitFiles)
 		for i, p := range paths {
 			keep(p, infos[i].Size())
 		}
@@ -354,6 +354,15 @@ func filterImportableFiles(paths []string) []string {
 // the check read for each kept path, so a caller can use the size without
 // statting the file again.
 func filterImportableFilesInfo(paths []string) ([]string, []os.FileInfo) {
+	return filterImportableFilesIn("", paths)
+}
+
+// filterImportableFilesIn is filterImportableFilesInfo that also drops a file
+// whose real location is outside root, the download being imported. A
+// directory symlink inside the download makes "<root>/link/book.epub" pass the
+// last-component check while its bytes sit elsewhere (see sourceWithinRoot).
+// An empty root applies no confinement.
+func filterImportableFilesIn(root string, paths []string) ([]string, []os.FileInfo) {
 	out := paths[:0:0]
 	infos := make([]os.FileInfo, 0, len(paths))
 	for _, p := range paths {
@@ -361,6 +370,11 @@ func filterImportableFilesInfo(paths []string) ([]string, []os.FileInfo) {
 		if !ok {
 			slog.Warn("skipping download-client file: not a regular file on this host (missing, unreadable, or a symlink)",
 				"path", p)
+			continue
+		}
+		if !sourceWithinRoot(p, root) {
+			slog.Warn("skipping download-client file: it resolves outside the download folder through a symlink",
+				"path", p, "root", root)
 			continue
 		}
 		out = append(out, p)
@@ -379,6 +393,13 @@ func filterImportableFilesInfo(paths []string) ([]string, []os.FileInfo) {
 func importableSourceFile(p string) bool {
 	_, ok := importableSourceInfo(p)
 	return ok
+}
+
+// importableSourceFileIn is importableSourceFile held to the download root the
+// same way filterImportableFilesIn holds it, so the retry guard and the filter
+// keep agreeing.
+func importableSourceFileIn(root, p string) bool {
+	return importableSourceFile(p) && sourceWithinRoot(p, root)
 }
 
 // importableSourceInfo is importableSourceFile that also returns what it read.
@@ -494,6 +515,14 @@ func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloa
 		return true
 	}
 
+	// The same language and content checks a managed import runs, before any
+	// file is placed or held (#3945). A blocking result has already parked the
+	// download; a warn result rides on the history event written below.
+	bookFiles, contentCheck, ok := s.checkBeforeDrop(ctx, dl, book, author, downloadPath, bookFiles, detectedFormat, false)
+	if !ok {
+		return true
+	}
+
 	// Pair gating (#942): a media_type=both book only hands off once BOTH
 	// formats are present, so the drop of this format may be held back until its
 	// sibling arrives. Single-format books, and everything when gating is off,
@@ -502,27 +531,31 @@ func (s *Scanner) dropToFolder(ctx context.Context, dl *models.Download, downloa
 	// into the library while ebooks drop): nothing but the timeout would ever
 	// release the hold, so holding would only delay this format by days.
 	if s.dropPairGatingEnabled(ctx) && book.MediaType == models.MediaTypeBoth && s.formatDrops(ctx, siblingFormatOf(detectedFormat)) {
-		return s.dropPairGated(ctx, dl, book, author, downloadPath, bookFiles, explicitFiles, detectedFormat, folder, layout, linkMode)
+		return s.dropPairGated(ctx, dl, book, author, downloadPath, bookFiles, explicitFiles, detectedFormat, folder, layout, linkMode, contentCheck)
 	}
 
-	dest, blocked, err := s.placeDroppedFormat(ctx, book, author, downloadPath, bookFiles, explicitFiles, detectedFormat, folder, layout, linkMode)
+	dest, sources, blocked, err := s.placeDroppedFormat(ctx, book, author, downloadPath, bookFiles, explicitFiles, detectedFormat, folder, layout, linkMode)
 	if err != nil {
 		s.failDrop(ctx, dl, blocked, err)
 		return true
 	}
-	s.finishDrop(ctx, dl, layout, linkMode, detectedFormat, dest)
+	s.finishDrop(ctx, dl, layout, linkMode, detectedFormat, sources, dest, contentCheck)
 	return true
 }
 
 // placeDroppedFormat copies/hardlinks one completed format (ebook or audiobook)
 // into the configured drop folder using the flat or templated layout, never
 // moving the source (the download keeps seeding). It returns the destination
-// path recorded in history, a "blocked" flag distinguishing an invalid
+// path recorded in history (the folder it made for an audiobook, the file it
+// placed for an ebook, the first one when a release holds several files of
+// the format), the source files it handed off (exactly those, never their
+// folder, which for a Transmission download is the shared category folder), a
+// "blocked" flag distinguishing an invalid
 // destination (a template/config error — StateImportBlocked, retryable by the
 // user after fixing settings) from a placement failure (StateImportFailed), and
 // the error. Shared by the immediate drop, the paired release, and the timeout
 // escape hatch so all three place files identically.
-func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, author *models.Author, downloadPath string, bookFiles, explicitFiles []string, format, folder, layout, linkMode string) (dest string, blocked bool, err error) {
+func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, author *models.Author, downloadPath string, bookFiles, explicitFiles []string, format, folder, layout, linkMode string) (dest string, sources []string, blocked bool, err error) {
 	importCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	seriesTitle, seriesNum := s.primarySeriesFor(ctx, book)
@@ -531,7 +564,7 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 		if layout == "templated" {
 			d, derr := s.destRenamer(ctx).AudiobookDestDir(folder, author, book, seriesTitle, seriesNum)
 			if derr != nil {
-				return "", true, derr
+				return "", nil, true, derr
 			}
 			dest = d
 		} else {
@@ -539,12 +572,12 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 		}
 		dest = UniqueDir(dest)
 		if perr := s.dropPlaceAudiobook(importCtx, downloadPath, bookFiles, explicitFiles, dest, linkMode); perr != nil {
-			return "", false, perr
+			return "", nil, false, perr
 		}
-		return dest, false, nil
+		return dest, bookFiles, false, nil
 	}
 
-	var placed int
+	var placed, placedSrcs []string
 	var lastErr error
 	// Files of one format share a destination, and dropPlaceFile replaces what
 	// is there, so the last of them used to win. The file closest to the book
@@ -579,17 +612,21 @@ func (s *Scanner) placeDroppedFormat(ctx context.Context, book *models.Book, aut
 			slog.Warn("drop: could not record which book placed a file", "dst", finalDest, "error", rerr)
 		}
 		placedDests[fileDest] = struct{}{}
-		placed++
+		placed = append(placed, finalDest)
+		placedSrcs = append(placedSrcs, srcFile)
 	}
-	if placed == 0 {
+	if len(placed) == 0 {
 		if lastErr == nil {
 			lastErr = fmt.Errorf("no book files could be placed")
 		}
 		// A template that cannot name an ebook with an extension is the
 		// operator's to fix, so it blocks rather than spending retries.
-		return "", errors.Is(lastErr, ErrEbookNoExtension), lastErr
+		return "", nil, errors.Is(lastErr, ErrEbookNoExtension), lastErr
 	}
-	return folder, false, nil
+	// The placed file, not the drop folder, so History says what was dropped
+	// and where to find it. The folder alone told the user nothing once
+	// another drop sat beside it.
+	return placed[0], placedSrcs, false, nil
 }
 
 // failDrop marks a drop-path import as failed, distinguishing an invalid
@@ -630,17 +667,142 @@ func (s *Scanner) resolveBookAuthor(ctx context.Context, bookID *int64) (*models
 // the history event. The book stays out of the wanted re-grab loop while the
 // hand-off is outstanding, and ScanLibrary reconciles the managed copy once the
 // external tool produces it under the library dir.
-func (s *Scanner) finishDrop(ctx context.Context, dl *models.Download, layout, linkMode, format, dest string) {
+//
+// sources are the files that were dropped. Copy and hardlink placement keep
+// them, so they are recorded on the download (import_path) for the manual
+// import folder scan, which would otherwise offer them again as a fresh match
+// and drop a second copy (see api.handedOffIndex).
+func (s *Scanner) finishDrop(ctx context.Context, dl *models.Download, layout, linkMode, format string, sources []string, dest string, contentCheck map[string]any) {
+	s.recordHandedOffSource(ctx, dl, sources)
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImportExternal)
 	slog.Info("drop: handoff complete, awaiting library scan",
 		"title", dl.Title, "dst", dest, "format", format, "layout", layout, "mode", linkMode)
-	s.createHistoryEvent(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{
+	s.createHistoryEventData(ctx, models.HistoryEventDownloadFolderImport, dl.Title, dl.BookID, dl.OwnerUserID, withContentCheck(map[string]any{
 		"mode":   "drop",
 		"status": string(models.StateImportExternal),
 		"path":   dest,
 		"layout": layout,
 		"format": format,
-	})
+	}, contentCheck))
+}
+
+// recordHandedOffSource records on dl the source files it handed off to the
+// external tool, before it is parked as handed off. The manual import folder
+// scan reads them to recognise sources that were already handed off. Only the
+// files themselves are recorded, never the folder they sit in: a Transmission
+// download's path is the client's shared category folder, with the torrent's
+// own files passed separately, so recording the path would hide every other
+// book in that folder. A held download that is released replaces its held
+// path with the files here, which is safe because nothing reads a held path
+// once the download has left StateImportHeld. Best effort: a failure only
+// means the scan may offer the sources again.
+func (s *Scanner) recordHandedOffSource(ctx context.Context, dl *models.Download, sources []string) {
+	encoded := models.EncodeHandedOffSources(sources)
+	if encoded == "" || encoded == dl.ImportPath {
+		return
+	}
+	if err := s.downloads.SetImportPath(ctx, dl.ID, encoded); err != nil {
+		slog.Warn("external import: could not record the handed off sources", "title", dl.Title, "files", len(sources), "error", err)
+	}
+}
+
+// checkBeforeDrop runs, on the files about to be handed off, the language and
+// content checks a managed import runs, with the same functions and the same
+// policy (#3945). It returns the files to place (a release that mixes allowed
+// and disallowed EPUBs drops only the allowed ones, as a managed import imports
+// only those), the contentCheck object a warn result attaches to the history
+// event, and false when the download was refused: parked in StateImportBlocked
+// with the same reason, path recorded for Match to book and release blocklisted,
+// before anything is placed or held. Manual imports are never refused, and the
+// content check skips them, as in a managed import. held is true when the
+// download is being released from pair gating (importHeld), which can go to
+// blocked directly. The download is a book's
+// own grab here (a nil book already failed), so the content checks apply.
+func (s *Scanner) checkBeforeDrop(ctx context.Context, dl *models.Download, book *models.Book, author *models.Author, downloadPath string, bookFiles []string, format string, held bool) ([]string, map[string]any, bool) {
+	refuse := func(reason string, data map[string]any) {
+		s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
+		s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, reason)
+		// importPending cannot move straight to importBlocked; a held download can.
+		if !held {
+			s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
+		}
+		s.failImportWithCheck(ctx, dl, models.StateImportBlocked, reason, data)
+	}
+	manual := isManualImport(ctx)
+	var contentCheck map[string]any
+
+	if format == models.MediaTypeAudiobook {
+		if lc := s.checkAudiobookLanguage(ctx, book, author, bookFiles); lc.reject {
+			if !manual {
+				slog.Warn("import blocked: audio file language is not allowed",
+					"title", dl.Title, "bookID", book.ID, "languages", lc.declared)
+				refuse(lc.reason, nil)
+				return nil, nil, false
+			}
+			slog.Warn("manual import of audio files in a language the profile does not allow; importing them as asked",
+				"title", dl.Title, "bookID", book.ID, "languages", lc.declared)
+		}
+		if !manual {
+			if res := s.checkAudiobookContent(ctx, book, author, bookFiles); res.flagged || res.data != nil {
+				if res.blocks() {
+					slog.Warn("import blocked: audio tags show other books in the download",
+						"title", dl.Title, "bookID", book.ID, "book", book.Title)
+					refuse(res.reason, res.data)
+					return nil, nil, false
+				}
+				if res.flagged {
+					slog.Warn("downloaded audiobook holds other books; handing it off because import.audiobook.content_check is warn",
+						"title", dl.Title, "bookID", book.ID, "book", book.Title)
+				}
+				contentCheck = res.data
+			}
+		}
+		return bookFiles, contentCheck, true
+	}
+
+	langCheck := s.checkDownloadLanguage(ctx, book, author, bookFiles, format)
+	if manual {
+		if langCheck.reject {
+			slog.Warn("manual import of a file in a language the profile does not allow; importing it as asked",
+				"title", dl.Title, "bookID", book.ID, "languages", langCheck.declared)
+		}
+		langCheck.skip = nil
+	} else if langCheck.reject {
+		slog.Warn("import blocked: file language is not allowed",
+			"title", dl.Title, "bookID", book.ID, "languages", langCheck.declared)
+		refuse(langCheck.reason, nil)
+		return nil, nil, false
+	}
+	if !manual {
+		res := s.checkEbookContent(ctx, book, author, bookFiles)
+		if res.flagged || res.data != nil {
+			if res.blocks() {
+				slog.Warn("import blocked: file looks like a different book",
+					"title", dl.Title, "bookID", book.ID, "book", book.Title)
+				refuse(res.reason, res.data)
+				return nil, nil, false
+			}
+			if res.flagged {
+				why := "handing it off because import.ebook.content_check is warn"
+				if res.uncertain && res.mode == contentCheckBlock {
+					why = "handing it off because the finding is uncertain and only noted, even in block mode"
+				}
+				slog.Warn("downloaded file looks like a different book; "+why,
+					"title", dl.Title, "bookID", book.ID, "book", book.Title)
+			}
+			contentCheck = res.data
+		}
+	}
+	if len(langCheck.skip) > 0 {
+		kept := make([]string, 0, len(bookFiles))
+		for _, f := range bookFiles {
+			if !langCheck.skip[f] {
+				kept = append(kept, f)
+			}
+		}
+		bookFiles = kept
+	}
+	return bookFiles, contentCheck, true
 }
 
 // dropPlaceEbook places one ebook for bookID in the drop folder at dest and

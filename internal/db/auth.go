@@ -31,10 +31,13 @@ type User struct {
 	OIDCIssuer  *string
 	Email       *string
 	DisplayName *string
-	// RequestsAutoApprove makes this account's requests approve themselves
-	// instead of waiting in the admin queue (migration 093). Off unless an
-	// admin turns it on, so no existing account changes behaviour.
-	RequestsAutoApprove bool
+	// RequestsAutoApprove is the account's own say on whether its requests
+	// approve themselves instead of waiting in the admin queue. nil means
+	// the account has no setting and follows requests.auto_approve_default;
+	// true is Always and false is Never (migration 131, #3900). Migration 131
+	// gave every account that already existed an explicit value, so only
+	// accounts created afterwards are nil.
+	RequestsAutoApprove *bool
 }
 
 func (u *User) IsAdmin() bool { return u.Role == auth.RoleAdmin }
@@ -62,7 +65,7 @@ func (r *UserRepo) LowestID(ctx context.Context) (int64, error) {
 }
 
 const userSelectCols = `id, username, password_hash, role, created_at, updated_at,
-	oidc_sub, oidc_issuer, email, display_name, session_epoch, requests_auto_approve`
+	oidc_sub, oidc_issuer, email, display_name, session_epoch, requests_auto_approve_override`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
@@ -883,14 +886,20 @@ func (r *UserRepo) SetRole(ctx context.Context, id int64, role string) error {
 	return tx.Commit()
 }
 
-// SetRequestsAutoApprove turns per-account request auto approval on or off
-// (migration 093). Only the admin user API reaches it. It changes what happens
-// to the account's next request, never to requests already in the queue. An
-// unknown id is ErrUserNotFound rather than a silent success.
-func (r *UserRepo) SetRequestsAutoApprove(ctx context.Context, id int64, enabled bool) error {
+// SetRequestsAutoApprove sets the account's own request auto approval: true
+// for Always, false for Never, nil to clear it so the account follows
+// requests.auto_approve_default (migrations 093 and 131). Only the admin user
+// API reaches it. It changes what happens to the account's next request,
+// never to requests already in the queue. An unknown id is ErrUserNotFound
+// rather than a silent success.
+func (r *UserRepo) SetRequestsAutoApprove(ctx context.Context, id int64, enabled *bool) error {
+	var v any
+	if enabled != nil {
+		v = boolToInt(*enabled)
+	}
 	res, err := r.db.ExecContext(ctx,
-		"UPDATE users SET requests_auto_approve=?, updated_at=? WHERE id=?",
-		boolToInt(enabled), time.Now().UTC(), id)
+		"UPDATE users SET requests_auto_approve_override=?, updated_at=? WHERE id=?",
+		v, time.Now().UTC(), id)
 	if err != nil {
 		return err
 	}
@@ -905,7 +914,8 @@ func (r *UserRepo) SetRequestsAutoApprove(ctx context.Context, id int64, enabled
 }
 
 // PromoteFirstUser sets role='admin' on the user with the lowest id, if any.
-// Called during first-run setup after the first user is created.
+// First-run setup creates the admin with CreateFirstAdmin instead; this is a
+// fixture for tests that create a plain user first and need it promoted.
 func (r *UserRepo) PromoteFirstUser(ctx context.Context) error {
 	_, err := r.db.ExecContext(ctx,
 		"UPDATE users SET role='admin' WHERE id = (SELECT MIN(id) FROM users)")
@@ -944,39 +954,4 @@ func (r *UserRepo) GetSessionEpoch(ctx context.Context, id int64) (int64, error)
 		return 0, fmt.Errorf("get session epoch: %w", err)
 	}
 	return epoch, nil
-}
-
-// BumpSessionEpoch increments the user's session_epoch by one. Intended for
-// callers that need to invalidate every outstanding session for a user
-// without changing the password itself (a hook for future "log out all
-// devices" UI). The password-change paths inline the bump into UpdatePassword
-// so the two cannot drift apart.
-func (r *UserRepo) BumpSessionEpoch(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx,
-		"UPDATE users SET session_epoch=session_epoch+1, updated_at=? WHERE id=?",
-		time.Now().UTC(), id,
-	)
-	return err
-}
-
-func (r *UserRepo) UpdateUsername(ctx context.Context, id int64, username string) error {
-	_, err := r.db.ExecContext(ctx,
-		"UPDATE users SET username=?, updated_at=? WHERE id=?",
-		username, time.Now().UTC(), id,
-	)
-	return err
-}
-
-// GetOrCreateByUsername returns the existing user with the given username, or
-// creates one (with an empty password hash — proxy-auth users never log in
-// with a local password). Used by the proxy-auth auto-provisioning path.
-func (r *UserRepo) GetOrCreateByUsername(ctx context.Context, username string) (*User, error) {
-	u, err := r.GetByUsername(ctx, username)
-	if err != nil {
-		return nil, err
-	}
-	if u != nil {
-		return u, nil
-	}
-	return r.Create(ctx, username, "")
 }

@@ -413,7 +413,9 @@ func regrabDownloadClient(t *testing.T, clients *db.DownloadClientRepo) (string,
 // bob grabs the same release into his own book. The grab reuses alice's row,
 // and unless the reuse writes the owner the row stays hers: it shows in her
 // queue and not his, he gets 404 acting on his own download, and she can
-// delete it, which removes his torrent from the client.
+// delete it, which removes his torrent from the client. Only a caller who may
+// change alice's row reuses it, so bob is an admin here; a plain user is
+// refused (TestQueueGrab_PlainUserDoesNotReuseAnOrphanedImport).
 func TestQueueGrab_ReusedRowBelongsToNewGrabber(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	h, database, downloads, clients, books, ctx := queueFixture(t)
@@ -445,7 +447,8 @@ func TestQueueGrab_ReusedRowBelongsToNewGrabber(t *testing.T) {
 	body := `{"guid":"guid-2289-owner","nzbUrl":"` + indexerURL + `/new.nzb","title":"New Release","bookId":` +
 		strconv.FormatInt(bobBook.ID, 10) + `}`
 	rec := httptest.NewRecorder()
-	h.Grab(rec, as(httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", bytes.NewBufferString(body)), bob))
+	adminReq := httptest.NewRequest(http.MethodPost, "/api/v1/queue/grab", bytes.NewBufferString(body))
+	h.Grab(rec, adminReq.WithContext(auth.WithUserRole(auth.WithUserID(adminReq.Context(), bob), auth.RoleAdmin)))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("bob's grab: got %d: %s", rec.Code, rec.Body.String())
 	}

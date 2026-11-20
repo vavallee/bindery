@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -23,7 +22,6 @@ func TestBookFilePaths_Coverage(t *testing.T) {
 
 	authors := NewAuthorRepo(database)
 	books := NewBookRepo(database)
-	files := NewBookFileRepo(database)
 	author := mkAuthor(t, authors, ctx, "OL-BFP-A")
 	one := mkBook(t, books, ctx, author.ID, "OL-BFP-1", "One", models.BookStatusWanted)
 	two := mkBook(t, books, ctx, author.ID, "OL-BFP-2", "Two", models.BookStatusWanted)
@@ -44,25 +42,6 @@ func TestBookFilePaths_Coverage(t *testing.T) {
 	}
 	if n, max, err := books.BookFilesFingerprint(ctx); err != nil || n != 0 || max != 0 {
 		t.Fatalf("BookFilesFingerprint(empty) = %d,%d,%v", n, max, err)
-	}
-
-	// AddIfMissing reports creation once, then false for the same book, and a
-	// typed error for another book.
-	created, err := files.AddIfMissing(ctx, one.ID, models.MediaTypeEbook, "/lib/one.epub")
-	if err != nil || !created {
-		t.Fatalf("AddIfMissing first = %v, %v", created, err)
-	}
-	created, err = files.AddIfMissing(ctx, one.ID, models.MediaTypeEbook, "/lib/one.epub")
-	if err != nil || created {
-		t.Fatalf("AddIfMissing repeat = %v, %v; want false,nil", created, err)
-	}
-	_, err = files.AddIfMissing(ctx, two.ID, models.MediaTypeEbook, "/lib/one.epub")
-	var owned *PathOwnedError
-	if !errors.As(err, &owned) || owned.OwnerBookID != one.ID || owned.OwnerTitle != "One" {
-		t.Fatalf("AddIfMissing for another book = %v; want PathOwnedError naming One", err)
-	}
-	if owned.Error() == "" {
-		t.Error("PathOwnedError.Error is empty")
 	}
 
 	if err := books.AddBookFile(ctx, one.ID, models.MediaTypeEbook, "/lib/one.epub"); err != nil {

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import { restoreSetting, useAutoSave } from './useAutoSave'
 import RichText from '../../components/RichText'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, AuthConfig, AuthStatus, BINDERY_BASE, StorageDirStatus, StorageHealth } from '../../api/client'
@@ -45,6 +46,7 @@ const AUTH_CONFIG_WAIT_MS = 2500
 export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const fid = useId()
   const { t } = useTranslation()
+  const autoSave = useAutoSave()
   const importModeLabel = (mode: 'auto' | 'move' | 'copy' | 'hardlink' | 'external') => {
     switch (mode) {
       case 'auto': return t('settings.general.importMode.auto', 'Auto')
@@ -139,9 +141,16 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       clearTimeout(timer)
       setLoading(false)
     })
-    api.getStorage().then(setStorage).catch(console.error)
     return () => clearTimeout(timer)
   }, [])
+
+  // GET /system/storage is admin only, and both places that read it (the
+  // hardlink warning and the Storage section) sit inside the isAdmin block
+  // below, so a non admin never asks. Keyed on isAdmin like the scan status.
+  useEffect(() => {
+    if (!isAdmin) return
+    api.getStorage().then(setStorage).catch(console.error)
+  }, [isAdmin])
 
   // The last scan summary names the library roots and the absolute path of
   // every unmatched file, so the endpoint is admin only (#2361) and the panel
@@ -378,11 +387,11 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   key={m}
                   onClick={async () => {
                     setSettings(s => ({ ...s, 'import.mode': m }))
-                    await api.setSetting('import.mode', m).catch(console.error)
+                    await autoSave('import.mode', () => api.setSetting('import.mode', m), { value: importModeLabel(m), previous: settings['import.mode'], next: m, revert: to => restoreSetting(setSettings, 'import.mode', to) })
                   }}
                   className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
                     importMode === m
-                      ? 'bg-emerald-600 border-emerald-600 text-white'
+                      ? 'bg-emerald-700 border-emerald-700 text-white'
                       : 'border-slate-300 dark:border-zinc-700 text-fg-muted hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
@@ -418,7 +427,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const v = e.target.value
                 setSettings(s => ({ ...s, 'import.audiobook.mode': v }))
-                await api.setSetting('import.audiobook.mode', v).catch(console.error)
+                await autoSave('import.audiobook.mode', () => api.setSetting('import.audiobook.mode', v), { previous: settings['import.audiobook.mode'], next: v, revert: to => restoreSetting(setSettings, 'import.audiobook.mode', to) })
               }}
               className={inputCls}
             >
@@ -438,7 +447,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   onChange={async e => {
                     const v = e.target.checked ? 'true' : 'false'
                     setSettings(s => ({ ...s, 'import.audiobook.flatten_multi_disc': v }))
-                    await api.setSetting('import.audiobook.flatten_multi_disc', v).catch(console.error)
+                    await autoSave('import.audiobook.flatten_multi_disc', () => api.setSetting('import.audiobook.flatten_multi_disc', v), { previous: settings['import.audiobook.flatten_multi_disc'], next: v, revert: to => restoreSetting(setSettings, 'import.audiobook.flatten_multi_disc', to) })
                   }}
                 />
                 <span>
@@ -466,7 +475,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const v = e.target.value
                 setSettings(s => ({ ...s, 'import.ebook.content_check': v }))
-                await api.setSetting('import.ebook.content_check', v).catch(console.error)
+                await autoSave('import.ebook.content_check', () => api.setSetting('import.ebook.content_check', v), { previous: settings['import.ebook.content_check'], next: v, revert: to => restoreSetting(setSettings, 'import.ebook.content_check', to) })
               }}
               className={inputCls}
             >
@@ -489,7 +498,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const v = e.target.value
                 setSettings(s => ({ ...s, 'import.audiobook.content_check': v }))
-                await api.setSetting('import.audiobook.content_check', v).catch(console.error)
+                await autoSave('import.audiobook.content_check', () => api.setSetting('import.audiobook.content_check', v), { previous: settings['import.audiobook.content_check'], next: v, revert: to => restoreSetting(setSettings, 'import.audiobook.content_check', to) })
               }}
               className={inputCls}
             >
@@ -554,7 +563,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                     onChange={async e => {
                       const v = e.target.value
                       setSettings(s => ({ ...s, 'import.drop_layout': v }))
-                      await api.setSetting('import.drop_layout', v).catch(console.error)
+                      await autoSave('import.drop_layout', () => api.setSetting('import.drop_layout', v), { previous: settings['import.drop_layout'], next: v, revert: to => restoreSetting(setSettings, 'import.drop_layout', to) })
                     }}
                     className={inputCls}
                   >
@@ -569,7 +578,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                     onChange={async e => {
                       const v = e.target.value
                       setSettings(s => ({ ...s, 'import.drop_link_mode': v }))
-                      await api.setSetting('import.drop_link_mode', v).catch(console.error)
+                      await autoSave('import.drop_link_mode', () => api.setSetting('import.drop_link_mode', v), { previous: settings['import.drop_link_mode'], next: v, revert: to => restoreSetting(setSettings, 'import.drop_link_mode', to) })
                     }}
                     className={inputCls}
                   >
@@ -612,7 +621,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 onChange={async e => {
                   const v = e.target.checked ? 'true' : 'false'
                   setSettings(s => ({ ...s, 'import.write_opf_sidecar': v }))
-                  await api.setSetting('import.write_opf_sidecar', v).catch(console.error)
+                  await autoSave('import.write_opf_sidecar', () => api.setSetting('import.write_opf_sidecar', v), { previous: settings['import.write_opf_sidecar'], next: v, revert: to => restoreSetting(setSettings, 'import.write_opf_sidecar', to) })
                 }}
               />
               <span>
@@ -918,7 +927,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'search.interval': next }))
-                await api.setSetting('search.interval', next).catch(console.error)
+                await autoSave('search.interval', () => api.setSetting('search.interval', next), { previous: settings['search.interval'], next, revert: to => restoreSetting(setSettings, 'search.interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -955,7 +964,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'hardcover.sync_interval': next }))
-                await api.setSetting('hardcover.sync_interval', next).catch(console.error)
+                await autoSave('hardcover.sync_interval', () => api.setSetting('hardcover.sync_interval', next), { previous: settings['hardcover.sync_interval'], next, revert: to => restoreSetting(setSettings, 'hardcover.sync_interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -999,7 +1008,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'library.scan_interval': next }))
-                await api.setSetting('library.scan_interval', next).catch(console.error)
+                await autoSave('library.scan_interval', () => api.setSetting('library.scan_interval', next), { previous: settings['library.scan_interval'], next, revert: to => restoreSetting(setSettings, 'library.scan_interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -1042,7 +1051,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'authors.discovery.interval': next }))
-                await api.setSetting('authors.discovery.interval', next).catch(console.error)
+                await autoSave('authors.discovery.interval', () => api.setSetting('authors.discovery.interval', next), { previous: settings['authors.discovery.interval'], next, revert: to => restoreSetting(setSettings, 'authors.discovery.interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -1077,7 +1086,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'series.monitoring.interval': next }))
-                await api.setSetting('series.monitoring.interval', next).catch(console.error)
+                await autoSave('series.monitoring.interval', () => api.setSetting('series.monitoring.interval', next), { previous: settings['series.monitoring.interval'], next, revert: to => restoreSetting(setSettings, 'series.monitoring.interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
