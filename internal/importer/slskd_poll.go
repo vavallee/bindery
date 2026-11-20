@@ -196,14 +196,19 @@ func (s *Scanner) slskdBatchMissing(ctx context.Context, client *models.Download
 	if folder, _ := s.slskdFolder(ctx, client, dl); folder != "" && len(discoverBookFiles(ctx, folder, nil)) > 0 {
 		// A batch that vanished while only some files finished leaves the rest in
 		// slskd's incomplete folder. Importing what is here would be a half
-		// download, so compare with the grab's file list first. A grab address that
-		// cannot be read (want 0) keeps the plain "any book file" behaviour.
-		if want := expectedSlskdFiles(dl); want > 0 {
-			if have := countRegularFiles(folder); have < want {
-				s.failSlskd(ctx, client, dl, fmt.Sprintf(
-					"slskd no longer lists this download and only %d of its %d files arrived, so nothing was imported. The finished files were left in %s; pick another result or delete them", have, want, filepath.Join("bindery", filepath.Base(folder))), false)
-				return
-			}
+		// download, so compare with the grab's file list first. When that list
+		// cannot be read there is nothing to compare with, so nothing is imported.
+		want := expectedSlskdFiles(dl)
+		have := countRegularFiles(folder)
+		where := filepath.Join("bindery", filepath.Base(folder))
+		if want == 0 {
+			s.failSlskd(ctx, client, dl, "slskd no longer lists this download and its file list could not be read, so nothing was imported. The files were left in "+where+"; pick another result or delete them", false)
+			return
+		}
+		if have < want {
+			s.failSlskd(ctx, client, dl, fmt.Sprintf(
+				"slskd no longer lists this download and only %d of its %d files arrived, so nothing was imported. The finished files were left in %s; pick another result or delete them", have, want, where), false)
+			return
 		}
 		slog.Info("slskd no longer lists this download but its files are on disk; importing them", "title", dl.Title, "path", folder)
 		s.completeSlskd(ctx, client, dl, batchID)

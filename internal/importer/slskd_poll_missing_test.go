@@ -164,10 +164,10 @@ func TestSlskdPoll_BatchGoneWithAllFilesImports(t *testing.T) {
 	}
 }
 
-// The grab address cannot be read, so the expected count is unknown (0). That
-// only happens for a row whose address was lost; it keeps the old rule of
-// importing any book file found.
-func TestSlskdPoll_BatchGoneWithUnknownFileCountKeepsImporting(t *testing.T) {
+// The grab address cannot be read, so there is no file list to compare with. A
+// later Validate tightening would put existing rows here, so nothing is
+// imported and nothing is deleted. Fail before: it imported the book file.
+func TestSlskdPoll_BatchGoneWithUnreadableFileListFailsWithoutImport(t *testing.T) {
 	f := newSlskdPollFixture(t)
 	dl := f.start(t, slskdGrabOpts{guid: "slskd:goneunknown", files: []slskd.BatchFile{
 		{Filename: `@@p\Mary Mary\Mary Mary.epub`, Size: 6000},
@@ -180,7 +180,14 @@ func TestSlskdPoll_BatchGoneWithUnknownFileCountKeepsImporting(t *testing.T) {
 	f.dl = dl
 	f.fake.Batches = map[string]*slskdtest.Batch{}
 	f.poll()
-	if got := f.get(t, dl.ID); got.Status != models.StateImported {
-		t.Fatalf("status %q (%s), want imported", got.Status, got.ErrorMessage)
+	got := f.get(t, dl.ID)
+	if got.Status != models.StateFailed || !strings.Contains(got.ErrorMessage, "file list could not be read") {
+		t.Fatalf("status %q message %q", got.Status, got.ErrorMessage)
+	}
+	if f.bookFileCount(t) != 0 {
+		t.Error("imported without a file list")
+	}
+	if _, err := os.Stat(filepath.Join(f.folder(dl), "Mary Mary.epub")); err != nil {
+		t.Errorf("a file was deleted: %v", err)
 	}
 }

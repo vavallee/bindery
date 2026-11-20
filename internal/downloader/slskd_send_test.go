@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -141,8 +142,19 @@ func TestSlskdSendClearsAStaleFolder(t *testing.T) {
 	if err := os.MkdirAll(keep, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The new batch must be requested only after the stale folder is gone.
+	staleAtPost := true
+	f.OnRequest = func(method, path string) {
+		if method == http.MethodPost && strings.HasSuffix(path, "/transfers/downloads/batches") {
+			_, err := os.Stat(filepath.Join(root, "bindery", "9"))
+			staleAtPost = !os.IsNotExist(err)
+		}
+	}
 	if _, err := SendDownload(context.Background(), client, grabAddr(t), "t", SendOptions{DownloadID: 9}); err != nil {
 		t.Fatal(err)
+	}
+	if staleAtPost {
+		t.Error("the batch was requested before the stale folder was removed")
 	}
 	if _, err := os.Stat(filepath.Join(root, "bindery", "9")); !os.IsNotExist(err) {
 		t.Errorf("the stale folder survived: %v", err)

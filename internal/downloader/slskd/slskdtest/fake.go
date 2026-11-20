@@ -58,6 +58,8 @@ type Fake struct {
 	Batches map[string]*Batch
 	// Requests logs "METHOD path" for every call.
 	Requests []string
+	// OnRequest, when set, runs for every call before it is handled.
+	OnRequest func(method, path string)
 	// Keys logs the X-API-Key of every call.
 	Keys []string
 	next int
@@ -169,6 +171,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.OnRequest != nil {
+		f.OnRequest(r.Method, r.URL.Path)
+	}
 	f.Requests = append(f.Requests, r.Method+" "+r.URL.Path)
 	f.Keys = append(f.Keys, r.Header.Get("X-API-Key"))
 	if f.Down {
