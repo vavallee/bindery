@@ -196,6 +196,45 @@ func TestBookOrbitConfigEmptyKeyKeepsSavedKey(t *testing.T) {
 	assertSettingValue(t, f.settings, context.Background(), SettingBookOrbitPathRemap, "/books:/srv/books")
 }
 
+// A saved key must not follow a changed base URL to the new server.
+func TestBookOrbitConfigURLChangeDropsSavedKey(t *testing.T) {
+	ctx := context.Background()
+	f := newBookOrbitFixture(t)
+	f.save(t)
+
+	// Same URL again (even with a trailing slash): the key stays.
+	if rec := f.put(`{"baseUrl":"http://192.168.1.20:3000/"}`); rec.Code != http.StatusOK {
+		t.Fatalf("resave: %d %s", rec.Code, rec.Body)
+	}
+	assertSettingValue(t, f.settings, ctx, SettingBookOrbitAPIKey, bookOrbitTestKey)
+
+	// New URL, no key: the old key is cleared and a probe refuses to run.
+	rec := f.put(`{"baseUrl":"http://10.9.9.9:3000"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("move: %d %s", rec.Code, rec.Body)
+	}
+	assertSettingValue(t, f.settings, ctx, SettingBookOrbitAPIKey, "")
+	var resp bookOrbitConfigResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.APIKeyConfigured {
+		t.Fatal("response says a key is configured after the URL moved")
+	}
+	probe := httptest.NewRecorder()
+	f.h.Test(probe, httptest.NewRequest(http.MethodPost, "/api/v1/bookorbit/test", nil))
+	if f.builtKey != "" || probe.Code == http.StatusOK {
+		t.Fatalf("probe used key %q (code %d) against the new URL", f.builtKey, probe.Code)
+	}
+
+	// New URL with a new key: saved as given.
+	f.save(t)
+	if rec := f.put(`{"baseUrl":"http://10.8.8.8:3000","apiKey":"` + bookOrbitTestKey + `"}`); rec.Code != http.StatusOK {
+		t.Fatalf("move with key: %d %s", rec.Code, rec.Body)
+	}
+	assertSettingValue(t, f.settings, ctx, SettingBookOrbitAPIKey, bookOrbitTestKey)
+}
+
 func TestBookOrbitConfigRejectsBadInput(t *testing.T) {
 	cases := map[string]string{
 		"no scheme":        `{"baseUrl":"bookorbit:3000"}`,
