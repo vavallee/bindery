@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import MetadataTab from './MetadataTab'
 import { SettingsToastHost } from './autoSave'
 import { api } from '../../api/client'
@@ -102,5 +102,67 @@ describe('Latest book count autosave (#3991)', () => {
     fireEvent.blur(input)
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledTimes(2))
     spy.mockRestore()
+  })
+
+  it('Enter then blur while the save is pending sends one request and one toast', async () => {
+    let resolve!: () => void
+    vi.mocked(api.setSetting).mockReturnValue(new Promise<void>(res => { resolve = res }) as never)
+    render(<><SettingsToastHost /><MetadataTab /></>)
+    const input = await field()
+    fireEvent.change(input, { target: { value: '5' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.blur(input)
+    expect(api.setSetting).toHaveBeenCalledTimes(1)
+    await act(async () => { resolve() })
+    await screen.findByText(/saved/)
+    fireEvent.blur(input)
+    expect(api.setSetting).toHaveBeenCalledTimes(1)
+    expect(screen.getAllByTestId('settings-toast')).toHaveLength(1)
+  })
+
+  it('blur after a failed Enter save retries', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let reject!: (e: Error) => void
+    vi.mocked(api.setSetting).mockReturnValueOnce(new Promise<void>((_, rej) => { reject = rej }) as never)
+    render(<><SettingsToastHost /><MetadataTab /></>)
+    const input = await field()
+    fireEvent.change(input, { target: { value: '5' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await act(async () => { reject(new Error('boom')) })
+    await screen.findByRole('alert')
+    await waitFor(() => expect(input).toHaveValue(2))
+    fireEvent.change(input, { target: { value: '5' } })
+    fireEvent.blur(input)
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledTimes(2))
+    spy.mockRestore()
+  })
+
+  it('a failure does not overwrite text typed while the save was pending', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let reject!: (e: Error) => void
+    vi.mocked(api.setSetting).mockReturnValueOnce(new Promise<void>((_, rej) => { reject = rej }) as never)
+    render(<><SettingsToastHost /><MetadataTab /></>)
+    const input = await field()
+    fireEvent.change(input, { target: { value: '5' } })
+    fireEvent.blur(input)
+    fireEvent.change(input, { target: { value: '7' } })
+    await act(async () => { reject(new Error('boom')) })
+    await screen.findByRole('alert')
+    expect(input).toHaveValue(7)
+    // The saved value is still 2, so leaving the field with 2 sends nothing.
+    fireEvent.change(input, { target: { value: '2' } })
+    fireEvent.blur(input)
+    expect(api.setSetting).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
+  })
+
+  it('Escape restores the last saved value and drops the edit', async () => {
+    render(<MetadataTab />)
+    const input = await field()
+    fireEvent.change(input, { target: { value: '9' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(input).toHaveValue(2)
+    fireEvent.blur(input)
+    expect(api.setSetting).not.toHaveBeenCalled()
   })
 })

@@ -156,22 +156,34 @@ export default function MetadataTab() {
   // field follows what is typed; an invalid value is flagged and not sent.
   // savedLatestCount is the last value the server holds, for the no-change
   // check and as what a failed save puts back.
+  // inFlightLatestCount is the value being sent now, so Enter then blur while
+  // the request is pending does not send it twice.
   const savedLatestCount = useRef<string | undefined>(undefined)
+  const inFlightLatestCount = useRef<string | null>(null)
   const latestCountText = settings[LATEST_COUNT_KEY] ?? '1'
+  const latestCountRef = useRef(latestCountText)
+  latestCountRef.current = latestCountText
   const latestCountInvalid = !/^[1-9]\d*$/.test(latestCountText)
   const saveLatestCount = async () => {
     if (latestCountInvalid || latestCountText === (savedLatestCount.current ?? '1')) return
+    if (latestCountText === inFlightLatestCount.current) return
     const next = latestCountText
+    inFlightLatestCount.current = next
     const res = await autoSave(LATEST_COUNT_KEY, () => api.setSetting(LATEST_COUNT_KEY, next).then(() => true), {
       previous: savedLatestCount.current,
       next,
       revert: to => {
         savedLatestCount.current = to
-        restoreSetting(setSettings, LATEST_COUNT_KEY, to)
+        // Typing after the request started is newer than the failure: leave it.
+        if (latestCountRef.current === next) restoreSetting(setSettings, LATEST_COUNT_KEY, to)
       },
     })
+    if (inFlightLatestCount.current === next) inFlightLatestCount.current = null
     if (res) savedLatestCount.current = next
   }
+
+  // Escape drops the edit and shows the last saved value again.
+  const cancelLatestCount = () => restoreSetting(setSettings, LATEST_COUNT_KEY, savedLatestCount.current)
 
   const reload = () => api.listMetadataProfiles().then(setProfiles).catch(console.error)
 
@@ -402,7 +414,7 @@ export default function MetadataTab() {
                 aria-describedby={latestCountInvalid ? `${fid}-8-err` : undefined}
                 onChange={e => setSettings(s => ({ ...s, [LATEST_COUNT_KEY]: e.target.value }))}
                 onBlur={saveLatestCount}
-                onKeyDown={e => { if (e.key === 'Enter') saveLatestCount() }}
+                onKeyDown={e => { if (e.key === 'Enter') saveLatestCount(); else if (e.key === 'Escape') cancelLatestCount() }}
                 className="w-28 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
               />
               {latestCountInvalid && (
