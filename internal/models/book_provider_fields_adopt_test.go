@@ -52,7 +52,7 @@ func TestAdoptRefreshedProviderFields(t *testing.T) {
 			Book{MetadataProvider: "openlibrary", Description: "new"}, nil, nil, ""},
 		{"unknown description", Book{MetadataProvider: "openlibrary"},
 			Book{MetadataProvider: "openlibrary", Description: "new", UnknownFields: []string{BookFieldDescription}}, nil, nil, ""},
-		{"language never adopted", Book{MetadataProvider: "openlibrary", Language: "fre"},
+		{"present language never replaced", Book{MetadataProvider: "openlibrary", Language: "fre"},
 			Book{MetadataProvider: "openlibrary", Language: "eng"}, nil, nil, ""},
 	}
 	for _, c := range cases {
