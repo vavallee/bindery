@@ -3,32 +3,16 @@ package calibre
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
-	"sort"
-	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/importrollback"
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// runEntityMetadataEnvelope is the JSON shape stored in
-// calibre_entity_snapshots.metadata_json. Kind+Version are stamped on every
-// record so future migrations can detect old envelopes; Data holds free-form
-// per-outcome breadcrumbs; Snapshot carries the typed before/after payload
-// rollback restores from.
-type runEntityMetadataEnvelope struct {
-	Kind     string                     `json:"kind"`
-	Version  int                        `json:"version"`
-	Data     map[string]any             `json:"data,omitempty"`
-	Snapshot *runEntitySnapshotEnvelope `json:"snapshot,omitempty"`
-}
+type runEntityMetadataEnvelope = importrollback.Envelope
 
-type runEntitySnapshotEnvelope struct {
-	EntityType string          `json:"entityType"`
-	Before     json.RawMessage `json:"before,omitempty"`
-	After      json.RawMessage `json:"after,omitempty"`
-}
+type runEntitySnapshotEnvelope = importrollback.SnapshotEnvelope
 
 // bookRollbackSnapshot captures the subset of book fields the Calibre
 // importer mutates (see applyBookFields + upsertBook). Fields outside this
@@ -92,12 +76,12 @@ func bookSnapshot(b *models.Book) *bookRollbackSnapshot {
 		AuthorID:         b.AuthorID,
 		Title:            b.Title,
 		SortTitle:        b.SortTitle,
-		ReleaseDate:      cloneTimePtr(b.ReleaseDate),
+		ReleaseDate:      importrollback.CloneTimePtr(b.ReleaseDate),
 		Language:         b.Language,
 		Status:           b.Status,
 		FilePath:         b.FilePath,
 		MetadataProvider: b.MetadataProvider,
-		CalibreID:        cloneInt64Ptr(b.CalibreID),
+		CalibreID:        importrollback.CloneInt64Ptr(b.CalibreID),
 		MediaType:        b.MediaType,
 		AnyEditionOK:     b.AnyEditionOK,
 		Monitored:        b.Monitored,
@@ -113,8 +97,8 @@ func editionSnapshot(e *models.Edition) *editionRollbackSnapshot {
 		ForeignID:   e.ForeignID,
 		BookID:      e.BookID,
 		Title:       e.Title,
-		ISBN13:      cloneStringPtr(e.ISBN13),
-		PublishDate: cloneTimePtr(e.PublishDate),
+		ISBN13:      importrollback.CloneStringPtr(e.ISBN13),
+		PublishDate: importrollback.CloneTimePtr(e.PublishDate),
 		Format:      e.Format,
 		Language:    e.Language,
 		ImageURL:    e.ImageURL,
@@ -137,18 +121,11 @@ func (i *Importer) authorSnapshot(ctx context.Context, author *models.Author) (*
 	if i.authors == nil || author.ID == 0 {
 		return snapshot, nil
 	}
-	identifiers, err := i.authors.ListAuthorIdentifiers(ctx, author.ID)
+	foreignIDs, err := importrollback.CaptureIdentifierForeignIDs(ctx, i.authors, author.ID)
 	if err != nil {
 		return nil, err
 	}
-	foreignIDs := make([]string, 0, len(identifiers))
-	for _, identifier := range identifiers {
-		if foreignID := strings.TrimSpace(identifier.ForeignID); foreignID != "" {
-			foreignIDs = append(foreignIDs, foreignID)
-		}
-	}
-	sort.Strings(foreignIDs)
-	snapshot.IdentifierForeignIDs = &foreignIDs
+	snapshot.IdentifierForeignIDs = foreignIDs
 	return snapshot, nil
 }
 
@@ -161,16 +138,7 @@ func bookSnapshotMetadata(data map[string]any, before, after *bookRollbackSnapsh
 	if err != nil {
 		return runEntityMetadataEnvelope{}, err
 	}
-	return runEntityMetadataEnvelope{
-		Kind:    runEntityMetadataKind,
-		Version: runEntityMetadataVersion,
-		Data:    data,
-		Snapshot: &runEntitySnapshotEnvelope{
-			EntityType: entityTypeBook,
-			Before:     beforePayload,
-			After:      afterPayload,
-		},
-	}, nil
+	return importrollback.NewEnvelope(runEntityMetadataKind, runEntityMetadataVersion, entityTypeBook, data, beforePayload, afterPayload), nil
 }
 
 func authorSnapshotMetadata(data map[string]any, before, after *authorRollbackSnapshot) (runEntityMetadataEnvelope, error) {
@@ -182,16 +150,7 @@ func authorSnapshotMetadata(data map[string]any, before, after *authorRollbackSn
 	if err != nil {
 		return runEntityMetadataEnvelope{}, err
 	}
-	return runEntityMetadataEnvelope{
-		Kind:    runEntityMetadataKind,
-		Version: runEntityMetadataVersion,
-		Data:    data,
-		Snapshot: &runEntitySnapshotEnvelope{
-			EntityType: entityTypeAuthor,
-			Before:     beforePayload,
-			After:      afterPayload,
-		},
-	}, nil
+	return importrollback.NewEnvelope(runEntityMetadataKind, runEntityMetadataVersion, entityTypeAuthor, data, beforePayload, afterPayload), nil
 }
 
 func editionSnapshotMetadata(data map[string]any, before, after *editionRollbackSnapshot) (runEntityMetadataEnvelope, error) {
@@ -203,44 +162,13 @@ func editionSnapshotMetadata(data map[string]any, before, after *editionRollback
 	if err != nil {
 		return runEntityMetadataEnvelope{}, err
 	}
-	return runEntityMetadataEnvelope{
-		Kind:    runEntityMetadataKind,
-		Version: runEntityMetadataVersion,
-		Data:    data,
-		Snapshot: &runEntitySnapshotEnvelope{
-			EntityType: entityTypeEdition,
-			Before:     beforePayload,
-			After:      afterPayload,
-		},
-	}, nil
+	return importrollback.NewEnvelope(runEntityMetadataKind, runEntityMetadataVersion, entityTypeEdition, data, beforePayload, afterPayload), nil
 }
 
+// marshalSnapshotPayload encodes a snapshot struct for the envelope; a nil or
+// typed nil pointer yields a nil payload.
 func marshalSnapshotPayload(v any) (json.RawMessage, error) {
-	if v == nil {
-		return nil, nil
-	}
-	// Guard against typed-nil pointers: json.Marshal on a (*T)(nil) encodes
-	// "null", which is indistinguishable from an absent snapshot and would
-	// defeat before/after gating in the restorers.
-	switch t := v.(type) {
-	case *bookRollbackSnapshot:
-		if t == nil {
-			return nil, nil
-		}
-	case *authorRollbackSnapshot:
-		if t == nil {
-			return nil, nil
-		}
-	case *editionRollbackSnapshot:
-		if t == nil {
-			return nil, nil
-		}
-	}
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("encode calibre rollback snapshot: %w", err)
-	}
-	return data, nil
+	return importrollback.MarshalPayload("calibre", v)
 }
 
 // recordBookBeforeSnapshot persists the pre-mutation book snapshot. Called
@@ -371,78 +299,13 @@ func (i *Importer) upsertProvenance(ctx context.Context, runID int64, entityType
 }
 
 func bookRollbackSnapshotFromMetadata(raw string) (*bookRollbackSnapshot, *bookRollbackSnapshot, bool) {
-	envelope, ok := parseRunEntityMetadata(raw)
-	if !ok || envelope.Snapshot == nil || envelope.Snapshot.EntityType != entityTypeBook {
-		return nil, nil, false
-	}
-	if len(envelope.Snapshot.Before) == 0 || len(envelope.Snapshot.After) == 0 {
-		return nil, nil, false
-	}
-	var before, after bookRollbackSnapshot
-	if err := json.Unmarshal(envelope.Snapshot.Before, &before); err != nil {
-		return nil, nil, false
-	}
-	if err := json.Unmarshal(envelope.Snapshot.After, &after); err != nil {
-		return nil, nil, false
-	}
-	return &before, &after, true
+	return importrollback.DecodeSnapshots[bookRollbackSnapshot](raw, runEntityMetadataKind, runEntityMetadataVersion, entityTypeBook)
 }
 
 func authorRollbackSnapshotFromMetadata(raw string) (*authorRollbackSnapshot, *authorRollbackSnapshot, bool) {
-	envelope, ok := parseRunEntityMetadata(raw)
-	if !ok || envelope.Snapshot == nil || envelope.Snapshot.EntityType != entityTypeAuthor {
-		return nil, nil, false
-	}
-	if len(envelope.Snapshot.Before) == 0 || len(envelope.Snapshot.After) == 0 {
-		return nil, nil, false
-	}
-	var before, after authorRollbackSnapshot
-	if err := json.Unmarshal(envelope.Snapshot.Before, &before); err != nil {
-		return nil, nil, false
-	}
-	if err := json.Unmarshal(envelope.Snapshot.After, &after); err != nil {
-		return nil, nil, false
-	}
-	return &before, &after, true
+	return importrollback.DecodeSnapshots[authorRollbackSnapshot](raw, runEntityMetadataKind, runEntityMetadataVersion, entityTypeAuthor)
 }
 
 func parseRunEntityMetadata(raw string) (runEntityMetadataEnvelope, bool) {
-	var envelope runEntityMetadataEnvelope
-	if strings.TrimSpace(raw) == "" {
-		return envelope, false
-	}
-	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
-		return envelope, false
-	}
-	if envelope.Kind != runEntityMetadataKind || envelope.Version != runEntityMetadataVersion {
-		return envelope, false
-	}
-	if envelope.Data == nil {
-		envelope.Data = map[string]any{}
-	}
-	return envelope, true
-}
-
-func cloneInt64Ptr(v *int64) *int64 {
-	if v == nil {
-		return nil
-	}
-	out := *v
-	return &out
-}
-
-func cloneStringPtr(v *string) *string {
-	if v == nil {
-		return nil
-	}
-	out := *v
-	return &out
-}
-
-func cloneTimePtr(v *time.Time) *time.Time {
-	if v == nil {
-		return nil
-	}
-	out := *v
-	return &out
+	return importrollback.ParseEnvelope(raw, runEntityMetadataKind, runEntityMetadataVersion)
 }

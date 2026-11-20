@@ -56,7 +56,7 @@ func TestScheduler_ReadErrorsFailSafe(t *testing.T) {
 		t.Errorf("checkPendingReleases on a read error: got %+v, want nil", got)
 	}
 
-	s.storePending(ctx, 1, models.MediaTypeEbook, newznab.SearchResult{GUID: "g-store", Title: "T.epub", IndexerID: 3}, "delay not met")
+	s.storePending(ctx, 1, models.MediaTypeEbook, newznab.SearchResult{GUID: "g-store", Title: "T.epub", IndexerID: idPtr(3)}, "delay not met")
 	s.searchAndGrabFormat(ctx, models.Book{ID: 1, Title: "Closed"}, models.MediaTypeEbook, nil)
 	s.searchWanted()
 	s.refreshMetadata()

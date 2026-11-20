@@ -46,7 +46,7 @@ func pinnedFirstFixture(t *testing.T) (*schedPinFixture, *models.Indexer) {
 	openRes := pinnedRes
 	openRes.GUID = "g-open"
 	openRes.Title = "Pin Author Pinned Book epub open"
-	openRes.IndexerID = open.ID
+	openRes.IndexerID = &open.ID
 	openRes.IndexerName = "OpenIdx"
 	f.s.searcher.(*perFormatSearcher).byFormat[models.MediaTypeEbook] = []newznab.SearchResult{pinnedRes, pinnedRes2, openRes}
 	return f, open

@@ -18,6 +18,7 @@ import (
 	"github.com/vavallee/bindery/internal/config"
 	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/downloader/deluge"
+	"github.com/vavallee/bindery/internal/downloader/slskd"
 	"github.com/vavallee/bindery/internal/httpsec"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
@@ -129,6 +130,11 @@ type diagState struct {
 	fsTimeout     time.Duration
 	hardlinkProbe func(a, b string) (bool, string)
 
+	// slskd state, read once by the first slskd row that needs it.
+	slskdFetched  bool
+	slskdAppState *slskd.Application
+	slskdAppErr   error
+
 	targets   []*diagTarget
 	hardlinks []diagHardlinkRow
 }
@@ -153,6 +159,10 @@ var diagChecks = []diagCheck{
 	{code: diagCodeRemap, run: checkDiagRemap},
 	{code: diagCodeLocalPath, run: checkDiagLocalPath},
 	{code: diagCodeHardlinks, run: checkDiagHardlinks},
+	{code: diagCodeSlskdVersion, always: true, run: checkDiagSlskdVersion},
+	{code: diagCodeSlskdLogin, always: true, run: checkDiagSlskdLogin},
+	{code: diagCodeSlskdRole, always: true, run: checkDiagSlskdRole},
+	{code: diagCodeSlskdPort, always: true, run: checkDiagSlskdPort},
 	{code: diagCodeIndexerReach, always: true, run: checkDiagIndexerReach},
 }
 
@@ -416,6 +426,8 @@ func checkDiagCategory(ctx context.Context, st *diagState) []diagCheckResult {
 			})
 		case "transmission":
 			return one(diagCheckResult{Status: diagPass, Message: "Transmission has no categories to set up."})
+		case downloader.ClientTypeSlskd:
+			return one(diagCheckResult{Status: diagPass, Message: "slskd has no categories to set up."})
 		default:
 			return one(diagCheckResult{Status: diagPass, Message: fmt.Sprintf("%s labels need no setup in the client.", st.clientName)})
 		}

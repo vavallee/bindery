@@ -98,6 +98,9 @@ export function downloadClientPathRemapHelp(type: string) {
   if (type === 'rtorrent') {
     return "Map the path rTorrent reports to the path Bindery can read. Seedbox installs almost always need this — e.g. rTorrent writes to /home/user/downloads while Bindery mounts that share at /media/books, so use /home/user/downloads:/media/books. Bindery also uses this in reverse when setting a new torrent's download directory, and to locate files when you remove a download with its data."
   }
+  if (type === 'slskd') {
+    return "Map slskd's downloads folder to the path Bindery can read. Example: if slskd saves to /app/downloads but Bindery sees that folder at /media/soulseek, use /app/downloads:/media/soulseek. Leave empty when both already see the same mount."
+  }
   return "Map the path this client reports to the path Bindery can read: the client's path, a colon, then Bindery's. Example: if the client shows /downloads/books but Bindery sees that folder at /media/books, use /downloads:/media/books. A Windows path works on the client side, such as S:\\Downloads:/downloads. Leave empty when both already see the same mount. Diagnose checks the mapping end to end."
 }
 

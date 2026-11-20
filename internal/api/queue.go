@@ -47,6 +47,12 @@ const queueImportedVisibleFor = 7 * 24 * time.Hour
 
 var errAlreadyGrabbed = errors.New("already grabbed")
 
+// errSoulseekGrabUnavailable refuses a grab of a Soulseek result. Interactive
+// search lists them, but sending a download to slskd arrives in a later release
+// (#1717). Refusing here, before any download row exists, keeps a hand crafted
+// request from leaving a half grabbed row behind.
+var errSoulseekGrabUnavailable = errors.New("grabbing from Soulseek is not available yet, so this result can be seen but not downloaded")
+
 // errNoDownloadClient marks a grab or retry that no enabled download client
 // can take. It is a setup problem the user can fix, so the handlers answer 400
 // with the actionable text and a code the web app keys on, never a 502.
@@ -171,7 +177,7 @@ func queueItemMessage(ctx context.Context, err error) string {
 	case errors.As(err, &perr):
 		return pinnedMessage(ctx, perr)
 	case errors.Is(err, errNoDownloadClient), errors.Is(err, errAlreadyGrabbed),
-		errors.Is(err, errRetryNotResendable), errors.Is(err, errGrabBookNotFound),
+		errors.Is(err, errSoulseekGrabUnavailable), errors.Is(err, errRetryNotResendable), errors.Is(err, errGrabBookNotFound),
 		isNoEligibleMediaTypeError(err):
 		return err.Error()
 	case errors.Is(err, errSendFailed):
@@ -1084,6 +1090,10 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	if req.Protocol == downloader.ProtocolSoulseek || strings.HasPrefix(req.GUID, "slskd:") {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": errSoulseekGrabUnavailable.Error()})
+		return
+	}
 	if req.GUID == "" || req.NZBURL == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "guid and nzbUrl required"})
 		return
@@ -1116,6 +1126,10 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 			"error":          err.Error(),
 			"forceAvailable": errors.Is(err, errRegrabForceable),
 		})
+		return
+	}
+	if errors.Is(err, errSoulseekGrabUnavailable) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, errGrabBookNotFound) {
@@ -1456,8 +1470,12 @@ func (h *QueueHandler) selectClients(ctx context.Context, protocol, mediaType st
 	eligible := db.FilterEligibleForMediaType(candidates, mediaType)
 	if len(eligible) == 0 {
 		otherProtocol := otherProtocol(protocol)
-		otherCandidates, otherErr := h.clients.GetEnabledByProtocol(ctx, otherProtocol)
-		if otherErr == nil && len(db.FilterEligibleForMediaType(otherCandidates, mediaType)) > 0 {
+		var otherCandidates []models.DownloadClient
+		var otherErr error
+		if otherProtocol != "" {
+			otherCandidates, otherErr = h.clients.GetEnabledByProtocol(ctx, otherProtocol)
+		}
+		if otherProtocol != "" && otherErr == nil && len(db.FilterEligibleForMediaType(otherCandidates, mediaType)) > 0 {
 			mediaLabel := "books"
 			if mediaType == models.MediaTypeAudiobook {
 				mediaLabel = "audiobooks"
@@ -1518,6 +1536,10 @@ func (h *QueueHandler) clientForGrab(ctx context.Context, indexerID *int64, prot
 // a plain "add a download client" message.
 func (h *QueueHandler) noProtocolClientError(ctx context.Context, protocol string) error {
 	other := otherProtocol(protocol)
+	if other == "" {
+		// Soulseek has no opposite protocol to point the user at.
+		return &noClientError{msg: fmt.Sprintf("no enabled %s download client configured; add a %s client", protocolLabel(protocol), protocolClientSuggestions(protocol))}
+	}
 	otherEnabled, err := h.clients.GetEnabledByProtocol(ctx, other)
 	if err != nil {
 		// Don't mask the real failure with a guess about other clients.
@@ -1534,8 +1556,13 @@ func (h *QueueHandler) noProtocolClientError(ctx context.Context, protocol strin
 
 // otherProtocol returns the protocol opposite to the one given. Anything that
 // isn't "torrent" is treated as usenet (selectClient's callers default to
-// usenet), so the inverse of usenet is torrent.
+// usenet), so the inverse of usenet is torrent. Soulseek has no opposite and
+// answers "", which callers must treat as "nothing to compare against" so a
+// soulseek failure is never routed to torrent code.
 func otherProtocol(protocol string) string {
+	if protocol == downloader.ProtocolSoulseek {
+		return ""
+	}
 	if protocol == "torrent" {
 		return "usenet"
 	}
@@ -1555,8 +1582,11 @@ func protocolLabel(protocol string) string {
 // protocolClientSuggestions names the client software a user could add for the
 // missing protocol.
 func protocolClientSuggestions(protocol string) string {
-	if protocol == "torrent" {
+	switch protocol {
+	case "torrent":
 		return "qBittorrent/Transmission/Deluge/rTorrent"
+	case downloader.ProtocolSoulseek:
+		return "slskd"
 	}
 	return "SABnzbd/NZBGet"
 }
@@ -1596,6 +1626,9 @@ func stampedMediaType(mediaType string) string {
 func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Download, error) {
 	if req.Protocol == "" {
 		req.Protocol = "usenet"
+	}
+	if req.Protocol == downloader.ProtocolSoulseek {
+		return nil, errSoulseekGrabUnavailable
 	}
 	existing, err := h.downloads.GetByGUID(ctx, req.GUID)
 	if err != nil {

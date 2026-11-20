@@ -76,7 +76,7 @@ func languageFixture(t *testing.T, allowedLanguages string, results []newznab.Se
 		t.Fatalf("indexer create: %v", err)
 	}
 	for i := range results {
-		results[i].IndexerID = idx.ID
+		results[i].IndexerID = &idx.ID
 	}
 
 	ss := &fixedResultsSearcher{results: results}

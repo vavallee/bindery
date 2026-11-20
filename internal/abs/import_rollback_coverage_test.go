@@ -706,50 +706,8 @@ func TestCovImpRollbackHelpers(t *testing.T) {
 		}
 	}
 
-	// restore* only revert values that still equal the post-import snapshot.
-	changed := false
-	i64 := int64(2)
-	restoreInt64(&i64, 1, 3, &changed)
-	if i64 != 2 || changed {
-		t.Fatalf("restoreInt64 touched an edited value: %d %v", i64, changed)
-	}
-	restoreInt64(&i64, 1, 2, &changed)
-	if i64 != 1 || !changed {
-		t.Fatalf("restoreInt64 = %d %v, want 1 true", i64, changed)
-	}
-	f := 2.5
-	changed = false
-	restoreFloat64(&f, 1.5, 9, &changed)
-	restoreFloat64(&f, 1.5, 2.5, &changed)
-	if f != 1.5 || !changed {
-		t.Fatalf("restoreFloat64 = %v %v", f, changed)
-	}
-	b := true
-	changed = false
-	restoreBool(&b, false, false, &changed)
-	restoreBool(&b, false, true, &changed)
-	if b || !changed {
-		t.Fatalf("restoreBool = %v %v", b, changed)
-	}
-	one, two := int64(1), int64(2)
-	ptr := &two
-	changed = false
-	restoreInt64Ptr(&ptr, &one, nil, &changed)
-	if ptr != &two || changed {
-		t.Fatal("restoreInt64Ptr touched an edited pointer")
-	}
-	restoreInt64Ptr(&ptr, &one, &two, &changed)
-	if ptr == nil || *ptr != 1 || !changed {
-		t.Fatalf("restoreInt64Ptr = %v %v", ptr, changed)
-	}
 	if restoreBookFromSnapshot(nil, nil, nil) || restoreAuthorFromSnapshot(nil, nil, nil) {
 		t.Fatal("nil snapshots must report no change")
-	}
-	if !equalInt64Ptr(nil, nil) || equalInt64Ptr(&one, nil) || equalTimePtr(nil, mustDate(t, "2020-01-01")) {
-		t.Fatal("pointer equality helpers disagree on nil handling")
-	}
-	if equalStrings([]string{"a"}, []string{"b"}) || equalStrings([]string{"a"}, nil) {
-		t.Fatal("equalStrings matched different slices")
 	}
 }
 

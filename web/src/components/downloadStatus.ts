@@ -42,6 +42,13 @@ export interface DownloadStatusEntry {
    * disk already and Retry import is the action that suits it.
    */
   resendable?: boolean
+  /**
+   * Which Queue status chip counts this state, besides All, Active and Failed
+   * (#3992). "Needs attention" is not listed here: it is derived from
+   * `matchable`, the rows with files on disk that wait for a person to match
+   * or retry them.
+   */
+  group?: 'downloading' | 'importing' | 'held' | 'external'
 }
 
 // Saturated red is reserved for these small chips. Error detail below a row is
@@ -49,22 +56,27 @@ export interface DownloadStatusEntry {
 export const DOWNLOAD_STATUSES: Record<string, DownloadStatusEntry> = {
   grabbed: {
     labelKey: 'history.events.grabbed',
+    group: 'downloading',
     chip: 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300',
   },
   downloading: {
     labelKey: 'queue.status.downloading',
+    group: 'downloading',
     chip: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300',
   },
   completed: {
     labelKey: 'queue.status.completed',
+    group: 'importing',
     chip: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300',
   },
   importPending: {
     labelKey: 'queue.status.importPending',
+    group: 'importing',
     chip: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300',
   },
   importing: {
     labelKey: 'queue.status.importing',
+    group: 'importing',
     chip: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300',
   },
   imported: {
@@ -97,6 +109,7 @@ export const DOWNLOAD_STATUSES: Record<string, DownloadStatusEntry> = {
   // this rendered as the raw string "importExternal" (#2339).
   importExternal: {
     labelKey: 'queue.status.importExternal',
+    group: 'external',
     chip: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300',
     descriptionKey: 'queue.status.importExternalHint',
   },
@@ -104,6 +117,7 @@ export const DOWNLOAD_STATUSES: Record<string, DownloadStatusEntry> = {
   // media_type=both book until its sibling completes.
   importHeld: {
     labelKey: 'queue.status.importHeld',
+    group: 'held',
     chip: 'bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300',
     descriptionKey: 'queue.status.importHeldHint',
   },
@@ -128,6 +142,26 @@ export const RETRYABLE_STATUSES: ReadonlySet<string> = new Set(
 export const RESENDABLE_STATUSES: ReadonlySet<string> = new Set(
   Object.entries(DOWNLOAD_STATUSES).filter(([, e]) => e.resendable).map(([k]) => k),
 )
+
+/** The Queue's status views. '' is All; 'active' and 'failed' predate the rest. */
+export type QueueView = '' | 'active' | 'downloading' | 'importing' | 'held' | 'external' | 'attention' | 'failed'
+
+export const QUEUE_VIEWS: readonly QueueView[] = ['', 'active', 'downloading', 'importing', 'held', 'external', 'attention', 'failed']
+
+/** Parses a ?view= value. An unknown one reads as All. */
+export const parseQueueView = (v: string | null): QueueView =>
+  v !== null && v !== '' && (QUEUE_VIEWS as readonly string[]).includes(v) ? (v as QueueView) : ''
+
+/** Whether a download in `status` belongs in the Queue's `view`. */
+export function inQueueView(status: string, view: QueueView): boolean {
+  switch (view) {
+    case '': return true
+    case 'failed': return isFailed(status)
+    case 'active': return !isFailed(status)
+    case 'attention': return isMatchable(status)
+    default: return DOWNLOAD_STATUSES[status]?.group === view
+  }
+}
 
 export const isFailed = (status: string): boolean => FAILED_STATUSES.has(status)
 export const isRetryable = (status: string): boolean => RETRYABLE_STATUSES.has(status)

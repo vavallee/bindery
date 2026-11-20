@@ -942,7 +942,15 @@ book** (attach a failed import to the right book and import it from disk), and
 per-row error detail. An `imported` row leaves the Queue after 7 days (it stays on History), failed and blocked rows stay until you deal with them, and Bindery deletes finished download rows older than `BINDERY_DOWNLOAD_RETENTION_DAYS` (90 by default, `0` keeps them). Once a row is trimmed, Bindery no longer remembers that exact release was grabbed, so if you later delete the file and the book is wanted again, the same release can be grabbed again. Tick rows for **Retry selected**, or use **Retry all
 failed** to cover every failed row at once. If a download client does not answer
 in time the page says so above the list, so a short Queue is never mistaken for
-lost downloads. History records every grab/import/failure and can
+lost downloads. The chips above the list filter by state, each with a count:
+**All**, **Active** (everything that has not failed), **Downloading**,
+**Importing**, **Held** (parked for pair gating), **Handed off** (waiting on your
+External import tool), **Needs attention** (an import that failed or is blocked
+and waits for Match to book or Retry import) and **Failed**. A state chip with
+nothing in it is hidden. Failed also holds the rows Needs attention shows, plus
+downloads that never produced a file. The chosen chip is kept in the address
+(`/queue?view=held`), and the older `?view=active` and `?view=failed` links work
+as before. A **Handed off** row has a **Scan library** button (admins only): it runs the same library scan as Settings, which picks up the file your External import tool placed in your library, and the book then shows as owned. The row stays under Handed off until you use **Remove** on it. The scan covers the whole library, since there is no narrower scan, and the page says so if a scan is already running. Held rows have nothing to act on until the paired format arrives, and Needs attention rows keep Match to book and Retry import. History records every grab/import/failure and can
 blocklist a bad release in one click. A release NZBGet or SABnzbd fails as
 broken (missing articles, a failed repair or unpack, a corrupt archive) is
 blocklisted for you, with the client's verdict as the reason, so the next
@@ -1852,6 +1860,50 @@ commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
   and you can still grab it by hand. The same reason appears in the search debug
   view.
 
+## How Settings save
+
+Settings save in one of two ways, and both tell you the result. A field with its
+own **Save** button, such as a folder path or a naming template, saves when you
+press the button, which shows Saving, then Saved or Error. Everything else saves
+the moment you change it: a select, a toggle, or a button like the Import Mode
+choices. Those show a short message in the bottom corner, such as "Import Mode
+set to External" or "Telemetry saved", and a red "Couldn't save ..." message if
+the request failed, so you no longer need to reload the page to check that a
+change stuck. Messages stack, up to five at a time, rather than replacing each
+other, so a failure is never hidden by a later success. A failed save also puts
+the control back on the value that is actually saved. A number field such as
+Latest book count saves when you leave the field or press Enter, not on each
+digit, and says so beside the field if the number is not valid.
+
+## Soulseek results in interactive search
+
+If you have added a slskd client in **Settings, Download Clients** and left it
+enabled, interactive search also searches Soulseek. This is opt in: with no
+enabled slskd client, nothing is sent to Soulseek. The automatic search for
+wanted books never uses it.
+
+- A Soulseek result sits in the same list as your indexer results and goes
+  through the same ranking and filtering. It has a **Soulseek** badge, the
+  user name of the peer, how many files that peer offers in the folder, and
+  either **free slot** (the peer would start sending at once) or the length of
+  its queue.
+- One result is one folder from one peer in one format, so a peer who shares an
+  EPUB and a PDF of the same book shows two results. Bindery reads the format
+  from the file extension and leaves out files that are not books or
+  audiobooks. It does not guess an author or title it cannot read from the
+  names.
+- **Grab is disabled** on these results, with a tooltip saying so. Grabbing from
+  Soulseek arrives in a later release, so for now you can see what is out there
+  but not download it through Bindery.
+- A search usually takes about 15 seconds longer while slskd waits for peers,
+  and slskd runs only one search at a time. Bindery waits at most 20 seconds
+  for slskd, so the worst case is 20 extra seconds. After that you get your
+  indexer results without Soulseek, and the search debug view lists slskd as
+  timed out.
+- The title and the author's last name leave your machine as search text on the
+  Soulseek network. See the privacy note in the
+  [deployment guide](DEPLOYMENT.md#slskd-soulseek).
+
 ## Finding a setting when you do not know its tab
 
 The search box at the top of Settings matches tab names, section headings and
@@ -1947,7 +1999,8 @@ Knowing the edges saves time:
   not a book file: imports place regular files only (a symlink inside a
   download never lands in your library, and a download folder that is itself
   a symlink is refused in every import mode, including the drop folder
-  handoff), Library Scan and the
+  handoff; a file the download client lists that sits behind a symlinked
+  folder resolving outside the download is skipped), Library Scan and the
   Audiobookshelf import do not attach one to a book, and downloads (browser,
   OPDS, the Calibre bridge) refuse to serve one. An audiobook zip leaves out
   any link inside the book folder, file or folder. Replace a linked file with

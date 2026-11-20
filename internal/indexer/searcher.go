@@ -318,6 +318,7 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 		results []newznab.SearchResult
 		wg      sync.WaitGroup
 	)
+	waitSources := startSources(ctx, SourceQuery{Title: c.Title, Author: c.Author, MediaType: c.MediaType})
 
 	for _, idx := range indexers {
 		if !idx.Enabled {
@@ -360,7 +361,7 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 
 			protocol := protocolForType(idx.Type)
 			for i := range hits {
-				hits[i].IndexerID = idx.ID
+				hits[i].IndexerID = &idx.ID
 				hits[i].IndexerName = idx.Name
 				hits[i].Protocol = protocol
 				hits[i].IndexerPriority = idx.Priority
@@ -379,6 +380,11 @@ func (s *Searcher) SearchBook(ctx context.Context, indexers []models.Indexer, c 
 	results = dedupe(results)
 	results = filterUsenetJunk(results, junkScope{MediaType: c.MediaType, WantedTitle: c.Title})
 	results = filterNonBookContent(results)
+	// Sources join after the two filters above, which target indexer feed
+	// junk (usenet article parts, video categories) that a peer's folder is
+	// not. They go through the relevance filter and the ranker like the rest.
+	srcResults, _ := waitSources()
+	results = append(results, srcResults...)
 	results, _ = filterRelevantWithContext(results, c.Title, c.Author, c.AuthorAliases, c.context())
 	rankResults(results, c)
 	return results
@@ -407,6 +413,7 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 		results []newznab.SearchResult
 		wg      sync.WaitGroup
 	)
+	waitSources := startSources(ctx, SourceQuery{Text: query})
 
 	for _, idx := range indexers {
 		if !idx.Enabled {
@@ -445,7 +452,7 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 
 			protocol := protocolForType(idx.Type)
 			for i := range hits {
-				hits[i].IndexerID = idx.ID
+				hits[i].IndexerID = &idx.ID
 				hits[i].IndexerName = idx.Name
 				hits[i].Protocol = protocol
 				hits[i].IndexerPriority = idx.Priority
@@ -462,6 +469,8 @@ func (s *Searcher) SearchQuery(ctx context.Context, indexers []models.Indexer, q
 	results = dedupe(results)
 	results = filterUsenetJunk(results, junkScope{})
 	results = filterNonBookContent(results)
+	srcResults, _ := waitSources()
+	results = append(results, srcResults...)
 	rankResults(results, MatchCriteria{Title: query})
 	return results
 }

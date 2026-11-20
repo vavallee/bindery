@@ -115,7 +115,7 @@ func newSchedPinFixture(t *testing.T) *schedPinFixture {
 	searcher := &perFormatSearcher{byFormat: map[string][]newznab.SearchResult{
 		models.MediaTypeEbook: {{
 			GUID: "g-pin", Title: "Pin Author Pinned Book epub", NZBURL: rel.srv.URL + "/pin.nzb",
-			Protocol: "usenet", IndexerID: idx.ID, IndexerName: "TrackerX", Size: 2 << 20,
+			Protocol: "usenet", IndexerID: &idx.ID, IndexerName: "TrackerX", Size: 2 << 20,
 		}},
 	}}
 	s := &Scheduler{

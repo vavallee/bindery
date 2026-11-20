@@ -29,7 +29,7 @@ func clientJobRef(client *models.DownloadClient, dl *models.Download) (ref strin
 			ref = strings.TrimSpace(*dl.TorrentID)
 		}
 		return ref, true
-	default: // "nzbget", "sabnzbd"
+	default: // "nzbget", "sabnzbd", and slskd, whose batch id lives in the same column
 		if dl.SABnzbdNzoID != nil {
 			ref = strings.TrimSpace(*dl.SABnzbdNzoID)
 		}

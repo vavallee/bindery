@@ -227,7 +227,8 @@ function DailyQueryLimitField({ value, onChange }: { value: number | null | unde
 const TORRENT_CLIENT_TYPES = ['qbittorrent', 'transmission', 'deluge', 'rtorrent']
 
 // clientProtocol mirrors the backend's db.ClientProtocol.
-function clientProtocol(clientType: string): 'torrent' | 'usenet' {
+function clientProtocol(clientType: string): 'torrent' | 'usenet' | 'soulseek' {
+  if (clientType === 'slskd') return 'soulseek'
   return TORRENT_CLIENT_TYPES.includes(clientType) ? 'torrent' : 'usenet'
 }
 

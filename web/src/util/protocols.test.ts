@@ -17,6 +17,7 @@ describe('protocol mapping', () => {
     expect(clientProtocol('rtorrent')).toBe('torrent')
     expect(clientProtocol('sabnzbd')).toBe('usenet')
     expect(clientProtocol('nzbget')).toBe('usenet')
+    expect(clientProtocol('slskd')).toBe('soulseek')
   })
 
   // A torrent client missing from TORRENT_CLIENTS is silently classified as
@@ -28,6 +29,10 @@ describe('protocol mapping', () => {
 })
 
 describe('protocolGaps', () => {
+  it('does not let a slskd client cover a newznab indexer', () => {
+    expect(protocolGaps([ix('newznab')], [cl('slskd')])).toEqual(['usenet'])
+  })
+
   it('flags a torznab indexer with only a usenet client', () => {
     expect(protocolGaps([ix('torznab')], [cl('sabnzbd')])).toEqual(['torrent'])
   })
