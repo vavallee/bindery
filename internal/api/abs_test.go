@@ -280,6 +280,29 @@ func TestABSSetConfig_OmittedBaseURLPreservesStoredValue(t *testing.T) {
 	}
 }
 
+func TestABSSetConfig_URLChangeDropsSavedKey(t *testing.T) {
+	h, repo, ctx := absFixture(t, &stubABSClient{})
+	_ = repo.Set(ctx, SettingABSBaseURL, "https://abs.example.com")
+	_ = repo.Set(ctx, SettingABSAPIKey, "old-secret")
+	put := func(body string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.SetConfig(rec, httptest.NewRequest(http.MethodPut, "/api/v1/abs/config", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("code = %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+	// Same URL: key stays.
+	put(`{"baseUrl":"https://abs.example.com/"}`)
+	assertSettingValue(t, repo, ctx, SettingABSAPIKey, "old-secret")
+	// New URL, no key: key cleared.
+	put(`{"baseUrl":"https://other.example.net"}`)
+	assertSettingValue(t, repo, ctx, SettingABSAPIKey, "")
+	// New URL with a key: saved as given.
+	put(`{"baseUrl":"https://third.example.net","apiKey":"fresh-secret"}`)
+	assertSettingValue(t, repo, ctx, SettingABSAPIKey, "fresh-secret")
+}
+
 func TestABSSetConfig_PersistsPathRemap(t *testing.T) {
 	client := &stubABSClient{
 		libraryResp: &abs.Library{ID: "lib_books", Name: "Books", MediaType: "book"},
