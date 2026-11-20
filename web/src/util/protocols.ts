@@ -9,15 +9,16 @@ import type { DownloadClient } from '../api/downloadclients'
 // grab failed. Mirrors the backend: indexer/searcher.go protocolForType
 // and downloader/adapter.go IsTorrentClient/ProtocolForClient.
 
-export type Protocol = 'usenet' | 'torrent'
+export type Protocol = 'usenet' | 'torrent' | 'soulseek'
 
-export function indexerProtocol(type: string): Protocol {
+export function indexerProtocol(type: string): 'usenet' | 'torrent' {
   return type === 'torznab' ? 'torrent' : 'usenet'
 }
 
 const TORRENT_CLIENTS = new Set(['transmission', 'qbittorrent', 'deluge', 'rtorrent'])
 
 export function clientProtocol(type: string): Protocol {
+  if (type === 'slskd') return 'soulseek'
   return TORRENT_CLIENTS.has(type) ? 'torrent' : 'usenet'
 }
 

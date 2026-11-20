@@ -35,7 +35,8 @@ function isLoopbackConnFailure(host: string, error: string): boolean {
 function remapHelp(t: TFunction, type: string) {
   const key = type === 'qbittorrent' ? 'settings.clients.remapHelp.qbittorrent'
     : type === 'rtorrent' ? 'settings.clients.remapHelp.rtorrent'
-      : 'settings.clients.remapHelp.other'
+      : type === 'slskd' ? 'settings.clients.remapHelp.slskd'
+        : 'settings.clients.remapHelp.other'
   return t(key, downloadClientPathRemapHelp(type))
 }
 
@@ -371,8 +372,8 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
       host,
       port: parseInt(port),
       username: hasUsername(type) ? username : '',
-      category,
-      categoryAudiobook: categoryAudiobook.trim(),
+      category: type === 'slskd' ? '' : category,
+      categoryAudiobook: type === 'slskd' ? '' : categoryAudiobook.trim(),
       pathRemap: pathRemap.trim(),
       removeOnImport: supportsRemoveOnImport(type) ? removeOnImport : false,
       useSsl: useSSL,
@@ -448,6 +449,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
             <option value="transmission">Transmission</option>
             <option value="deluge">Deluge</option>
             <option value="rtorrent">rTorrent / ruTorrent</option>
+            <option value="slskd">slskd (Soulseek)</option>
           </select>
         </div>
       </div>
@@ -458,6 +460,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder={t('settings.clients.port', 'Port')} className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <p className="text-xs text-fg-muted mt-1"><RichText text={t('settings.clients.hostHint', 'Hostname or IP only — no <code>http://</code> prefix. In Docker, use the service/container name (e.g. <code>nzbget</code>) — not <code>localhost</code>.')} components={{ code: <code className="font-mono" /> }} /></p>
+        {type === 'slskd' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.slskdHint')}</p>}
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -515,14 +518,14 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           defaultOpen={!!client.proxyUsername}
         />
       )}
-      <div>
+      {type !== 'slskd' && <div>
         <label htmlFor={`${fid}-5`} className={labelCls}>{type === 'transmission' ? t('settings.clients.downloadDir', 'Download Directory') : t('settings.clients.categoryLabel', 'Category / Label')}</label>
         <input id={`${fid}-5`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? t('settings.clients.downloadDirPlaceholder', '/downloads (leave blank for default)') : 'books'} className={inputCls} />
         {type === 'transmission' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.transmissionDirHint', 'Optional absolute path override. Leave blank to use Transmission\'s configured default download directory.')}</p>}
         {type === 'deluge' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.delugeLabelHint', 'Applied via the Deluge label plugin. Leave blank if the plugin is not installed.')}</p>}
         {type === 'rtorrent' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
-      </div>
-      {type !== 'transmission' && (
+      </div>}
+      {type !== 'transmission' && type !== 'slskd' && (
         <div>
           <label htmlFor={`${fid}-6`} className={labelCls}>{t('settings.clients.audiobookCategoryLabel')}</label>
           <input id={`${fid}-6`} value={categoryAudiobook} onChange={e => setCategoryAudiobook(e.target.value)} placeholder={t('settings.clients.audiobookCategoryPlaceholder')} className={inputCls} />
@@ -604,7 +607,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const fid = useId()
   const { t } = useTranslation()
   const [name, setName] = useState('SABnzbd')
-  const [type, setType] = useState<'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent'>('sabnzbd')
+  const [type, setType] = useState<'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent' | 'slskd'>('sabnzbd')
   const [host, setHost] = useState('')
   const [port, setPort] = useState('8080')
   const [credential, setCredential] = useState('')
@@ -635,7 +638,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   // is made rather than dropping the fields silently on save.
   const scgiIgnored = rtorrentScgiIgnoredFields(type, urlBase, useSSL, username, credential)
 
-  const handleTypeChange = (newType: 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent') => {
+  const handleTypeChange = (newType: 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent' | 'slskd') => {
     setType(newType)
     setCredential('')
     setUsername('')
@@ -666,6 +669,11 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
       setPort('8080')
       return
     }
+    if (newType === 'slskd') {
+      setName('slskd')
+      setPort('5030')
+      return
+    }
     setName('SABnzbd')
     setPort('8080')
   }
@@ -676,7 +684,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
   const buildData = () => ({
     ...(isPasswordClient(type)
       ? { name, host, port: parseInt(port), username: hasUsername(type) ? username : '', password: credential, apiKey: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }
-      : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category, categoryAudiobook: categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }),
+      : { name, host, port: parseInt(port), apiKey: credential, username: '', password: '', category: type === 'slskd' ? '' : category, categoryAudiobook: type === 'slskd' ? '' : categoryAudiobook.trim(), pathRemap: pathRemap.trim(), type, enabled: true, useSsl: useSSL, urlBase: urlBase.trim() }),
     enabledForBooks,
     enabledForAudiobooks,
     priority: parseInt(priority) || 0,
@@ -725,13 +733,14 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
         </div>
         <div className="w-40">
           <label htmlFor={`${fid}-2`} className={labelCls}>{t('settings.clients.clientType', 'Client Type')}</label>
-          <select id={`${fid}-2`} value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
+          <select id={`${fid}-2`} value={type} onChange={e => handleTypeChange(e.target.value as 'sabnzbd' | 'nzbget' | 'qbittorrent' | 'transmission' | 'deluge' | 'rtorrent' | 'slskd')} className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm">
             <option value="sabnzbd">SABnzbd</option>
             <option value="nzbget">NZBGet</option>
             <option value="qbittorrent">qBittorrent</option>
             <option value="transmission">Transmission</option>
             <option value="deluge">Deluge</option>
             <option value="rtorrent">rTorrent / ruTorrent</option>
+            <option value="slskd">slskd (Soulseek)</option>
           </select>
         </div>
       </div>
@@ -742,6 +751,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
           <input {...portInputAttrs} value={port} onChange={e => setPort(e.target.value)} placeholder={t('settings.clients.port', 'Port')} className="w-24 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm" />
         </div>
         <p className="text-xs text-fg-muted mt-1"><RichText text={t('settings.clients.hostHint', 'Hostname or IP only — no <code>http://</code> prefix. In Docker, use the service/container name (e.g. <code>nzbget</code>) — not <code>localhost</code>.')} components={{ code: <code className="font-mono" /> }} /></p>
+        {type === 'slskd' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.slskdHint')}</p>}
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -786,14 +796,14 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
           defaultOpen={false}
         />
       )}
-      <div>
+      {type !== 'slskd' && <div>
         <label htmlFor={`${fid}-6`} className={labelCls}>{type === 'transmission' ? t('settings.clients.downloadDir', 'Download Directory') : t('settings.clients.categoryLabel', 'Category / Label')}</label>
         <input id={`${fid}-6`} value={category} onChange={e => setCategory(e.target.value)} placeholder={type === 'transmission' ? t('settings.clients.downloadDirPlaceholder', '/downloads (leave blank for default)') : 'books'} className={inputCls} />
         {type === 'transmission' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.transmissionDirHint', 'Optional absolute path override. Leave blank to use Transmission\'s configured default download directory.')}</p>}
         {type === 'deluge' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.delugeLabelHint', 'Applied via the Deluge label plugin. Leave blank if the plugin is not installed.')}</p>}
         {type === 'rtorrent' && <p className="text-xs text-fg-muted mt-1">{t('settings.clients.rtorrentCategoryHelp')}</p>}
-      </div>
-      {type !== 'transmission' && (
+      </div>}
+      {type !== 'transmission' && type !== 'slskd' && (
         <div>
           <label htmlFor={`${fid}-7`} className={labelCls}>{t('settings.clients.audiobookCategoryLabel')}</label>
           <input id={`${fid}-7`} value={categoryAudiobook} onChange={e => setCategoryAudiobook(e.target.value)} placeholder={t('settings.clients.audiobookCategoryPlaceholder')} className={inputCls} />

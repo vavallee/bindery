@@ -208,6 +208,26 @@ describe('download client add form', () => {
     expect(addDownloadClient.mock.calls[0][0]).toMatchObject({ apiKey: 'fresh-key', password: '' })
     addDownloadClient.mockRestore()
   })
+
+  it('offers slskd with its port, an API key and the slskd hint', async () => {
+    const addDownloadClient = vi.spyOn(api, 'addDownloadClient').mockImplementation(async data => makeClient({ ...data, id: 99 }))
+    renderTab([])
+
+    fireEvent.click(screen.getByRole('button', { name: 'settings.clients.addButton' }))
+    fireEvent.change(screen.getByLabelText('Client Type'), { target: { value: 'slskd' } })
+    expect(screen.getByText('settings.clients.slskdHint')).toBeInTheDocument()
+    expect(screen.queryByText('Category / Label')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('books')).not.toBeInTheDocument()
+    expect(screen.queryByText('settings.clients.audiobookCategoryLabel')).not.toBeInTheDocument()
+    expect((screen.getByPlaceholderText('Port') as HTMLInputElement).value).toBe('5030')
+    fireEvent.change(screen.getByPlaceholderText('Host'), { target: { value: 'slskd' } })
+    fireEvent.change(screen.getByPlaceholderText('API Key'), { target: { value: 'slskd-key' } })
+    save()
+
+    await waitFor(() => expect(addDownloadClient).toHaveBeenCalled())
+    expect(addDownloadClient.mock.calls[0][0]).toMatchObject({ type: 'slskd', port: 5030, apiKey: 'slskd-key', username: '', password: '', category: '', categoryAudiobook: '' })
+    addDownloadClient.mockRestore()
+  })
 })
 
 function makeDiagnosis(overrides: Partial<DiagnoseResult> = {}): DiagnoseResult {

@@ -75,8 +75,8 @@ func TestOtherDownloadUsingClientJob_LivenessByState(t *testing.T) {
 // counts.
 func TestOtherDownloadUsingClientJob_FieldPerClientType(t *testing.T) {
 	clientID, otherClient := int64(7), int64(8)
-	for _, typ := range []string{"qbittorrent", "transmission", "deluge", "rtorrent", "nzbget", "sabnzbd"} {
-		torrent := typ != "nzbget" && typ != "sabnzbd"
+	for _, typ := range []string{"qbittorrent", "transmission", "deluge", "rtorrent", "nzbget", "sabnzbd", "slskd"} {
+		torrent := typ != "nzbget" && typ != "sabnzbd" && typ != "slskd"
 		mk := func(id int64, cid *int64) models.Download {
 			r := "ABC"
 			d := models.Download{ID: id, DownloadClientID: cid, Status: models.StateDownloading}

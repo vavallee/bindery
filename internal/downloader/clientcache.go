@@ -37,6 +37,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/qbittorrent"
 	"github.com/vavallee/bindery/internal/downloader/rtorrent"
 	"github.com/vavallee/bindery/internal/downloader/sabnzbd"
+	"github.com/vavallee/bindery/internal/downloader/slskd"
 	"github.com/vavallee/bindery/internal/downloader/transmission"
 	"github.com/vavallee/bindery/internal/metrics"
 	"github.com/vavallee/bindery/internal/models"
@@ -53,6 +54,7 @@ type cachedEntry struct {
 	rtorrent     *rtorrent.Client
 	nzbget       *nzbget.Client
 	sabnzbd      *sabnzbd.Client
+	slskd        *slskd.Client
 }
 
 // ClientCache memoises one downloader client per DownloadClient.ID. Safe
@@ -286,6 +288,23 @@ func (c *ClientCache) SabnzbdFor(client *models.DownloadClient) *sabnzbd.Client 
 		return &cachedEntry{sabnzbd: dc}
 	})
 	return e.sabnzbd
+}
+
+// SlskdFor returns the cached slskd client.
+func SlskdFor(c *models.DownloadClient) *slskd.Client {
+	return defaultCache.SlskdFor(c)
+}
+
+// SlskdFor is the method form.
+func (c *ClientCache) SlskdFor(client *models.DownloadClient) *slskd.Client {
+	e := c.lookupOrBuild(client, func() *cachedEntry {
+		dc := slskd.New(
+			client.Host, client.Port, client.APIKey, client.URLBase, client.UseSSL,
+		)
+		dc.WrapTransport(instrumented(client))
+		return &cachedEntry{slskd: dc}
+	})
+	return e.slskd
 }
 
 // instrumented returns the transport wrapper that records
