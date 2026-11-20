@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -425,6 +426,18 @@ func (s *server) statsTokenValid(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
+// statsClientGone reports whether a stats query failed only because the
+// request went away: the client disconnected (context.Canceled) or a
+// deadline on the request passed (context.DeadlineExceeded). The SQLite
+// driver does not always wrap the context error, so the request context
+// itself is checked too. Nobody is left to read a 500 in that case, and
+// logging it at ERROR turns every closed browser tab into noise.
+func statsClientGone(r *http.Request, err error) bool {
+	return errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		r.Context().Err() != nil
+}
+
 func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if s.statsToken == "" {
 		http.Error(w, "stats endpoint not configured", http.StatusForbidden)
@@ -437,6 +450,11 @@ func (s *server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	d, err := s.computeStats(r.Context())
 	if err != nil {
+		if statsClientGone(r, err) {
+			slog.Debug("api stats: request ended before stats were computed", "error", err)
+			return
+		}
+		slog.Error("api stats", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

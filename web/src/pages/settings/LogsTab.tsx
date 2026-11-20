@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { restoreSetting, useAutoSave, useMounted } from './useAutoSave'
 import type { TFunction } from 'i18next'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, LogEntry, LogQuery } from '../../api/client'
@@ -38,6 +39,8 @@ function formatRelativeTime(t: TFunction, iso: string): string {
 export default function LogsTab() {
   const fid = useId()
   const { t, i18n } = useTranslation()
+  const autoSave = useAutoSave()
+  const mounted = useMounted()
   const narrow = useMediaQuery(BELOW_SM)
   const { confirm, confirmDialog } = useConfirmDialog()
   const [logEntries, setLogEntries] = useState<LogEntry[]>([])
@@ -187,8 +190,9 @@ export default function LogsTab() {
             value={logLevel}
             onChange={async e => {
               const l = e.target.value
-              await api.setLogLevel(l).catch(console.error)
-              setLogLevel(l)
+              // The select only follows the server: it moves after the save lands.
+              const res = await autoSave('log.level', () => api.setLogLevel(l).then(() => true), { name: t('settings.logs.runtimeLevel', 'Runtime level'), value: l.toUpperCase() })
+              if (res && mounted.current) setLogLevel(l)
             }}
             title={t('settings.logs.runtimeLevelHint', 'Controls which log levels are written to the database')}
             className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs"
@@ -494,7 +498,7 @@ export default function LogsTab() {
                 const current = (settings['telemetry.enabled'] ?? 'true').toLowerCase()
                 const next = current !== 'false' ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'telemetry.enabled': next }))
-                await api.setSetting('telemetry.enabled', next).catch(console.error)
+                await autoSave('telemetry.enabled', () => api.setSetting('telemetry.enabled', next), { previous: settings['telemetry.enabled'], next, revert: to => restoreSetting(setSettings, 'telemetry.enabled', to) })
               }}
               title={(settings['telemetry.enabled'] ?? 'true') !== 'false' ? t('common.disable') : t('common.enable')}
             />

@@ -1,0 +1,2 @@
+### Fixed
+- **Requests treat shared books like the book routes do.** With multi-user enforcement on, a requester or user who asks for a missing format of a book they cannot change, a shared book or one another account holds, now gets a 409 that says to ask an admin, instead of a message claiming the book is already in the library. Only a request an admin files for them, or one already pending, stays pending, and even then a requester's auto approval no longer adds the format or starts a search. An admin approving by hand and installs with enforcement off are unchanged.

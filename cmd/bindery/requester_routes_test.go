@@ -46,6 +46,7 @@ func (s universalStub) Export(w http.ResponseWriter, _ *http.Request)           
 func (s universalStub) GetLevel(w http.ResponseWriter, _ *http.Request)              { s.h(w) }
 func (s universalStub) SetLevel(w http.ResponseWriter, _ *http.Request)              { s.h(w) }
 func (s universalStub) TestDiscovery(w http.ResponseWriter, _ *http.Request)         { s.h(w) }
+func (s universalStub) Scan(w http.ResponseWriter, _ *http.Request)                  { s.h(w) }
 func (s universalStub) ScanStatus(w http.ResponseWriter, _ *http.Request)            { s.h(w) }
 func (s universalStub) GetConfig(w http.ResponseWriter, _ *http.Request)             { s.h(w) }
 func (s universalStub) SetConfig(w http.ResponseWriter, _ *http.Request)             { s.h(w) }

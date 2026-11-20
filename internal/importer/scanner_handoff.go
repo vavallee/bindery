@@ -294,7 +294,7 @@ func discoverBookFilesSized(downloadPath string, explicitFiles []string, dropTin
 		files = append(files, path)
 	}
 	if len(explicitFiles) > 0 {
-		paths, infos := filterImportableFilesInfo(explicitFiles)
+		paths, infos := filterImportableFilesIn(downloadPath, explicitFiles)
 		for i, p := range paths {
 			keep(p, infos[i].Size())
 		}
@@ -354,6 +354,15 @@ func filterImportableFiles(paths []string) []string {
 // the check read for each kept path, so a caller can use the size without
 // statting the file again.
 func filterImportableFilesInfo(paths []string) ([]string, []os.FileInfo) {
+	return filterImportableFilesIn("", paths)
+}
+
+// filterImportableFilesIn is filterImportableFilesInfo that also drops a file
+// whose real location is outside root, the download being imported. A
+// directory symlink inside the download makes "<root>/link/book.epub" pass the
+// last-component check while its bytes sit elsewhere (see sourceWithinRoot).
+// An empty root applies no confinement.
+func filterImportableFilesIn(root string, paths []string) ([]string, []os.FileInfo) {
 	out := paths[:0:0]
 	infos := make([]os.FileInfo, 0, len(paths))
 	for _, p := range paths {
@@ -361,6 +370,11 @@ func filterImportableFilesInfo(paths []string) ([]string, []os.FileInfo) {
 		if !ok {
 			slog.Warn("skipping download-client file: not a regular file on this host (missing, unreadable, or a symlink)",
 				"path", p)
+			continue
+		}
+		if !sourceWithinRoot(p, root) {
+			slog.Warn("skipping download-client file: it resolves outside the download folder through a symlink",
+				"path", p, "root", root)
 			continue
 		}
 		out = append(out, p)
@@ -379,6 +393,13 @@ func filterImportableFilesInfo(paths []string) ([]string, []os.FileInfo) {
 func importableSourceFile(p string) bool {
 	_, ok := importableSourceInfo(p)
 	return ok
+}
+
+// importableSourceFileIn is importableSourceFile held to the download root the
+// same way filterImportableFilesIn holds it, so the retry guard and the filter
+// keep agreeing.
+func importableSourceFileIn(root, p string) bool {
+	return importableSourceFile(p) && sourceWithinRoot(p, root)
 }
 
 // importableSourceInfo is importableSourceFile that also returns what it read.

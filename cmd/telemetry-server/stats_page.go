@@ -426,6 +426,10 @@ func renderVersionTrend(days []versionTrendDay, topVersions []string) string {
 func (s *server) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 	d, err := s.computeStats(r.Context())
 	if err != nil {
+		if statsClientGone(r, err) {
+			slog.Debug("stats page: request ended before stats were computed", "error", err)
+			return
+		}
 		slog.Error("stats page", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
