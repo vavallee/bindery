@@ -117,13 +117,15 @@ func (b *Book) ClearProviderFieldsMissingFrom(src *Book, lockedBefore []string) 
 //     (Jan 1), so it does not replace a date in the same year, which may be a
 //     precise one from an import and says nothing new. A date the merge filled
 //     in from a supplementary provider is marked unknown on src and not used.
+//
 //   - description: filled only when b has none. Bindery has no record of what
 //     wrote a description (a typed one is locked, an import's is not), and
 //     replacing it on every refresh would undo the import.
 //
-// Language is deliberately NOT adopted: a catalogue record's language can be a
-// guess (an edition majority, or the author's majority language). Genres are
-// not either: the refresh already updates them from Hardcover provenance.
+//   - language, genres: filled only when b has none, for the same reason as the
+//     description. Language is also left alone once the book has a file, so the
+//     file's own dc:language stays the source of truth. The refresh's separate Hardcover genre path still replaces
+//     an unlocked set on Hardcover provenance; this adds no removal.
 //
 // Nothing happens unless src comes from the provider b's own record came from.
 func (b *Book) AdoptRefreshedProviderFields(src *Book) []string {
@@ -144,7 +146,27 @@ func (b *Book) AdoptRefreshedProviderFields(src *Book) []string {
 		b.Description = src.Description
 		changed = append(changed, BookFieldDescription)
 	}
+	// Language and genres are fill-only too. Bindery does not record whether a
+	// language came from the user, a file's dc:language or a provider, so a
+	// value that is present is never replaced; only an empty one is filled.
+	// A book with a file is left for the library scan, which reads the file's
+	// own dc:language and only fills a blank one: a catalogue guess landing
+	// first would stop the file from ever supplying it.
+	if strings.TrimSpace(src.Language) != "" && strings.TrimSpace(b.Language) == "" && !b.hasAttachedFile() && writable(BookFieldLanguage) {
+		b.Language = src.Language
+		changed = append(changed, BookFieldLanguage)
+	}
+	if len(src.Genres) > 0 && len(b.Genres) == 0 && writable(BookFieldGenres) {
+		b.Genres = slices.Clone(src.Genres)
+		changed = append(changed, BookFieldGenres)
+	}
 	return changed
+}
+
+// hasAttachedFile reports whether the book has any file recorded, through the
+// legacy path, the computed per-format paths or its file rows.
+func (b *Book) hasAttachedFile() bool {
+	return b.FilePath != "" || b.EbookFilePath != "" || b.AudiobookFilePath != "" || len(b.BookFiles) > 0
 }
 
 // sameReleaseDate reports whether adopting incoming would tell the book

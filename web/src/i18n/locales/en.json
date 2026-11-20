@@ -1038,6 +1038,13 @@
     "viewAll": "All ({{count}})",
     "viewActive": "Active ({{count}})",
     "viewFailed": "Failed ({{count}})",
+    "viewDownloading": "Downloading ({{count}})",
+    "viewImporting": "Importing ({{count}})",
+    "viewHeld": "Held ({{count}})",
+    "viewExternal": "Handed off ({{count}})",
+    "viewAttention": "Needs attention ({{count}})",
+    "viewAttentionEmpty": "Nothing needs attention",
+    "viewStateEmpty": "No downloads in this state",
     "viewFailedEmpty": "No failed downloads",
     "viewActiveEmpty": "No downloads in progress",
     "viewShowAll": "Show all"
