@@ -167,7 +167,8 @@ func TestPacedTransportHoldsTheSlotUntilTheBodyCloses(t *testing.T) {
 	rel()
 
 	failing := &pacedTransport{base: fakeTransport{err: errors.New("dial")}, pacer: p}
-	if _, err := failing.RoundTrip(req); err == nil {
+	if r, err := failing.RoundTrip(req); err == nil {
+		_ = r.Body.Close()
 		t.Fatal("want the transport error")
 	}
 	rel, err = p.acquire(context.Background())
@@ -178,7 +179,8 @@ func TestPacedTransportHoldsTheSlotUntilTheBodyCloses(t *testing.T) {
 
 	ctx, cancel = context.WithCancel(context.Background())
 	cancel()
-	if _, err := tr.RoundTrip(req.WithContext(ctx)); err == nil {
+	if r, err := tr.RoundTrip(req.WithContext(ctx)); err == nil {
+		_ = r.Body.Close()
 		t.Error("a canceled request was sent")
 	}
 }
