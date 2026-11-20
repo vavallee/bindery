@@ -141,6 +141,15 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		slog.Info("skipping a file too small to be a book", "file", f, "minBytes", MinPlausibleEbookBytes)
 	}
 
+	if len(bookFiles) == 0 && escapesDownloadRoot(downloadPath, explicitFiles) {
+		// Every file the client listed resolves outside the download through a
+		// symlink. Retrying cannot change that, so block rather than fail.
+		slog.Error("refusing import: the download's files resolve outside its folder through a symlink", "path", downloadPath)
+		s.updateDownloadStatus(ctx, dl.ID, models.StateImporting)
+		s.failImport(ctx, dl, models.StateImportBlocked, "import refused: the download's files resolve outside its folder through a symlink")
+		return
+	}
+
 	if len(bookFiles) == 0 {
 		// Before failing, check whether the book is already in the library. This
 		// covers the case where a torrent was re-grabbed after its files were moved

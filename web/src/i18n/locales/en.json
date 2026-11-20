@@ -979,6 +979,15 @@
     "retryImportError": "Retry failed: {{error}}",
     "retryDownload": "Retry download",
     "retryingDownload": "Retrying…",
+    "scanLibrary": "Scan library",
+    "scanningLibrary": "Scanning…",
+    "scanLibraryFor": "Scan library for {{title}}",
+    "scanLibraryHint": "Runs a library scan so the file the external tool placed is picked up.",
+    "scanStarted": "Library scan started. It picks up the file the external tool placed in your library and the book then shows as owned. This row stays under Handed off until you remove it.",
+    "scanQueued": "A scan is already running. Another one starts as soon as it finishes, so the file is picked up either way.",
+    "scanRunning": "A scan is already running. Try again once it has finished.",
+    "scanError": "Scan failed: {{error}}",
+    "scanFailedFallback": "Scan failed",
     "retryDownloadHint": "Sends this same release to your download client again. It does not search for a different release; use Search on the book for that.",
     "partialWarning": "Could not reach {{clients}}. This list may be incomplete, so a download missing from it is not necessarily gone.",
     "partialWarningUnnamed": "A download client did not answer. This list may be incomplete, so a download missing from it is not necessarily gone.",
@@ -2427,6 +2436,7 @@
       "defaultMonitorModeLabel": "Default monitor mode",
       "defaultMonitorModeHint": "Applied to newly added authors. Existing authors keep their current mode unless edited.",
       "defaultMonitorLatestCountLabel": "Latest book count",
+      "defaultMonitorLatestCountInvalid": "Enter a whole number of 1 or more.",
       "defaultMonitorNewItemsLabel": "Default for monitoring newly discovered books",
       "defaultMonitorNewItemsHint": "Applied to newly added authors. Choose whether a metadata refresh may add books it discovers later. Existing authors keep their own setting.",
       "audiobookFileTemplate": "Audiobook file naming (per track)",
@@ -2781,6 +2791,12 @@
     },
     "pathRemap": {
       "syntaxHint": "Use comma-separated <code>from:to</code> prefix rewrites."
+    },
+    "toast": {
+      "saved": "{{name}} saved",
+      "set": "{{name}} set to {{value}}",
+      "failed": "Couldn't save {{name}}",
+      "genericName": "Setting"
     }
   },
   "addToLibrary": {
