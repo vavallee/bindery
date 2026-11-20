@@ -1916,7 +1916,8 @@ Knowing the edges saves time:
   not a book file: imports place regular files only (a symlink inside a
   download never lands in your library, and a download folder that is itself
   a symlink is refused in every import mode, including the drop folder
-  handoff), Library Scan and the
+  handoff; a file the download client lists that sits behind a symlinked
+  folder resolving outside the download is skipped), Library Scan and the
   Audiobookshelf import do not attach one to a book, and downloads (browser,
   OPDS, the Calibre bridge) refuse to serve one. An audiobook zip leaves out
   any link inside the book folder, file or folder. Replace a linked file with
