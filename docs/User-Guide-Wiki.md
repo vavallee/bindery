@@ -1821,6 +1821,21 @@ commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
   and you can still grab it by hand. The same reason appears in the search debug
   view.
 
+## How Settings save
+
+Settings save in one of two ways, and both tell you the result. A field with its
+own **Save** button, such as a folder path or a naming template, saves when you
+press the button, which shows Saving, then Saved or Error. Everything else saves
+the moment you change it: a select, a toggle, or a button like the Import Mode
+choices. Those show a short message in the bottom corner, such as "Import Mode
+set to External" or "Telemetry saved", and a red "Couldn't save ..." message if
+the request failed, so you no longer need to reload the page to check that a
+change stuck. Messages stack, up to five at a time, rather than replacing each
+other, so a failure is never hidden by a later success. A failed save also puts
+the control back on the value that is actually saved. A number field such as
+Latest book count saves when you leave the field or press Enter, not on each
+digit, and says so beside the field if the number is not valid.
+
 ## Finding a setting when you do not know its tab
 
 The search box at the top of Settings matches tab names, section headings and

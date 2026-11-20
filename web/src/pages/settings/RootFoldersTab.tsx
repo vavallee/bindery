@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAutoSave } from './useAutoSave'
 import { api, RootFolder } from '../../api/client'
 import { inputCls } from './formStyles'
 import { formatBytesZero } from '../../util/format'
@@ -11,6 +12,7 @@ const DEFAULT_AUDIOBOOK_ROOT_FOLDER_KEY = 'library.defaultAudiobookRootFolderId'
 
 export default function RootFoldersTab() {
   const { t } = useTranslation()
+  const autoSave = useAutoSave()
   const [rootFolders, setRootFolders] = useState<RootFolder[]>([])
   const [newFolderPath, setNewFolderPath] = useState('')
   const [folderError, setFolderError] = useState('')
@@ -38,7 +40,7 @@ export default function RootFoldersTab() {
   const setDefault = async (value: string) => {
     setDefaultRootFolderId(value)
     try {
-      await api.setSetting(DEFAULT_ROOT_FOLDER_KEY, value)
+      await autoSave('library.defaultRootFolderId', () => api.setSetting(DEFAULT_ROOT_FOLDER_KEY, value), { rethrow: true })
     } catch (err) {
       console.error(err)
     }
@@ -47,7 +49,7 @@ export default function RootFoldersTab() {
   const setAudiobookDefault = async (value: string) => {
     setDefaultAudiobookRootFolderId(value)
     try {
-      await api.setSetting(DEFAULT_AUDIOBOOK_ROOT_FOLDER_KEY, value)
+      await autoSave('library.defaultAudiobookRootFolderId', () => api.setSetting(DEFAULT_AUDIOBOOK_ROOT_FOLDER_KEY, value), { rethrow: true })
     } catch (err) {
       console.error(err)
     }
