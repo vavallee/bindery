@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import { restoreSetting, useAutoSave, useMounted } from './useAutoSave'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, AuthorMonitorMode, MetadataProfile, MonitorNewItems } from '../../api/client'
 import { inputCls } from './formStyles'
@@ -97,9 +98,13 @@ function formatLanguageList(csv: string, any: string, lng?: string): string {
   }).join(', ')
 }
 
+const LATEST_COUNT_KEY = 'author.default_monitor_latest_count'
+
 export default function MetadataTab() {
   const fid = useId()
   const { t, i18n } = useTranslation()
+  const autoSave = useAutoSave()
+  const mounted = useMounted()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [profiles, setProfiles] = useState<MetadataProfile[]>([])
   const [editing, setEditing] = useState<MetadataProfile | null>(null)
@@ -133,16 +138,54 @@ export default function MetadataTab() {
     setSourcesError(false)
     setSettings(s => ({ ...s, [ENRICHERS_DISABLED_KEY]: value }))
     try {
-      await api.setSetting(ENRICHERS_DISABLED_KEY, value)
+      await autoSave(ENRICHERS_DISABLED_KEY, () => api.setSetting(ENRICHERS_DISABLED_KEY, value), { rethrow: true })
     } catch (err) {
       console.error(err)
-      setSettings(s => ({ ...s, [ENRICHERS_DISABLED_KEY]: previous }))
-      setSourcesError(true)
+      if (mounted.current) {
+        setSettings(s => ({ ...s, [ENRICHERS_DISABLED_KEY]: previous }))
+        setSourcesError(true)
+      }
     } finally {
       savingSourcesRef.current = false
-      setSavingSources(false)
+      if (mounted.current) setSavingSources(false)
     }
   }
+
+  // The count saves when the field is left or Enter is pressed, not on every
+  // keystroke ("10" would otherwise save 1, then 10, with a toast for each). The
+  // field follows what is typed; an invalid value is flagged and not sent.
+  // savedLatestCount is the last value the server holds, for the no-change
+  // check and as what a failed save puts back.
+  // inFlightLatestCount is the value being sent now, so Enter then blur while
+  // the request is pending does not send it twice.
+  const savedLatestCount = useRef<string | undefined>(undefined)
+  const inFlightLatestCount = useRef<string | null>(null)
+  const latestCountText = settings[LATEST_COUNT_KEY] ?? '1'
+  const latestCountRef = useRef(latestCountText)
+  latestCountRef.current = latestCountText
+  const latestCountInvalid = !/^[1-9]\d*$/.test(latestCountText)
+  const saveLatestCount = async () => {
+    if (latestCountInvalid || latestCountText === (savedLatestCount.current ?? '1')) return
+    if (latestCountText === inFlightLatestCount.current) return
+    const next = latestCountText
+    inFlightLatestCount.current = next
+    const res = await autoSave(LATEST_COUNT_KEY, () => api.setSetting(LATEST_COUNT_KEY, next).then(() => true), {
+      previous: savedLatestCount.current,
+      next,
+      revert: to => {
+        savedLatestCount.current = to
+        // Typing after the request started is newer than the failure: leave it.
+        if (latestCountRef.current === next) restoreSetting(setSettings, LATEST_COUNT_KEY, to)
+      },
+    })
+    if (inFlightLatestCount.current === next) inFlightLatestCount.current = null
+    if (res) savedLatestCount.current = next
+  }
+
+  // Escape drops the edit and shows the last saved value again.
+  // While a save is in flight it does nothing: the server is about to hold that
+  // value, and restoring the old one would leave the field behind it.
+  const cancelLatestCount = () => inFlightLatestCount.current === null && restoreSetting(setSettings, LATEST_COUNT_KEY, savedLatestCount.current)
 
   const reload = () => api.listMetadataProfiles().then(setProfiles).catch(console.error)
 
@@ -151,7 +194,8 @@ export default function MetadataTab() {
     api.listSettings().then(list => {
       const map: Record<string, string> = {}
       list.forEach(s => { map[s.key] = s.value })
-      setSettings(map)
+      savedLatestCount.current = map[LATEST_COUNT_KEY]
+      if (mounted.current) setSettings(map)
     }).catch(console.error)
     api.status().then(s => setHardcoverTokenConfigured(s.hardcoverTokenConfigured)).catch(console.error)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -177,7 +221,7 @@ export default function MetadataTab() {
             onChange={async e => {
               const next = e.target.value
               setSettings(s => ({ ...s, 'metadata.primary_provider': next }))
-              await api.setSetting('metadata.primary_provider', next).catch(console.error)
+              await autoSave('metadata.primary_provider', () => api.setSetting('metadata.primary_provider', next), { previous: settings['metadata.primary_provider'], next, revert: to => restoreSetting(setSettings, 'metadata.primary_provider', to) })
             }}
             className="w-full max-w-md bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
           >
@@ -278,7 +322,7 @@ export default function MetadataTab() {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'metadata.audnex_region': next }))
-                await api.setSetting('metadata.audnex_region', next).catch(console.error)
+                await autoSave('metadata.audnex_region', () => api.setSetting('metadata.audnex_region', next), { previous: settings['metadata.audnex_region'], next, revert: to => restoreSetting(setSettings, 'metadata.audnex_region', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -308,7 +352,7 @@ export default function MetadataTab() {
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'default.media_type': next }))
-                await api.setSetting('default.media_type', next).catch(console.error)
+                await autoSave('default.media_type', () => api.setSetting('default.media_type', next), { previous: settings['default.media_type'], next, revert: to => restoreSetting(setSettings, 'default.media_type', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -325,7 +369,7 @@ export default function MetadataTab() {
                   onChange={async e => {
                     const next = e.target.checked ? 'true' : 'false'
                     setSettings(s => ({ ...s, 'default.media_type_strict': next }))
-                    await api.setSetting('default.media_type_strict', next).catch(console.error)
+                    await autoSave('default.media_type_strict', () => api.setSetting('default.media_type_strict', next), { previous: settings['default.media_type_strict'], next, revert: to => restoreSetting(setSettings, 'default.media_type_strict', to) })
                   }}
                 />
                 <span>
@@ -349,7 +393,7 @@ export default function MetadataTab() {
               onChange={async e => {
                 const next = e.target.value as AuthorMonitorMode
                 setSettings(s => ({ ...s, 'author.default_monitor_mode': next }))
-                await api.setSetting('author.default_monitor_mode', next).catch(console.error)
+                await autoSave('author.default_monitor_mode', () => api.setSetting('author.default_monitor_mode', next), { previous: settings['author.default_monitor_mode'], next, revert: to => restoreSetting(setSettings, 'author.default_monitor_mode', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -367,16 +411,19 @@ export default function MetadataTab() {
               <input id={`${fid}-8`}
                 type="number"
                 min={1}
-                value={settings['author.default_monitor_latest_count'] ?? '1'}
-                onChange={async e => {
-                  const next = e.target.value
-                  setSettings(s => ({ ...s, 'author.default_monitor_latest_count': next }))
-                  if (/^[1-9]\d*$/.test(next)) {
-                    await api.setSetting('author.default_monitor_latest_count', next).catch(console.error)
-                  }
-                }}
+                value={settings[LATEST_COUNT_KEY] ?? '1'}
+                aria-invalid={latestCountInvalid || undefined}
+                aria-describedby={latestCountInvalid ? `${fid}-8-err` : undefined}
+                onChange={e => setSettings(s => ({ ...s, [LATEST_COUNT_KEY]: e.target.value }))}
+                onBlur={saveLatestCount}
+                onKeyDown={e => { if (e.key === 'Enter') saveLatestCount(); else if (e.key === 'Escape') cancelLatestCount() }}
                 className="w-28 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
               />
+              {latestCountInvalid && (
+                <p id={`${fid}-8-err`} className="text-xs text-red-700 dark:text-red-400 mt-1" role="alert">
+                  {t('settings.general.defaultMonitorLatestCountInvalid', 'Enter a whole number of 1 or more.')}
+                </p>
+              )}
             </div>
           )}
           <div id="author.default_monitor_new_items">
@@ -391,7 +438,7 @@ export default function MetadataTab() {
               onChange={async e => {
                 const next = e.target.value as MonitorNewItems
                 setSettings(s => ({ ...s, 'author.default_monitor_new_items': next }))
-                await api.setSetting('author.default_monitor_new_items', next).catch(console.error)
+                await autoSave('author.default_monitor_new_items', () => api.setSetting('author.default_monitor_new_items', next), { previous: settings['author.default_monitor_new_items'], next, revert: to => restoreSetting(setSettings, 'author.default_monitor_new_items', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -414,7 +461,7 @@ export default function MetadataTab() {
                 const current = (settings['autoGrab.enabled'] ?? 'true').toLowerCase()
                 const next = current === 'false' ? 'true' : 'false'
                 setSettings(s => ({ ...s, 'autoGrab.enabled': next }))
-                await api.setSetting('autoGrab.enabled', next).catch(console.error)
+                await autoSave('autoGrab.enabled', () => api.setSetting('autoGrab.enabled', next), { previous: settings['autoGrab.enabled'], next, revert: to => restoreSetting(setSettings, 'autoGrab.enabled', to) })
               }}
               title={(settings['autoGrab.enabled'] ?? 'true') !== 'false' ? t('common.disable') : t('common.enable')}
             />
@@ -434,7 +481,7 @@ export default function MetadataTab() {
                 const current = (settings['recommendations.enabled'] ?? 'false').toLowerCase()
                 const next = current === 'true' ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'recommendations.enabled': next }))
-                await api.setSetting('recommendations.enabled', next).catch(console.error)
+                await autoSave('recommendations.enabled', () => api.setSetting('recommendations.enabled', next), { previous: settings['recommendations.enabled'], next, revert: to => restoreSetting(setSettings, 'recommendations.enabled', to) })
               }}
               title={(settings['recommendations.enabled'] ?? 'false') === 'true' ? t('common.disable') : t('common.enable')}
             />
@@ -455,7 +502,7 @@ export default function MetadataTab() {
                 const current = (settings['metadata.author_enrichment.wikidata'] ?? 'false').toLowerCase()
                 const next = current === 'true' ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'metadata.author_enrichment.wikidata': next }))
-                await api.setSetting('metadata.author_enrichment.wikidata', next).catch(console.error)
+                await autoSave('metadata.author_enrichment.wikidata', () => api.setSetting('metadata.author_enrichment.wikidata', next), { previous: settings['metadata.author_enrichment.wikidata'], next, revert: to => restoreSetting(setSettings, 'metadata.author_enrichment.wikidata', to) })
               }}
               title={(settings['metadata.author_enrichment.wikidata'] ?? 'false') === 'true' ? t('common.disable') : t('common.enable')}
             />

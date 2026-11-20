@@ -1045,6 +1045,7 @@ describe('SettingsPage', () => {
     expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_mode', 'latest')
     })
     fireEvent.change(authorDefaults.getByRole('spinbutton'), { target: { value: '3' } })
+    fireEvent.blur(authorDefaults.getByRole('spinbutton'))
     await waitFor(() => {
     expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_latest_count', '3')
     })
