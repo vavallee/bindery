@@ -2427,6 +2427,7 @@
       "defaultMonitorModeLabel": "Default monitor mode",
       "defaultMonitorModeHint": "Applied to newly added authors. Existing authors keep their current mode unless edited.",
       "defaultMonitorLatestCountLabel": "Latest book count",
+      "defaultMonitorLatestCountInvalid": "Enter a whole number of 1 or more.",
       "defaultMonitorNewItemsLabel": "Default for monitoring newly discovered books",
       "defaultMonitorNewItemsHint": "Applied to newly added authors. Choose whether a metadata refresh may add books it discovers later. Existing authors keep their own setting.",
       "audiobookFileTemplate": "Audiobook file naming (per track)",
