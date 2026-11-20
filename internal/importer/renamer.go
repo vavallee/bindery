@@ -1493,8 +1493,13 @@ func copyFileExclusiveCtx(ctx context.Context, src, dst string) error {
 
 // copyFileModeCtx opens src for copyFileCtx and copyFileExclusiveCtx, then
 // creates dst: truncating whatever is there, or with O_EXCL when exclusive.
+//
+// The source is opened without following a symlink at its last component and
+// must be a regular file on the open handle. Callers that take a path from a
+// download also confine it to the download root (sourceWithinRoot), which this
+// function cannot know.
 func copyFileModeCtx(ctx context.Context, src, dst string, exclusive bool) error {
-	in, err := os.Open(src)
+	in, err := openRegularSource(src)
 	if err != nil {
 		return err
 	}

@@ -74,7 +74,7 @@ const importSkipLimit = 120
 // importer had already emptied.
 func importSourcePresent(downloadPath string, explicitFiles []string) bool {
 	for _, f := range explicitFiles {
-		if importableSourceFile(f) {
+		if importableSourceFileIn(downloadPath, f) {
 			return true
 		}
 	}
