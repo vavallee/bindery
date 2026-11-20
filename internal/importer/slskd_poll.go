@@ -194,6 +194,17 @@ func slskdStallMessage(p slskd.Progress, limit time.Duration) string {
 // runs). Otherwise the download fails, and nothing is deleted either way.
 func (s *Scanner) slskdBatchMissing(ctx context.Context, client *models.DownloadClient, dl *models.Download, batchID string) {
 	if folder, _ := s.slskdFolder(ctx, client, dl); folder != "" && len(discoverBookFiles(ctx, folder, nil)) > 0 {
+		// A batch that vanished while only some files finished leaves the rest in
+		// slskd's incomplete folder. Importing what is here would be a half
+		// download, so compare with the grab's file list first. A grab address that
+		// cannot be read (want 0) keeps the plain "any book file" behaviour.
+		if want := expectedSlskdFiles(dl); want > 0 {
+			if have := countRegularFiles(folder); have < want {
+				s.failSlskd(ctx, client, dl, fmt.Sprintf(
+					"slskd no longer lists this download and only %d of its %d files arrived, so nothing was imported. The finished files were left in %s; pick another result or delete them", have, want, filepath.Join("bindery", filepath.Base(folder))), false)
+				return
+			}
+		}
 		slog.Info("slskd no longer lists this download but its files are on disk; importing them", "title", dl.Title, "path", folder)
 		s.completeSlskd(ctx, client, dl, batchID)
 		return
@@ -289,4 +300,17 @@ func (s *Scanner) tryImportSlskd(ctx context.Context, client *models.DownloadCli
 		return downloader.SlskdFor(client).RemoveBatch(cleanCtx, batchID)
 	}
 	s.tryImportInternal(ctx, dl, folder, "slskd", batchID, "", cleanup, nil)
+}
+
+// countRegularFiles counts the regular files under dir, whatever their type.
+// Symlinks are not followed and not counted.
+func countRegularFiles(dir string) int {
+	n := 0
+	_ = filepath.Walk(dir, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && info.Mode().IsRegular() {
+			n++
+		}
+		return nil
+	})
+	return n
 }

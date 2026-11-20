@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -210,7 +211,15 @@ func (f *requesterFixture) do(method, target string, cookie *http.Cookie) *httpt
 }
 
 func (f *requesterFixture) doFrom(method, target string, cookie *http.Cookie, remote string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, target, nil)
+	return f.doBody(method, target, cookie, remote, "")
+}
+
+func (f *requesterFixture) doBody(method, target string, cookie *http.Cookie, remote, body string) *httptest.ResponseRecorder {
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, target, rd)
 	req.RemoteAddr = remote
 	// A LAN name, not httptest's example.com, which the login free modes
 	// refuse; the host check itself is covered in host_check_routes_test.go.
@@ -500,3 +509,16 @@ func (s universalStub) UnmonitorSplitEditionParts(w http.ResponseWriter, _ *http
 // Duplicates and MergeDuplicates are the duplicate series routes (#2173).
 func (s universalStub) Duplicates(w http.ResponseWriter, _ *http.Request)      { s.h(w) }
 func (s universalStub) MergeDuplicates(w http.ResponseWriter, _ *http.Request) { s.h(w) }
+
+// A requester cannot grab a Soulseek result either: the guard is on the route,
+// whatever the body carries.
+func TestRequesterGuard_SoulseekGrabDenied(t *testing.T) {
+	body := `{"guid":"slskd:abc","title":"Dune [EPUB]","nzbUrl":"slskd://eyJ1IjoicGVlciIsImYiOlt7ImZpbGVuYW1lIjoiYS5lcHViIiwic2l6ZSI6MTAwMH1dfQ","protocol":"soulseek","bookId":7}`
+	for _, base := range []string{"", "/bindery"} {
+		f := newRequesterFixture(t, base)
+		rec := f.doBody(http.MethodPost, base+"/api/v1/queue/grab", f.cookie, "203.0.113.9:4000", body)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "not available to requesters") {
+			t.Errorf("base %q: status %d, want 403 (body %s)", base, rec.Code, rec.Body.String())
+		}
+	}
+}

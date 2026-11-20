@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vavallee/bindery/internal/downloader/slskd"
 	"github.com/vavallee/bindery/internal/downloader/slskd/slskdtest"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -111,5 +112,75 @@ func TestSlskdPoll_SymlinkedParentIsRefused(t *testing.T) {
 	}
 	if f.bookFileCount(t) != 0 {
 		t.Error("imported through a symlinked parent")
+	}
+}
+
+// The batch vanished while only some of its files finished: the rest sit in
+// slskd's incomplete folder. Importing the finished ones would be a half
+// download. Fail before the count check: it imported the one file.
+func TestSlskdPoll_BatchGoneWithFewerFilesThanRequestedFailsWithoutImport(t *testing.T) {
+	f := newSlskdPollFixture(t)
+	dl := f.start(t, slskdGrabOpts{guid: "slskd:gonepartial", files: []slskd.BatchFile{
+		{Filename: `@@p\Mary Mary\Mary Mary.epub`, Size: 6000},
+		{Filename: `@@p\Mary Mary\cover.jpg`, Size: 500},
+	}})
+	f.writeBook(t, dl)
+	f.dl = dl
+	f.fake.Batches = map[string]*slskdtest.Batch{}
+	f.poll()
+	got := f.get(t, dl.ID)
+	if got.Status != models.StateFailed || !strings.Contains(got.ErrorMessage, "1 of its 2 files") || !strings.Contains(got.ErrorMessage, "left in") {
+		t.Fatalf("status %q message %q", got.Status, got.ErrorMessage)
+	}
+	if f.bookFileCount(t) != 0 {
+		t.Error("a half download was imported")
+	}
+	if _, err := os.Stat(filepath.Join(f.folder(dl), "Mary Mary.epub")); err != nil {
+		t.Errorf("a finished file was deleted: %v", err)
+	}
+	// A later poll must not pick the failed row up again.
+	f.poll()
+	if f.bookFileCount(t) != 0 {
+		t.Error("a later poll imported the partial folder")
+	}
+}
+
+// Every requested file is in the folder (any type counts): import.
+func TestSlskdPoll_BatchGoneWithAllFilesImports(t *testing.T) {
+	f := newSlskdPollFixture(t)
+	dl := f.start(t, slskdGrabOpts{guid: "slskd:goneall", files: []slskd.BatchFile{
+		{Filename: `@@p\Mary Mary\Mary Mary.epub`, Size: 6000},
+		{Filename: `@@p\Mary Mary\cover.jpg`, Size: 500},
+	}})
+	f.writeBook(t, dl)
+	if err := os.WriteFile(filepath.Join(f.folder(dl), "cover.jpg"), []byte("jpg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.dl = dl
+	f.fake.Batches = map[string]*slskdtest.Batch{}
+	f.poll()
+	if got := f.get(t, dl.ID); got.Status != models.StateImported {
+		t.Fatalf("status %q (%s), want imported", got.Status, got.ErrorMessage)
+	}
+}
+
+// The grab address cannot be read, so the expected count is unknown (0). That
+// only happens for a row whose address was lost; it keeps the old rule of
+// importing any book file found.
+func TestSlskdPoll_BatchGoneWithUnknownFileCountKeepsImporting(t *testing.T) {
+	f := newSlskdPollFixture(t)
+	dl := f.start(t, slskdGrabOpts{guid: "slskd:goneunknown", files: []slskd.BatchFile{
+		{Filename: `@@p\Mary Mary\Mary Mary.epub`, Size: 6000},
+		{Filename: `@@p\Mary Mary\cover.jpg`, Size: 500},
+	}})
+	if _, err := f.sqlDB.Exec(`UPDATE downloads SET nzb_url = '' WHERE id = ?`, dl.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.writeBook(t, dl)
+	f.dl = dl
+	f.fake.Batches = map[string]*slskdtest.Batch{}
+	f.poll()
+	if got := f.get(t, dl.ID); got.Status != models.StateImported {
+		t.Fatalf("status %q (%s), want imported", got.Status, got.ErrorMessage)
 	}
 }

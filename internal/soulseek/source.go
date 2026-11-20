@@ -3,6 +3,8 @@ package soulseek
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"unicode"
@@ -97,6 +99,7 @@ func (s *Source) search(ctx context.Context, text string) ([]slskd.SearchRespons
 func (s *Source) own(ctx context.Context, text string, f *flight) (resp []slskd.SearchResponse, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			slog.Warn("soulseek search panicked", "panic", fmt.Sprint(r))
 			resp, err = nil, errors.New("the Soulseek search failed unexpectedly")
 		}
 		f.resp, f.err = resp, err
