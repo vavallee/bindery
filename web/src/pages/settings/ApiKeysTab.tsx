@@ -189,18 +189,17 @@ export default function ApiKeysTab() {
                 <label className="block text-xs text-fg-muted">
                   {t('settings.general.hardcoverApiToken', 'Hardcover API Token')}
                 </label>
-                <span className={`text-[11px] font-medium ${hardcoverTokenConfigured ? 'text-accent-text' : 'text-fg-muted'}`}>
+                <span id={`${fid}-hc-token-state`} className={`text-[11px] font-medium ${hardcoverTokenConfigured ? 'text-accent-text' : 'text-fg-muted'}`}>
                   {hardcoverTokenConfigured
                     ? t('settings.general.hardcoverTokenConfigured', 'Token configured')
                     : t('settings.general.hardcoverTokenNotConfigured', 'No token configured')}
                 </span>
               </div>
-              <FieldValue for={`${fid}-hc-token`} value={hardcoverTokenConfigured ? 'configured' : ''} secret />
               <div className="flex flex-wrap gap-2">
                 <input
                   {...secretInputAttrs}
                   id={`${fid}-hc-token`}
-                  aria-describedby={fieldValueId(`${fid}-hc-token`)}
+                  aria-describedby={`${fid}-hc-token-state`}
                   value={hardcoverToken}
                   onChange={e => setHardcoverToken(e.target.value)}
                   placeholder={hardcoverTokenConfigured

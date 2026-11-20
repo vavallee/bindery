@@ -29,23 +29,23 @@ beforeEach(() => {
 })
 
 describe('ApiKeysTab current value subtitles (#3989)', () => {
-  it('shows Not set for a token that is not configured', async () => {
+  it('describes the token input with its existing Not set badge, once, with no second line', async () => {
     render(<ApiKeysTab />)
     await screen.findByText('Hardcover API Token')
     const input = screen.getByPlaceholderText('Paste a Hardcover API token')
-    expect(document.getElementById(input.getAttribute('aria-describedby')!)).toHaveTextContent('Current: Not set')
+    expect(input).toHaveAccessibleDescription('No token configured')
+    expect(document.querySelectorAll('[data-testid="field-value"]').length).toBe(1)
   })
 
-  it('shows only Set for a configured token and never the token or a typed value', async () => {
+  it('shows a configured token only as the badge and never the token or a typed value', async () => {
     status({ hardcoverTokenConfigured: true })
     vi.mocked(api.listSettings).mockResolvedValue([{ key: 'hardcover.api_token', value: 'hc-secret-token' }] as Awaited<ReturnType<typeof api.listSettings>>)
     render(<ApiKeysTab />)
     const input = await screen.findByPlaceholderText(/Saved token is hidden/)
-    await waitFor(() => expect(document.getElementById(input.getAttribute('aria-describedby')!)).toHaveTextContent('Current: Set'))
+    await waitFor(() => expect(input).toHaveAccessibleDescription('Token configured'))
     fireEvent.change(input, { target: { value: 'typed-new-token' } })
-    expect(document.getElementById(input.getAttribute('aria-describedby')!)).toHaveTextContent(/^Current: Set$/)
     expect(document.body.textContent).not.toContain('hc-secret-token')
-    expect(document.querySelector('[data-testid="field-value"]')!.outerHTML).not.toContain('typed-new-token')
+    expect(document.body.textContent).not.toContain('typed-new-token')
   })
 
   it('follows the enhanced series toggle and reverts it when the save fails', async () => {

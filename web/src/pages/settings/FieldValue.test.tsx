@@ -45,6 +45,25 @@ describe('FieldValue (#3989)', () => {
     expect(el).toHaveAttribute('title', `Current: ${path}`)
   })
 
+  it('never shows userinfo from a URL, drops its query and gives it no title', () => {
+    render(<FieldValue for="a" value="https://user:pa55@host.example:8080/api/v1?token=abc#frag" />)
+    const el = screen.getByTestId('field-value')
+    expect(el).toHaveTextContent('Current: https://host.example:8080/api/v1')
+    expect(el.textContent).not.toMatch(/pa55|user|token/)
+    expect(el).not.toHaveAttribute('title')
+    expect(document.body.innerHTML).not.toContain('pa55')
+  })
+
+  it('keeps a plain URL and its title', () => {
+    render(<FieldValue for="a" value="http://calibre:8099/x?y=1" />)
+    expect(screen.getByTestId('field-value')).toHaveAttribute('title', 'Current: http://calibre:8099/x?y=1')
+  })
+
+  it('the wiring check fails when a control points at a neighbouring field line', () => {
+    render(<><div><FieldValue for="a" value="1" /><input aria-label="a" /></div><div><FieldValue for="b" value="2" /><input aria-label="b" aria-describedby="a-value" /></div></>)
+    expect(() => expectFieldValuesWired(document.body)).toThrow()
+  })
+
   it('derives the id the control points at', () => {
     render(<><FieldValue for="x" value="1" /><input aria-label="x" aria-describedby={describedBy('x')} /></>)
     expect(screen.getByTestId('field-value').id).toBe(fieldValueId('x'))

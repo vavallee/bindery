@@ -1878,9 +1878,12 @@ uses instead. Choices show their name and not the stored key, a long folder
 path is cut to one line (hover it to read the whole path), and a secret such as
 an API key or token never shows its value, only "Set" or "Not set". Fields with
 their own Save button are left out on purpose, because what you have typed is
-not saved yet and the line would otherwise show something that is not true. The
-Edit Author dialog does the same under each of its fields, showing the choice
-as it stands in the dialog until you press Save.
+not saved yet and the line would otherwise show something that is not true. A saved
+URL never shows a user name or password, only its host and path. The Edit Author
+dialog has the same line under its profile, root folder and monitor fields, but
+it shows what is saved for that author, not what you are picking: it stays put
+while you change a field and shows the new value the next time you open the
+dialog after pressing Save.
 
 ## Finding a setting when you do not know its tab
 

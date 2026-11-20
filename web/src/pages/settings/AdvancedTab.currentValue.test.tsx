@@ -89,6 +89,16 @@ describe('AdvancedTab current value subtitles (#3989)', () => {
     expect(document.body.textContent).not.toContain('super-secret-value')
   })
 
+  it('never shows credentials embedded in a saved URL', async () => {
+    seed([descriptor({ key: 'x.base_url' })], { 'x.base_url': 'http://admin:hunter2@calibre:8099/lib' })
+    render(<AdvancedTab />)
+    const input = await screen.findByLabelText('x.base_url')
+    const el = document.getElementById(input.getAttribute('aria-describedby')!)!
+    expect(el).toHaveTextContent('Current: http://calibre:8099/lib')
+    expect(el).not.toHaveAttribute('title')
+    expect(el.outerHTML).not.toContain('hunter2')
+  })
+
   it('wires every subtitle on the tab to a control', async () => {
     seed([descriptor({ key: 'a.b', default: '1' }), descriptor({ key: 'a.c', type: 'bool', default: 'true' })])
     render(<AdvancedTab />)

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import EditAuthorModal from './EditAuthorModal'
 import { api } from '../api/client'
 import type { Author, MetadataProfile, QualityProfile, RootFolder } from '../api/client'
@@ -66,17 +66,42 @@ describe('EditAuthorModal current value subtitles (#3989)', () => {
     expect(subOf(root)).toHaveAttribute('title', `Current: ${longPath}`)
   })
 
-  it('follows the control as it changes', async () => {
+  it('does not move while a field is only being edited', async () => {
     render(<EditAuthorModal author={author} onClose={vi.fn()} onSaved={vi.fn()} />)
     await screen.findByRole('option', { name: 'Any' })
     const [q, , , audiobookRoot, mode] = screen.getAllByRole('combobox') as HTMLSelectElement[]
     fireEvent.change(q, { target: { value: '' } })
-    expect(subOf(q)).toHaveTextContent('Current: common.qualityProfileNone')
     fireEvent.change(audiobookRoot, { target: { value: '101' } })
-    expect(subOf(audiobookRoot)).toHaveTextContent('Current: /library/audiobooks')
     fireEvent.change(mode, { target: { value: 'latest' } })
-    expect(subOf(mode)).toHaveTextContent('Current: Latest only')
+    expect(subOf(q)).toHaveTextContent('Current: EPUB Only')
+    expect(subOf(audiobookRoot)).toHaveTextContent('Current: Use global audiobook folder')
+    expect(subOf(mode)).toHaveTextContent('Current: Future books only (grows on refresh)')
     expect(document.querySelector('[id$="-7-value"]')).toHaveTextContent('Current: 1')
+  })
+
+  it('shows the new value once the save lands and the author is reopened', async () => {
+    const onSaved = vi.fn()
+    vi.mocked(api.updateAuthor).mockImplementation(async (_id, patch) => ({ ...author, ...patch }) as Author)
+    const { rerender } = render(<EditAuthorModal author={author} onClose={vi.fn()} onSaved={onSaved} />)
+    await screen.findByRole('option', { name: 'Any' })
+    const q = screen.getAllByRole('combobox')[0] as HTMLSelectElement
+    fireEvent.change(q, { target: { value: '1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    // The parent passes the saved author back in.
+    rerender(<EditAuthorModal author={onSaved.mock.calls[0][0] as Author} onClose={vi.fn()} onSaved={onSaved} />)
+    await waitFor(() => expect(subOf(screen.getAllByRole('combobox')[0] as HTMLElement)).toHaveTextContent('Current: Any'))
+  })
+
+  it('leaves the line alone when the save fails', async () => {
+    vi.mocked(api.updateAuthor).mockRejectedValue(new Error('boom'))
+    render(<EditAuthorModal author={author} onClose={vi.fn()} onSaved={vi.fn()} />)
+    await screen.findByRole('option', { name: 'Any' })
+    const q = screen.getAllByRole('combobox')[0] as HTMLSelectElement
+    fireEvent.change(q, { target: { value: '1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByText('boom')
+    expect(subOf(q)).toHaveTextContent('Current: EPUB Only')
   })
 
   it('wires every subtitle in the dialog to a control', async () => {

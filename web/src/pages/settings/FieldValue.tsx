@@ -10,13 +10,16 @@
 //   - a secret is never rendered: pass secret and only "Set" or "Not set"
 //     shows, whatever the value is;
 //   - one line, long values (root folder paths) are cut with an ellipsis and
-//     the full text is in the title attribute.
+//     the full text is in the title attribute;
+//   - userinfo in a URL (user:pass@host) is never shown, and such a value gets
+//     no title, since the title would carry the same text.
 // The text is plain, static, not a live region. The control points at it with
 // aria-describedby (describedBy(id)), so it is read with the control once and
 // is not announced on its own. Colour is not the signal: the words are.
 
 import { useTranslation } from 'react-i18next'
 import { fieldValueId } from './fieldValueId'
+import { redactUrlUserinfo } from './redactUrl'
 
 interface Props {
   /** Same string as the control's id (or group id); the subtitle id derives from it. */
@@ -35,10 +38,13 @@ export default function FieldValue({ for: base, value, defaultValue, secret = fa
   const { t } = useTranslation()
   const has = !!value && value.trim() !== ''
   let text: string
+  let redacted = false
   if (secret) {
     text = has ? t('settings.currentValue.set', 'Set') : t('settings.currentValue.notSet', 'Not set')
   } else if (has) {
-    text = value as string
+    const r = redactUrlUserinfo(value as string)
+    text = r.text
+    redacted = r.redacted
   } else if (defaultValue) {
     text = t('settings.currentValue.default', 'Default ({{value}})', { value: defaultValue })
   } else {
@@ -49,7 +55,7 @@ export default function FieldValue({ for: base, value, defaultValue, secret = fa
     <p
       id={fieldValueId(base)}
       data-testid="field-value"
-      title={full}
+      title={redacted ? undefined : full}
       className={`block max-w-full truncate text-xs text-fg-muted ${flush ? 'mb-0' : 'mb-1'}`}
     >
       {full}
