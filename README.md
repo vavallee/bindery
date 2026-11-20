@@ -155,7 +155,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 <summary><strong>Search and downloads</strong></summary>
 
 - Newznab and Torznab indexers queried in parallel and ranked by your format order, edition tags (RETAIL, UNABRIDGED, ABRIDGED), year, grabs, size and ISBN match. Prowlarr can sync its indexers into Bindery, with seed ratio and seed time per indexer.
-- SABnzbd, NZBGet, qBittorrent, Transmission, Deluge and rTorrent or ruTorrent, with SSL and URL base support, plus Soulseek through slskd as an opt in client (0.26.0 or newer; adding the client is as far as it goes in this release). Pin an indexer to a download client, and remove a torrent once it is imported and seeded.
+- SABnzbd, NZBGet, qBittorrent, Transmission, Deluge and rTorrent or ruTorrent, with SSL and URL base support, plus Soulseek through slskd as an opt in client (0.26.0 or newer). With one enabled, interactive search lists Soulseek results beside your indexer results, marked with a Soulseek badge; grabbing from Soulseek is not enabled yet. Pin an indexer to a download client, and remove a torrent once it is imported and seeded.
 - **Diagnose** on each download client checks the connection, the category, where grabs land, the path remap, read access, and whether imports can hardlink, then names the first thing to fix. No shell needed, which matters in a distroless image.
 - Automatic search on an interval and on add, interactive search per book, and a global pause. Quality profiles per media type, language filter, delay profiles, freeleech only indexers, a blocklist, and a per indexer daily query limit with polite back off when an indexer refuses.
 - Failed downloads can be retried one at a time or all at once. Releases the filters set aside stay visible in interactive search with the reason, and you can still grab them.
@@ -265,7 +265,7 @@ The full reference, including path remapping, API key seeding, trusted proxies a
 |---|---|
 | **Usenet clients** | SABnzbd, NZBGet |
 | **Torrent clients** | qBittorrent, Transmission, Deluge, rTorrent and ruTorrent (XML-RPC over HTTP or SCGI) |
-| **Soulseek (opt in)** | slskd 0.26.0 or newer, added as a download client. It is off until you add one, and the [setup guide](docs/DEPLOYMENT.md#slskd-soulseek) covers the privacy cost |
+| **Soulseek (opt in)** | slskd 0.26.0 or newer, added as a download client. It is off until you add one. Interactive search then shows Soulseek results, but they cannot be grabbed yet. The [setup guide](docs/DEPLOYMENT.md#slskd-soulseek) covers the privacy cost |
 | **Indexers** | Newznab and Torznab, with per indexer categories; Prowlarr indexer sync |
 | **Lists and imports** | Hardcover lists (synced), Goodreads CSV, Readarr database, Calibre `metadata.db`, Audiobookshelf, BookOrbit |
 | **Library tools** | Calibre (`calibredb` or the Bindery Bridge plugin), Calibre-Web Automated ingest, Grimmory (preview), a post import drop folder for anything that watches one ([guide](docs/Calibre-Integration-Wiki.md)) |

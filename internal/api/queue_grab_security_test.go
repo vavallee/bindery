@@ -135,7 +135,7 @@ func newGrabSecFixture(t *testing.T) *grabSecFixture {
 	// search path does; the search handler strips the key before replying.
 	signed := newznab.SignDownloadURLFor(f.downloadURL, idx.URL, idx.APIKey)
 	searcher := &fixedSearcher{results: []newznab.SearchResult{{
-		GUID: f.guid, IndexerID: idx.ID, IndexerName: idx.Name, Title: "Lee Child - One Shot (epub)",
+		GUID: f.guid, IndexerID: &idx.ID, IndexerName: idx.Name, Title: "Lee Child - One Shot (epub)",
 		Size: 1234, NZBURL: signed, Protocol: "usenet",
 	}}}
 
@@ -428,7 +428,7 @@ func TestQueueGrab_SendsTheRecordedCredentials(t *testing.T) {
 			f := newGrabSecFixture(t)
 			raw := f.indexerURL + "/dl/jackett?jackett_apikey=REAL&passkey=REAL&path=abc&file=One+Shot"
 			f.searcher.results = []newznab.SearchResult{{
-				GUID: "guid-jackett", IndexerID: f.indexerID, Title: "Lee Child - One Shot (epub)",
+				GUID: "guid-jackett", IndexerID: &f.indexerID, Title: "Lee Child - One Shot (epub)",
 				NZBURL: raw, Protocol: "usenet",
 			}}
 			f.searchAs(t, f.bob)

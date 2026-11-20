@@ -633,7 +633,11 @@ What you need:
 
 Fill in the client like any other: host, port (slskd listens on 5030 by default), URL base if slskd sits behind a reverse proxy, and the API key. There is no category field because slskd has no categories.
 
-Privacy, so you can decide with the facts: once searching is built, the titles you want leave your machine as search text on the Soulseek network, where other users can see search terms. Downloading shows your IP address to the peers you download from. Run slskd behind a VPN, and keep it on a network you are comfortable exposing this way.
+What works today: with a slskd client enabled, the book page's interactive search, the Wanted page search and the free text Search page also ask slskd, and the Soulseek results appear in the same list as your indexer results. Each one carries a Soulseek badge, the peer's user name, how many files it holds, and whether the peer has a free upload slot or how long its queue is. The Grab button on those results is disabled, because grabbing from Soulseek arrives in a later release. Nothing is downloaded, and the automatic search that runs for wanted books does not use Soulseek at all.
+
+Soulseek searches are slow next to an indexer. slskd runs one search at a time and Bindery asks it to collect answers for about 15 seconds, so a search that includes Soulseek usually takes that long to finish. That wait is capped: Bindery never waits more than 20 seconds for slskd, so a busy or hung slskd delays your indexer results by at most 20 seconds. Past the cap the search goes on without Soulseek and the search debug view shows the slskd source as timed out, under Sources. A book that wants both an ebook and an audiobook sends one Soulseek search and splits the answer between the two formats. If slskd is busy or does not answer, the indexer results still show.
+
+Privacy, so you can decide with the facts: when an interactive search runs, the title and the author's last name you are looking for leave your machine as search text on the Soulseek network, where other users can see search terms. Downloading shows your IP address to the peers you download from. Run slskd behind a VPN, and keep it on a network you are comfortable exposing this way.
 
 ### Running Bindery behind a VPN (network_mode: service:*)
 

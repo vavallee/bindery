@@ -34,7 +34,7 @@ func (f *schedPinFixture) holdPending(t *testing.T, pending *db.PendingReleaseRe
 	t.Helper()
 	res := newznab.SearchResult{
 		GUID: guid, Title: "Pin Author Pinned Book epub " + guid, NZBURL: f.pub.srv.URL + "/" + guid + ".nzb",
-		Protocol: "usenet", IndexerID: idx.ID, IndexerName: idx.Name, Size: 2 << 20,
+		Protocol: "usenet", IndexerID: &idx.ID, IndexerName: idx.Name, Size: 2 << 20,
 	}
 	blob, _ := json.Marshal(res)
 	if err := pending.Upsert(f.ctx, &models.PendingRelease{

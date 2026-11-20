@@ -97,11 +97,11 @@ func TestSearchAndGrabBook_DualFormatUsesEachFormatsCategory(t *testing.T) {
 	searcher := &perFormatSearcher{byFormat: map[string][]newznab.SearchResult{
 		models.MediaTypeEbook: {{
 			GUID: "g-ebook", Title: "Zogarth The Primal Hunter epub", NZBURL: srv.URL + "/ebook.nzb",
-			Protocol: "usenet", IndexerID: idx.ID, Size: 2 << 20,
+			Protocol: "usenet", IndexerID: &idx.ID, Size: 2 << 20,
 		}},
 		models.MediaTypeAudiobook: {{
 			GUID: "g-audio", Title: "Zogarth The Primal Hunter m4b", NZBURL: srv.URL + "/audio.nzb",
-			Protocol: "usenet", IndexerID: idx.ID, Size: 800 << 20,
+			Protocol: "usenet", IndexerID: &idx.ID, Size: 800 << 20,
 		}},
 	}}
 	s := &Scheduler{

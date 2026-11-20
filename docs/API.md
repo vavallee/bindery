@@ -434,6 +434,15 @@ GET    /api/v1/book/{id}/calibre                  where the book stands in the C
   of them, the likeliest matches first (for a dual-format book, alternating between the two formats), so `filteredTotal` can be larger than
   `filtered.length`.
 
+Soulseek results (#1717). With an enabled slskd client, `POST /book/{id}/search`
+and `GET /indexer/search` also return releases from Soulseek peers. They have
+`protocol: "soulseek"`, a `guid` starting `slskd:`, `indexerId: null`, an empty
+`nzbUrl`, and a `soulseek` object with `username`, `freeSlot`, `queueLength`,
+`uploadSpeed`, `fileCount` and `format`. `POST /queue/grab` refuses them with
+409 for now, because grabbing from Soulseek is not built yet. `debug.sources`
+lists each source asked, with its result count and any error. Automatic
+searches never ask Soulseek.
+
 Clients written before this ignore the two new keys and see no change. Automatic
 searches never see a filtered release. The free text search
 (`GET /indexer/search`) does not return `filtered`.

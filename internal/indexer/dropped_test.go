@@ -72,7 +72,7 @@ func TestSearchBookWithDebug_DroppedCarriesRelevanceReleases(t *testing.T) {
 	if !strings.Contains(d.Result.NZBURL, "https://fake/dl/rel") || !strings.Contains(d.Result.NZBURL, "apikey=SECRET") {
 		t.Errorf("NZBURL = %q, want the raw download URL kept for the registry", d.Result.NZBURL)
 	}
-	if d.Result.IndexerID != 7 || d.Result.Protocol != "usenet" {
+	if d.Result.IndexerID == nil || *d.Result.IndexerID != 7 || d.Result.Protocol != "usenet" {
 		t.Errorf("indexer id/protocol = %d/%q, want 7/usenet", d.Result.IndexerID, d.Result.Protocol)
 	}
 

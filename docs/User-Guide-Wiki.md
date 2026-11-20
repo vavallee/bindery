@@ -1836,6 +1836,35 @@ the control back on the value that is actually saved. A number field such as
 Latest book count saves when you leave the field or press Enter, not on each
 digit, and says so beside the field if the number is not valid.
 
+## Soulseek results in interactive search
+
+If you have added a slskd client in **Settings, Download Clients** and left it
+enabled, interactive search also searches Soulseek. This is opt in: with no
+enabled slskd client, nothing is sent to Soulseek. The automatic search for
+wanted books never uses it.
+
+- A Soulseek result sits in the same list as your indexer results and goes
+  through the same ranking and filtering. It has a **Soulseek** badge, the
+  user name of the peer, how many files that peer offers in the folder, and
+  either **free slot** (the peer would start sending at once) or the length of
+  its queue.
+- One result is one folder from one peer in one format, so a peer who shares an
+  EPUB and a PDF of the same book shows two results. Bindery reads the format
+  from the file extension and leaves out files that are not books or
+  audiobooks. It does not guess an author or title it cannot read from the
+  names.
+- **Grab is disabled** on these results, with a tooltip saying so. Grabbing from
+  Soulseek arrives in a later release, so for now you can see what is out there
+  but not download it through Bindery.
+- A search usually takes about 15 seconds longer while slskd waits for peers,
+  and slskd runs only one search at a time. Bindery waits at most 20 seconds
+  for slskd, so the worst case is 20 extra seconds. After that you get your
+  indexer results without Soulseek, and the search debug view lists slskd as
+  timed out.
+- The title and the author's last name leave your machine as search text on the
+  Soulseek network. See the privacy note in the
+  [deployment guide](DEPLOYMENT.md#slskd-soulseek).
+
 ## Finding a setting when you do not know its tab
 
 The search box at the top of Settings matches tab names, section headings and

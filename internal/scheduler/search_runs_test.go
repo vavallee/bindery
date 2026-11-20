@@ -129,7 +129,7 @@ func TestSearchAndGrabBook_RunRecordsTheGrab(t *testing.T) {
 		searcher: &perFormatSearcher{byFormat: map[string][]newznab.SearchResult{
 			models.MediaTypeEbook: {{
 				GUID: "g-ebook", Title: "Zogarth The Primal Hunter epub", NZBURL: srv.URL + "/ebook.nzb",
-				Protocol: "usenet", IndexerID: idx.ID, IndexerName: "stub", Size: 2 << 20,
+				Protocol: "usenet", IndexerID: &idx.ID, IndexerName: "stub", Size: 2 << 20,
 			}},
 		}},
 		indexers: indexers, authors: authors, settings: db.NewSettingsRepo(database),

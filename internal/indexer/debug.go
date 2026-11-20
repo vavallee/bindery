@@ -16,12 +16,15 @@ import (
 // exactly why a search returned zero (or unexpected) results — which indexer
 // was queried, what it returned, and which filter rejected each candidate.
 type SearchDebug struct {
-	Query      SearchQueryDebug `json:"query"`
-	Indexers   []IndexerDebug   `json:"indexers"`
-	Pipeline   PipelineDebug    `json:"pipeline"`
-	Filters    []FilterDebug    `json:"filters"`
-	StartedAt  time.Time        `json:"startedAt"`
-	DurationMs int64            `json:"durationMs"`
+	Query    SearchQueryDebug `json:"query"`
+	Indexers []IndexerDebug   `json:"indexers"`
+	// Sources are the non indexer search sources that were asked (Soulseek),
+	// empty when none were.
+	Sources    []SourceDebug `json:"sources,omitempty"`
+	Pipeline   PipelineDebug `json:"pipeline"`
+	Filters    []FilterDebug `json:"filters"`
+	StartedAt  time.Time     `json:"startedAt"`
+	DurationMs int64         `json:"durationMs"`
 
 	// The fields below say WHICH search this is, for GET /search/last-debug,
 	// which more than one path now writes to (#2154). The searcher leaves them
@@ -183,6 +186,7 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 		perIdx  = make([]IndexerDebug, 0, len(indexers))
 		wg      sync.WaitGroup
 	)
+	waitSources := startSources(ctx, SourceQuery{Title: c.Title, Author: c.Author, MediaType: c.MediaType})
 
 	for _, idx := range indexers {
 		entry := IndexerDebug{
@@ -272,7 +276,7 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 
 			protocol := protocolForType(idx.Type)
 			for i := range hits {
-				hits[i].IndexerID = idx.ID
+				hits[i].IndexerID = &idx.ID
 				hits[i].IndexerName = idx.Name
 				hits[i].Protocol = protocol
 				// Mirror searcher.go: scoreResult adds IndexerPriority to the
@@ -316,6 +320,12 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 	results, nonBook := filterNonBookContentDetailed(results)
 	dbg.Filters = append(dbg.Filters, droppedFilterDebug(nonBook)...)
 	dbg.Pipeline.AfterNonBookContent = len(results)
+
+	// Sources join here, as in SearchBook: after the indexer feed junk filters,
+	// before relevance and ranking.
+	srcResults, srcRows := waitSources()
+	dbg.Sources = srcRows
+	results = append(results, srcResults...)
 
 	results, relDropped := filterRelevantKeepDropped(results, c.Title, c.Author, c.AuthorAliases, c.context())
 	dbg.Filters = append(dbg.Filters, droppedFilterDebug(relDropped)...)

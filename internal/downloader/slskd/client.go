@@ -1,17 +1,18 @@
 // Package slskd provides a client for the slskd (Soulseek daemon) REST API.
 //
-// This is the connection half of the Soulseek integration (#1717): reachability,
-// version, login state, the API key's role and the downloads folder. Searching
-// and downloading are built on top of it later.
+// It covers reachability, version, login state, the API key's role and the
+// downloads folder, and interactive search (search.go). Downloading is built on
+// top of it later.
 //
-// Privacy note that belongs next to the code: once searching lands, every
-// wanted title leaves as search text to the Soulseek network, and a download
-// exposes the host's IP address to the peer. Soulseek downloads should also
-// run with the content check in block mode, because peers are anonymous; that
-// is a later change and is only recorded here.
+// Privacy note that belongs next to the code: every searched title leaves as
+// search text to the Soulseek network, and a download exposes the host's IP
+// address to the peer. Soulseek downloads should also run with the content
+// check in block mode, because peers are anonymous; that is a later change and
+// is only recorded here.
 package slskd
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -45,6 +46,16 @@ type Client struct {
 	baseURL string
 	apiKey  string
 	http    *http.Client
+
+	// searchSem admits one search at a time, because slskd answers a second
+	// concurrent POST /searches with 429. Capacity one, so it is a mutex that
+	// a waiting caller can give up on.
+	searchSem chan struct{}
+	// Search tuning. Zero values use the package defaults; tests shorten them.
+	searchTimeout time.Duration
+	searchWait    time.Duration
+	pollInterval  time.Duration
+	searchGrace   time.Duration
 }
 
 // New creates a slskd client. urlBase is the optional reverse-proxy subpath
@@ -55,8 +66,9 @@ func New(host string, port int, apiKey, urlBase string, useSSL bool) *Client {
 		scheme = "https"
 	}
 	return &Client{
-		baseURL: fmt.Sprintf("%s://%s%s", scheme, clienthost.Authority(host, port), urlbase.Normalize(urlBase)),
-		apiKey:  apiKey,
+		baseURL:   fmt.Sprintf("%s://%s%s", scheme, clienthost.Authority(host, port), urlbase.Normalize(urlBase)),
+		apiKey:    apiKey,
+		searchSem: make(chan struct{}, 1),
 		// Dialled directly, never via BINDERY_OUTBOUND_PROXY, with the dial and
 		// every redirect hop checked against the service policy.
 		http: &http.Client{
@@ -107,13 +119,29 @@ func (e *StatusError) Error() string {
 // (nil skips the body). Errors never carry the response body, which is peer
 // influenced, and every URL is redacted.
 func (c *Client) do(ctx context.Context, method, path string, max int64, target any) (int, error) {
+	return c.doBody(ctx, method, path, nil, max, target)
+}
+
+// doBody is do with an optional JSON request body.
+func (c *Client) doBody(ctx context.Context, method, path string, body any, max int64, target any) (int, error) {
 	u := c.baseURL + path
-	req, err := http.NewRequestWithContext(ctx, method, u, nil)
+	var reqBody io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return 0, fmt.Errorf("encode slskd request: %w", err)
+		}
+		reqBody = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, reqBody)
 	if err != nil {
 		return 0, fmt.Errorf("build request for %s: %w", httpsec.RedactSecrets(u), httpsec.RedactURLError(err))
 	}
 	req.Header.Set("X-API-Key", c.apiKey)
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("%s %s: %w", method, httpsec.RedactSecrets(u), httpsec.RedactURLError(err))
@@ -126,14 +154,14 @@ func (c *Client) do(ctx context.Context, method, path string, max int64, target 
 	if target == nil {
 		return resp.StatusCode, nil
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
 	if err != nil {
 		return resp.StatusCode, fmt.Errorf("read slskd response: %w", httpsec.RedactURLError(err))
 	}
-	if int64(len(body)) > max {
+	if int64(len(raw)) > max {
 		return resp.StatusCode, fmt.Errorf("slskd response is larger than %d bytes, so this is probably not slskd", max)
 	}
-	if err := json.Unmarshal(body, target); err != nil {
+	if err := json.Unmarshal(raw, target); err != nil {
 		return resp.StatusCode, errors.New("slskd answered with something that is not JSON, so this is probably not slskd")
 	}
 	return resp.StatusCode, nil

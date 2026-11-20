@@ -50,7 +50,7 @@ func packGrabFixture(t *testing.T, results []newznab.SearchResult) (*Scheduler, 
 		t.Fatal(err)
 	}
 	for i := range results {
-		results[i].IndexerID = idx.ID
+		results[i].IndexerID = &idx.ID
 	}
 
 	author := &models.Author{ForeignID: "OL-pack", Name: "Pierce Brown", SortName: "Brown, Pierce"}
