@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation, useNavigationType } from 'react-router'
 import QueuePage, { MatchBookControl } from './QueuePage'
 import { summarizeError, ERROR_SUMMARY_LEN } from './queueError'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import { acceptConfirm, clickBulkAction } from '../test-utils'
 import type { Download, PendingRelease, QueueItem, QueueListResponse } from '../api/client'
 
@@ -1149,7 +1149,7 @@ describe('QueuePage status view', () => {
       fireEvent.click(btn)
       expect(api.triggerLibraryScan).toHaveBeenCalledTimes(1)
       await act(async () => { resolve({ message: 'library scan started' }) })
-      expect(await screen.findByText('queue.scanStarted')).toBeInTheDocument()
+      expect(await screen.findByRole('status')).toHaveTextContent('queue.scanStarted')
       expect(btn).not.toBeDisabled()
       expect(vi.mocked(api.listQueue).mock.calls.length).toBeGreaterThan(calls)
     })
@@ -1163,6 +1163,21 @@ describe('QueuePage status view', () => {
       await screen.findByText('Elsewhere')
       fireEvent.click(screen.getByRole('button', { name: 'Scan library for Elsewhere' }))
       expect(await screen.findByText('queue.scanQueued')).toBeInTheDocument()
+    })
+
+    it('shows a friendly note, not the server text, on a 409 already running', async () => {
+      vi.mocked(api.listQueue).mockResolvedValue({ items: [
+        makeQueueItem({ id: 1, title: 'Elsewhere', status: 'importExternal' }),
+      ] })
+      vi.mocked(api.triggerLibraryScan).mockRejectedValue(new ApiError(409, { error: 'scan already running' }, 'Conflict'))
+      renderQueuePage()
+      await screen.findByText('Elsewhere')
+      const btn = screen.getByRole('button', { name: 'Scan library for Elsewhere' })
+      fireEvent.click(btn)
+      expect(await screen.findByRole('status')).toHaveTextContent('queue.scanRunning')
+      expect(screen.queryByText(/scan already running/)).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(btn).not.toBeDisabled()
     })
 
     it('shows the failure on the row and re-enables the button', async () => {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router'
 import { useConfirmDialog } from '../components/useConfirmDialog'
-import { api, Book, PendingRelease, QueueItem } from '../api/client'
+import { api, ApiError, Book, PendingRelease, QueueItem } from '../api/client'
 import BookAuthorLink from '../components/BookAuthorLink'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -254,15 +254,23 @@ export default function QueuePage() {
     try {
       const res = await api.triggerLibraryScan()
       const message = res?.queued
-        ? t('queue.scanQueued', 'A scan is already running. Another one starts as soon as it finishes.')
-        : t('queue.scanStarted', 'Library scan started. This row updates once the scan has picked up the file.')
+        ? t('queue.scanQueued', 'A scan is already running. Another one starts as soon as it finishes, so the file is picked up either way.')
+        : t('queue.scanStarted', 'Library scan started. It picks up the file the external tool placed in your library and the book then shows as owned. This row stays under Handed off until you remove it.')
       setMatchMessages(prev => ({ ...prev, [id]: message }))
       load()
     } catch (e) {
-      setScanErrors(prev => ({
-        ...prev,
-        [id]: errorText(e, t('queue.scanFailedFallback', 'Scan failed')),
-      }))
+      if (e instanceof ApiError && e.status === 409) {
+        // ErrScanAlreadyRunning: not a failure, so no raw server text.
+        setMatchMessages(prev => ({
+          ...prev,
+          [id]: t('queue.scanRunning', 'A scan is already running. Try again once it has finished.'),
+        }))
+      } else {
+        setScanErrors(prev => ({
+          ...prev,
+          [id]: errorText(e, t('queue.scanFailedFallback', 'Scan failed')),
+        }))
+      }
     } finally {
       setRetryingImportIds(prev => {
         const next = new Set(prev)
@@ -668,7 +676,7 @@ export default function QueuePage() {
                       </div>
                     )}
                     {matchMessages[item.id] && (
-                      <div className="mt-1 text-xs text-accent-text bg-emerald-400/10 rounded px-2 py-1 break-words">
+                      <div role="status" className="mt-1 text-xs text-accent-text bg-emerald-400/10 rounded px-2 py-1 break-words">
                         {matchMessages[item.id]}
                       </div>
                     )}
