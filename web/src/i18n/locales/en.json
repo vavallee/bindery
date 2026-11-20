@@ -2436,6 +2436,7 @@
       "defaultMonitorModeLabel": "Default monitor mode",
       "defaultMonitorModeHint": "Applied to newly added authors. Existing authors keep their current mode unless edited.",
       "defaultMonitorLatestCountLabel": "Latest book count",
+      "defaultMonitorLatestCountInvalid": "Enter a whole number of 1 or more.",
       "defaultMonitorNewItemsLabel": "Default for monitoring newly discovered books",
       "defaultMonitorNewItemsHint": "Applied to newly added authors. Choose whether a metadata refresh may add books it discovers later. Existing authors keep their own setting.",
       "audiobookFileTemplate": "Audiobook file naming (per track)",
@@ -2790,6 +2791,12 @@
     },
     "pathRemap": {
       "syntaxHint": "Use comma-separated <code>from:to</code> prefix rewrites."
+    },
+    "toast": {
+      "saved": "{{name}} saved",
+      "set": "{{name}} set to {{value}}",
+      "failed": "Couldn't save {{name}}",
+      "genericName": "Setting"
     }
   },
   "addToLibrary": {
