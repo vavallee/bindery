@@ -165,4 +165,19 @@ describe('Latest book count autosave (#3991)', () => {
     fireEvent.blur(input)
     expect(api.setSetting).not.toHaveBeenCalled()
   })
+
+  it('Escape during a pending save does nothing, so the field shows the new saved value', async () => {
+    let resolve!: () => void
+    vi.mocked(api.setSetting).mockReturnValueOnce(new Promise<void>(res => { resolve = res }) as never)
+    render(<MetadataTab />)
+    const input = await field()
+    fireEvent.change(input, { target: { value: '9' } })
+    fireEvent.blur(input)
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(input).toHaveValue(9)
+    await act(async () => { resolve() })
+    expect(input).toHaveValue(9)
+    fireEvent.blur(input)
+    expect(api.setSetting).toHaveBeenCalledTimes(1)
+  })
 })

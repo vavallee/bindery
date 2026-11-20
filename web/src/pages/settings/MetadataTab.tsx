@@ -183,7 +183,9 @@ export default function MetadataTab() {
   }
 
   // Escape drops the edit and shows the last saved value again.
-  const cancelLatestCount = () => restoreSetting(setSettings, LATEST_COUNT_KEY, savedLatestCount.current)
+  // While a save is in flight it does nothing: the server is about to hold that
+  // value, and restoring the old one would leave the field behind it.
+  const cancelLatestCount = () => inFlightLatestCount.current === null && restoreSetting(setSettings, LATEST_COUNT_KEY, savedLatestCount.current)
 
   const reload = () => api.listMetadataProfiles().then(setProfiles).catch(console.error)
 
