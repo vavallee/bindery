@@ -1456,8 +1456,12 @@ func (h *QueueHandler) selectClients(ctx context.Context, protocol, mediaType st
 	eligible := db.FilterEligibleForMediaType(candidates, mediaType)
 	if len(eligible) == 0 {
 		otherProtocol := otherProtocol(protocol)
-		otherCandidates, otherErr := h.clients.GetEnabledByProtocol(ctx, otherProtocol)
-		if otherErr == nil && len(db.FilterEligibleForMediaType(otherCandidates, mediaType)) > 0 {
+		var otherCandidates []models.DownloadClient
+		var otherErr error
+		if otherProtocol != "" {
+			otherCandidates, otherErr = h.clients.GetEnabledByProtocol(ctx, otherProtocol)
+		}
+		if otherProtocol != "" && otherErr == nil && len(db.FilterEligibleForMediaType(otherCandidates, mediaType)) > 0 {
 			mediaLabel := "books"
 			if mediaType == models.MediaTypeAudiobook {
 				mediaLabel = "audiobooks"
@@ -1518,6 +1522,10 @@ func (h *QueueHandler) clientForGrab(ctx context.Context, indexerID *int64, prot
 // a plain "add a download client" message.
 func (h *QueueHandler) noProtocolClientError(ctx context.Context, protocol string) error {
 	other := otherProtocol(protocol)
+	if other == "" {
+		// Soulseek has no opposite protocol to point the user at.
+		return &noClientError{msg: fmt.Sprintf("no enabled %s download client configured; add a %s client", protocolLabel(protocol), protocolClientSuggestions(protocol))}
+	}
 	otherEnabled, err := h.clients.GetEnabledByProtocol(ctx, other)
 	if err != nil {
 		// Don't mask the real failure with a guess about other clients.
@@ -1534,8 +1542,13 @@ func (h *QueueHandler) noProtocolClientError(ctx context.Context, protocol strin
 
 // otherProtocol returns the protocol opposite to the one given. Anything that
 // isn't "torrent" is treated as usenet (selectClient's callers default to
-// usenet), so the inverse of usenet is torrent.
+// usenet), so the inverse of usenet is torrent. Soulseek has no opposite and
+// answers "", which callers must treat as "nothing to compare against" so a
+// soulseek failure is never routed to torrent code.
 func otherProtocol(protocol string) string {
+	if protocol == downloader.ProtocolSoulseek {
+		return ""
+	}
 	if protocol == "torrent" {
 		return "usenet"
 	}
@@ -1555,8 +1568,11 @@ func protocolLabel(protocol string) string {
 // protocolClientSuggestions names the client software a user could add for the
 // missing protocol.
 func protocolClientSuggestions(protocol string) string {
-	if protocol == "torrent" {
+	switch protocol {
+	case "torrent":
 		return "qBittorrent/Transmission/Deluge/rTorrent"
+	case downloader.ProtocolSoulseek:
+		return "slskd"
 	}
 	return "SABnzbd/NZBGet"
 }

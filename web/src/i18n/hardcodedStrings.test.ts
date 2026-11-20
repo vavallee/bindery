@@ -19,7 +19,7 @@ const ATTRIBUTES = new Set(['title', 'aria-label', 'placeholder', 'alt', 'label'
 const ALLOWED = new Set([
   'Bindery', 'Audiobookshelf', 'Calibre', 'Calibre-Web-Automated (CWA)', 'Grimmory', 'Hardcover',
   'OpenLibrary', 'Prowlarr', 'SABnzbd', 'NZBGet', 'qBittorrent', 'Transmission', 'Deluge',
-  'rTorrent / ruTorrent', 'Google', 'google', 'en', 'my-topic', 'Fantasy, Epic',
+  'rTorrent / ruTorrent', 'slskd (Soulseek)', 'Google', 'google', 'en', 'my-topic', 'Fantasy, Epic',
 ])
 
 // A naming template, or a single token holding a path, URL, key or digit, or

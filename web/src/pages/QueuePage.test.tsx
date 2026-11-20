@@ -1046,4 +1046,54 @@ describe('QueuePage status view', () => {
     await waitFor(() => expect(search).toBe(''))
     expect(navType).toBe('REPLACE')
   })
+
+  // #3992: chips for the states that used to hide inside Active.
+  it('offers a chip with a count for held, handed off and needs-attention rows', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
+      makeQueueItem({ id: 1, title: 'Going', status: 'downloading' }),
+      makeQueueItem({ id: 2, title: 'Parked', status: 'importHeld' }),
+      makeQueueItem({ id: 3, title: 'Elsewhere', status: 'importExternal' }),
+      makeQueueItem({ id: 4, title: 'Stuck', status: 'importBlocked' }),
+    ] })
+    renderQueuePage()
+    await screen.findByText('Going')
+    const view = screen.getByRole('group', { name: 'queue.statusView' })
+    // The mocked t returns the key, so assert on the keys that carry a count.
+    for (const key of ['queue.viewDownloading', 'queue.viewHeld', 'queue.viewExternal', 'queue.viewAttention']) {
+      expect(within(view).getByRole('button', { name: key })).toBeInTheDocument()
+    }
+    // Nothing is importing, so that chip stays out of the bar.
+    expect(within(view).queryByRole('button', { name: 'queue.viewImporting' })).toBeNull()
+    fireEvent.click(within(view).getByRole('button', { name: 'queue.viewHeld' }))
+    expect(screen.getByText('Parked')).toBeInTheDocument()
+    expect(screen.queryByText('Going')).toBeNull()
+    expect(screen.queryByText('Elsewhere')).toBeNull()
+    fireEvent.click(within(view).getByRole('button', { name: 'queue.viewExternal' }))
+    expect(screen.getByText('Elsewhere')).toBeInTheDocument()
+    expect(screen.queryByText('Parked')).toBeNull()
+    fireEvent.click(within(view).getByRole('button', { name: 'queue.viewAttention' }))
+    expect(screen.getByText('Stuck')).toBeInTheDocument()
+    expect(screen.queryByText('Elsewhere')).toBeNull()
+  })
+
+  it('opens on a new view named in the URL', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
+      makeQueueItem({ id: 1, title: 'Going', status: 'downloading' }),
+      makeQueueItem({ id: 2, title: 'Parked', status: 'importHeld' }),
+    ] })
+    render(<MemoryRouter initialEntries={['/queue?view=held']}><QueuePage /></MemoryRouter>)
+    await screen.findByText('Parked')
+    expect(screen.queryByText('Going')).toBeNull()
+  })
+
+  it('keeps the selected chip visible when its state empties', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({ items: [
+      makeQueueItem({ id: 1, title: 'Going', status: 'downloading' }),
+    ] })
+    render(<MemoryRouter initialEntries={['/queue?view=held']}><QueuePage /></MemoryRouter>)
+    await screen.findByText('queue.viewStateEmpty')
+    const view = screen.getByRole('group', { name: 'queue.statusView' })
+    expect(within(view).getByRole('button', { name: 'queue.viewHeld' })).toBeInTheDocument()
+  })
+
 })
