@@ -8,7 +8,7 @@ import { calendarYear, formatCalendarDate } from '../util/calendarDate'
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
 import ReleaseSwarm from '../components/ReleaseSwarm'
-import { SoulseekBadge, SoulseekDetail, SoulseekGrabNote, isSoulseek, soulseekGrabAria, useSoulseekGrabTitle } from '../components/SoulseekRelease'
+import { SoulseekBadge, SoulseekDetail, isSoulseek } from '../components/SoulseekRelease'
 import BulkActionBar from '../components/BulkActionBar'
 import ImportHints from '../components/ImportHints'
 import Pagination from '../components/Pagination'
@@ -52,7 +52,6 @@ const UPCOMING_FILTERS = ['', 'only', 'hide'] as const
 
 export default function WantedPage() {
   const { t } = useTranslation()
-  const soulseekGrabTitle = useSoulseekGrabTitle()
   const { confirm, confirmDialog } = useConfirmDialog()
 
   // The current page of wanted books, and how many match the search in all.
@@ -593,13 +592,9 @@ export default function WantedPage() {
                         </div>
                         <button
                           type="button"
-                          onClick={() => { if (!isSoulseek(r)) grab(r, book) }}
+                          onClick={() => grab(r, book)}
                           disabled={grabbingGuid === r.guid || grabbedGuid === r.guid}
-                          title={isSoulseek(r) ? soulseekGrabTitle : undefined}
-                          {...soulseekGrabAria(r)}
                           className={`px-2 py-2 rounded text-[10px] font-medium flex-shrink-0 touch-manipulation transition-colors disabled:cursor-default ${
-                            isSoulseek(r) ? 'opacity-50 cursor-not-allowed ' : ''
-                          }${
                             grabbedGuid === r.guid
                               ? 'bg-emerald-700 text-white'
                               : grabbingGuid === r.guid
@@ -609,7 +604,6 @@ export default function WantedPage() {
                         >
                           {grabbedGuid === r.guid ? t('wanted.grabbed') : grabbingGuid === r.guid ? t('wanted.grabbing') : t('wanted.grab')}
                         </button>
-                        <SoulseekGrabNote r={r} />
                       </div>
                     ))}
                   </div>

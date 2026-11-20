@@ -7,12 +7,11 @@ import { useConfirmDialog } from '../components/useConfirmDialog'
 import { grabErrorText, grabWithForceConfirm } from '../util/forceGrab'
 import { primaryFill } from '../components/buttons'
 import ReleaseSwarm from '../components/ReleaseSwarm'
-import { SoulseekBadge, SoulseekDetail, SoulseekGrabNote, isSoulseek, soulseekGrabAria, useSoulseekGrabTitle } from '../components/SoulseekRelease'
+import { SoulseekBadge, SoulseekDetail, isSoulseek } from '../components/SoulseekRelease'
 import { errorText } from '../util/errorText'
 
 export default function SearchPage() {
   const { t } = useTranslation()
-  const soulseekGrabTitle = useSoulseekGrabTitle()
   const { confirm, confirmDialog } = useConfirmDialog()
   // The header search's "Search indexers for …" row lands here with ?q=.
   const [searchParams, setSearchParams] = useSearchParams()
@@ -205,16 +204,13 @@ export default function SearchPage() {
                   </span>
                 ) : (
                   <button
-                    onClick={() => { if (!isSoulseek(r)) grab(r) }}
+                    onClick={() => grab(r)}
                     disabled={grabbing !== null}
-                    title={isSoulseek(r) ? soulseekGrabTitle : undefined}
-                    {...soulseekGrabAria(r)}
-                    className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0 ${isSoulseek(r) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`px-3 py-2 ${primaryFill} disabled:opacity-50 rounded text-[11px] font-medium flex-shrink-0`}
                   >
                     {grabbing === r.guid ? t('search.grabbing') : t('search.grab')}
                   </button>
                 )}
-                <SoulseekGrabNote r={r} />
               </div>
             ))}
           </div>

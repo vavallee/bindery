@@ -1853,9 +1853,26 @@ wanted books never uses it.
   from the file extension and leaves out files that are not books or
   audiobooks. It does not guess an author or title it cannot read from the
   names.
-- **Grab is disabled** on these results, with a tooltip saying so. Grabbing from
-  Soulseek arrives in a later release, so for now you can see what is out there
-  but not download it through Bindery.
+- **Grab works on these results**, the same button as for any other result.
+  Grabbing is by hand only: the automatic search for wanted books never uses
+  Soulseek and never grabs from it. Auto grab is not included.
+- The Queue shows a Soulseek download with the peer's name and where it stands,
+  for example "Queued in alice's upload queue (position 4)" while it waits,
+  then how many files are done. A download is complete only when every file
+  arrived. If one file fails, the whole download fails and the rest is cleaned
+  up, and you can pick another result. A download that sits queued for 30
+  minutes, or stops receiving bytes for 10 minutes, is cancelled and failed the
+  same way. Removing it from the Queue cancels it in slskd.
+- Files from peers are checked in block mode when they are imported. An EPUB or
+  Kindle file that will not open, one that is a different book, audiobook tags
+  for another book, the wrong format, or a language your profile does not allow
+  is refused, blocklisted and left for Match to book. A content check you set
+  to off stays off. PDF has no content check, so a PDF only has to be the
+  right format.
+- slskd and Bindery must share the downloads volume, or the client's path remap
+  must reach slskd's downloads folder, because Bindery imports from
+  `bindery/<download id>/` inside it. See the
+  [deployment guide](DEPLOYMENT.md#slskd-soulseek).
 - A search usually takes about 15 seconds longer while slskd waits for peers,
   and slskd runs only one search at a time. Bindery waits at most 20 seconds
   for slskd, so the worst case is 20 extra seconds. After that you get your

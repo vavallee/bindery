@@ -66,6 +66,9 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		return
 	}
 
+	if isSoulseekDownload(dl) {
+		ctx = withStrictContentCheck(ctx)
+	}
 	s.updateDownloadStatus(ctx, dl.ID, models.StateImportPending)
 
 	// Read the configured import mode ONCE for the whole download (issue #705
@@ -306,6 +309,17 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// Now there is a real file to look at. An explicit formatHint is the
 	// override throughout, on the same principle as the video guard below: a
 	// human declared the format, so their call wins.
+	// Soulseek block mode (soulseek_gate.go): the folder must hold the format
+	// the download was grabbed for and every EPUB or Kindle file must open.
+	// Refused like a disallowed format, with the path kept for Match to book.
+	if formatHint == "" && len(bookFiles) > 0 && isSoulseekDownload(dl) && !isManualImport(ctx) {
+		if reason := soulseekGate(dl, bookFiles, detectedFormat); reason != "" {
+			s.recordUnmatchedImportPath(ctx, dl.ID, downloadPath)
+			s.blocklistRejectedRelease(ctx, dl, models.BlocklistScopeBook, reason)
+			s.failImport(ctx, dl, models.StateImportBlocked, reason)
+			return
+		}
+	}
 	if formatHint == "" && len(bookFiles) > 0 {
 		if reject, reason := s.rejectedDownloadFormat(ctx, author, bookFiles, detectedFormat); reject {
 			// Record the path first so the queue's "Match to book" action can

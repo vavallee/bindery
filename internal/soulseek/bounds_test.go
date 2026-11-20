@@ -2,6 +2,7 @@ package soulseek
 
 import (
 	"math"
+	"strconv"
 	"testing"
 
 	"github.com/vavallee/bindery/internal/downloader/slskd"
@@ -23,12 +24,41 @@ func TestReleasesBoundSizesAndDropDuplicates(t *testing.T) {
 	}
 }
 
-func TestReleasesCeilingKeepsLargestPlausibleFile(t *testing.T) {
+// A folder past what one download may hold is not offered, because a grab of it
+// would be refused: the cap is the grab cap, not the 50 GiB search ceiling.
+func TestReleasesDropFoldersPastTheGrabCaps(t *testing.T) {
 	resp := []slskd.SearchResponse{{Username: "u", Files: []slskd.SearchFile{
-		file(`a\big.m4b`, maxFileBytes), file(`b\toobig.m4b`, maxFileBytes+1),
+		file(`a\ok.m4b`, slskd.MaxGrabBytes), file(`b	oobig.m4b`, slskd.MaxGrabBytes+1), file(`c\ceiling.m4b`, maxFileBytes),
 	}}}
 	got := Releases("S", resp, "")
-	if len(got) != 1 || got[0].Size != maxFileBytes {
-		t.Errorf("got %+v", got)
+	if len(got) != 1 || got[0].Size != slskd.MaxGrabBytes {
+		t.Fatalf("got %+v", got)
+	}
+	many := slskd.SearchResponse{Username: "v"}
+	for i := 0; i <= slskd.MaxGrabFiles; i++ {
+		many.Files = append(many.Files, file(`d\`+string(rune('a'+i%26))+strconv.Itoa(i)+`.mp3`, 10))
+	}
+	if got := Releases("S", []slskd.SearchResponse{many}, ""); len(got) != 0 {
+		t.Errorf("a folder of %d files was offered", len(many.Files))
+	}
+}
+
+// Every offered release carries an address that names exactly its own files, and
+// a folder whose paths could escape is not offered at all.
+func TestReleasesCarryAGrabAddressAndDropHostilePaths(t *testing.T) {
+	resp := []slskd.SearchResponse{
+		{Username: "alice", Files: []slskd.SearchFile{file(`Books\Dune\track1.mp3`, 10), file(`Books\Dune\track2.mp3`, 20)}},
+		{Username: "mallory", Files: []slskd.SearchFile{file(`..\..\etc\evil.epub`, 100)}},
+	}
+	got := Releases("S", resp, "")
+	if len(got) != 1 {
+		t.Fatalf("got %d releases, want only alice's", len(got))
+	}
+	g, err := slskd.DecodeGrab(got[0].NZBURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.User != "alice" || len(g.Files) != 2 || g.Files[0].Filename != `Books\Dune\track1.mp3` || g.Files[1].Size != 20 {
+		t.Errorf("grab = %+v", g)
 	}
 }

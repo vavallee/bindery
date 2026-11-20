@@ -104,7 +104,10 @@ func Releases(name string, responses []slskd.SearchResponse, mediaType string) [
 
 	out := make([]newznab.SearchResult, 0, len(order))
 	for _, k := range order {
-		out = append(out, groups[k].release(k.user, name))
+		// A folder past the download caps cannot be grabbed, so it is not offered.
+		if res, ok := groups[k].release(k.user, name); ok {
+			out = append(out, res)
+		}
 	}
 	// Peers who would start now come first, then the shorter queue, then the
 	// faster peer. The ranker is stable, so this is the tiebreak among releases
@@ -131,7 +134,7 @@ func Releases(name string, responses []slskd.SearchResponse, mediaType string) [
 	return out
 }
 
-func (g *group) release(user, name string) newznab.SearchResult {
+func (g *group) release(user, name string) (newznab.SearchResult, bool) {
 	// Title: the file's own name for a single file, the folder's name for a
 	// folder of parts, because the ranker and relevance filter read only the
 	// title. The format is appended as a token so the format term can see it.
@@ -165,7 +168,18 @@ func (g *group) release(user, name string) newznab.SearchResult {
 		h.Write([]byte{0})
 		h.Write([]byte(p))
 	}
+	grab := slskd.Grab{User: user}
+	for _, f := range g.files {
+		grab.Files = append(grab.Files, slskd.BatchFile{Filename: f.Filename, Size: f.Size})
+	}
+	// The user name is cleaned for display; the peer's own name goes to slskd.
+	grab.User = g.resp.Username
+	addr, err := slskd.EncodeGrab(grab)
+	if err != nil {
+		return newznab.SearchResult{}, false
+	}
 	return newznab.SearchResult{
+		NZBURL:      addr,
 		GUID:        GUIDPrefix + hex.EncodeToString(h.Sum(nil))[:32],
 		IndexerName: name,
 		Title:       title,
@@ -182,7 +196,7 @@ func (g *group) release(user, name string) newznab.SearchResult {
 			FileCount:   len(g.files),
 			Format:      g.ext,
 		},
-	}
+	}, true
 }
 
 func wantFormat(ext, mediaType string) bool {

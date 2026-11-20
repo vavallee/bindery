@@ -20,6 +20,7 @@ import BulkActionBar from '../components/BulkActionBar'
 import FilterBar from '../components/FilterBar'
 import EmptyState from '../components/EmptyState'
 import Checkbox from '../components/Checkbox'
+import { SoulseekQueueLine } from '../components/SoulseekRelease'
 import { useIsAdmin } from '../auth/AuthContext'
 
 export default function QueuePage() {
@@ -616,6 +617,7 @@ export default function QueuePage() {
                         ) : null
                       })()}
                     </div>
+                    {item.soulseek && <SoulseekQueueLine s={item.soulseek} />}
                     <DownloadStatusHint status={item.status} />
                     {/* Retry import clears error_message, so a re-armed row would
                         otherwise show an "Import Failed" pill with no explanation

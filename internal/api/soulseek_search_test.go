@@ -1,9 +1,7 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -115,47 +113,6 @@ func TestSearchQuery_DisabledSlskdClientSendsNothing(t *testing.T) {
 	}
 	if n := requests.Load(); n != 0 {
 		t.Errorf("a disabled slskd client received %d requests", n)
-	}
-}
-
-// Grab is not enabled for Soulseek yet: the server refuses before a download
-// row exists, and no client of any other type is touched.
-func TestGrab_SoulseekRefusedBeforeAnyDownloadOrClient(t *testing.T) {
-	var sabCalls atomic.Int32
-	sab := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		sabCalls.Add(1)
-		_, _ = w.Write([]byte(`{"status":true,"nzo_ids":["x"]}`))
-	}))
-	t.Cleanup(sab.Close)
-	queue, _, downloads, clients, _, ctx := queueFixture(t)
-	host, port := testServerHostPort(t, sab.URL)
-	if err := clients.Create(ctx, &models.DownloadClient{Name: "sab", Type: "sabnzbd", Host: host, Port: port, Enabled: true, EnabledForBooks: true, EnabledForAudiobooks: true}); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, body := range []string{
-		`{"guid":"slskd:abc","title":"Dune [EPUB]","nzbUrl":"","protocol":"soulseek"}`,
-		`{"guid":"slskd:abc","title":"Dune [EPUB]","nzbUrl":"http://x/y.nzb"}`,
-	} {
-		rec := httptest.NewRecorder()
-		queue.Grab(rec, httptest.NewRequest(http.MethodPost, "/queue/grab", bytes.NewBufferString(body)))
-		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "Soulseek") {
-			t.Errorf("grab %s: status %d body %s", body, rec.Code, rec.Body.String())
-		}
-	}
-	if sabCalls.Load() != 0 {
-		t.Errorf("a Soulseek grab reached SABnzbd %d times", sabCalls.Load())
-	}
-	if d, _ := downloads.GetByGUID(ctx, "slskd:abc"); d != nil {
-		t.Errorf("a download row was created: %+v", d)
-	}
-
-	// The inner path refuses too (pending and bulk callers reach grab directly).
-	if _, err := queue.grab(ctx, grabRequest{GUID: "slskd:def", Title: "t", Protocol: "soulseek"}); !errors.Is(err, errSoulseekGrabUnavailable) {
-		t.Errorf("grab() err = %v", err)
-	}
-	if sabCalls.Load() != 0 {
-		t.Error("grab() reached SABnzbd")
 	}
 }
 

@@ -233,9 +233,7 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 		case "sabnzbd":
 			s.checkSABnzbdDownloads(ctx, client)
 		case "slskd":
-			// Nothing is grabbed through slskd yet (#1717), so there is no
-			// download to poll. Polling arrives with the grab work; until then
-			// this must not fall into the warning below on every cycle.
+			s.checkSlskdDownloads(ctx, client)
 		default:
 			// An unknown client type must NOT silently fall through to the SABnzbd
 			// poller: it would hit SABnzbd's HTTP endpoints against the wrong host,

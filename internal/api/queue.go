@@ -19,6 +19,7 @@ import (
 	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/downloader"
 	"github.com/vavallee/bindery/internal/downloader/nethint"
+	"github.com/vavallee/bindery/internal/downloader/slskd"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/indexer/newznab"
 	"github.com/vavallee/bindery/internal/models"
@@ -47,11 +48,10 @@ const queueImportedVisibleFor = 7 * 24 * time.Hour
 
 var errAlreadyGrabbed = errors.New("already grabbed")
 
-// errSoulseekGrabUnavailable refuses a grab of a Soulseek result. Interactive
-// search lists them, but sending a download to slskd arrives in a later release
-// (#1717). Refusing here, before any download row exists, keeps a hand crafted
-// request from leaving a half grabbed row behind.
-var errSoulseekGrabUnavailable = errors.New("grabbing from Soulseek is not available yet, so this result can be seen but not downloaded")
+// errSoulseekGrabInvalid marks a Soulseek grab whose address names nothing
+// Bindery will ask slskd for: damaged, too many files, too large, or a path
+// that climbs out of its folder. Refused before any download row exists.
+var errSoulseekGrabInvalid = errors.New("invalid Soulseek download")
 
 // errNoDownloadClient marks a grab or retry that no enabled download client
 // can take. It is a setup problem the user can fix, so the handlers answer 400
@@ -177,7 +177,7 @@ func queueItemMessage(ctx context.Context, err error) string {
 	case errors.As(err, &perr):
 		return pinnedMessage(ctx, perr)
 	case errors.Is(err, errNoDownloadClient), errors.Is(err, errAlreadyGrabbed),
-		errors.Is(err, errSoulseekGrabUnavailable), errors.Is(err, errRetryNotResendable), errors.Is(err, errGrabBookNotFound),
+		errors.Is(err, errSoulseekGrabInvalid), errors.Is(err, errRetryNotResendable), errors.Is(err, errGrabBookNotFound),
 		isNoEligibleMediaTypeError(err):
 		return err.Error()
 	case errors.Is(err, errSendFailed):
@@ -512,6 +512,20 @@ type QueueItem struct {
 	TimeLeft   string   `json:"timeLeft,omitempty"`
 	Speed      string   `json:"speed,omitempty"`
 	Book       *bookRef `json:"book,omitempty"`
+	// Soulseek is what a slskd download shows besides its percentage: the
+	// peer's name, and the state in words the row renders.
+	Soulseek *queueSoulseek `json:"soulseek,omitempty"`
+}
+
+// queueSoulseek is the Soulseek part of a queue row. User is the peer the files
+// come from, read from the download's own address. The rest is live and absent
+// while slskd cannot be reached.
+type queueSoulseek struct {
+	User          string `json:"user"`
+	State         string `json:"state,omitempty"`
+	Files         int    `json:"files,omitempty"`
+	FilesDone     int    `json:"filesDone,omitempty"`
+	QueuePosition *int   `json:"queuePosition,omitempty"`
 }
 
 type enrichedQueueItem struct {
@@ -761,6 +775,9 @@ func (h *QueueHandler) List(w http.ResponseWriter, r *http.Request) {
 		// reaches the client. The queue is per-user but the apikey is the shared
 		// indexer credential, so exposing it in any user's queue leaks it (same
 		// reason SearchBook redacts). Retries re-sign server-side in grab().
+		if item.Download.Protocol == downloader.ProtocolSoulseek {
+			items[i].Soulseek = soulseekQueueInfo(item)
+		}
 		items[i].NZBURL = newznab.RedactDownloadURL(items[i].NZBURL)
 		// A torznab GUID is often the download URL itself, credentials and all.
 		items[i].GUID = newznab.RedactDownloadURL(items[i].GUID)
@@ -1090,10 +1107,6 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Protocol == downloader.ProtocolSoulseek || strings.HasPrefix(req.GUID, "slskd:") {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": errSoulseekGrabUnavailable.Error()})
-		return
-	}
 	if req.GUID == "" || req.NZBURL == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "guid and nzbUrl required"})
 		return
@@ -1128,8 +1141,8 @@ func (h *QueueHandler) Grab(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if errors.Is(err, errSoulseekGrabUnavailable) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+	if errors.Is(err, errSoulseekGrabInvalid) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, errGrabBookNotFound) {
@@ -1627,8 +1640,20 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	if req.Protocol == "" {
 		req.Protocol = "usenet"
 	}
-	if req.Protocol == downloader.ProtocolSoulseek {
-		return nil, errSoulseekGrabUnavailable
+	soulseek := req.Protocol == downloader.ProtocolSoulseek || strings.HasPrefix(req.GUID, "slskd:")
+	if soulseek {
+		req.Protocol = downloader.ProtocolSoulseek
+		// No indexer produced this result, so none is attributed, signed with
+		// or pinned to. The address is validated before a row exists.
+		req.IndexerID = nil
+		grab, err := slskd.DecodeGrab(req.NZBURL)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", errSoulseekGrabInvalid, err.Error())
+		}
+		// The files decide the format slot, not the book's search leg.
+		if mt := indexer.MediaTypeForFormat(grab.Ext()); mt != "" {
+			req.MediaType = mt
+		}
 	}
 	existing, err := h.downloads.GetByGUID(ctx, req.GUID)
 	if err != nil {
@@ -1738,7 +1763,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 	// luck of who holds a key, so it may fill in an attribution the decision
 	// left open but never replaces or overrides one. See resolveGrabPin.
 	var decision grabPinDecision
-	if h.indexers != nil {
+	if h.indexers != nil && !soulseek {
 		idxs, err := h.indexers.List(ctx)
 		if err != nil {
 			return nil, err
@@ -1753,7 +1778,10 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		id := decision.IndexerID
 		signWith = &id
 	}
-	nzbURL, hostMatched := h.signNZBURL(ctx, req.NZBURL, signWith)
+	nzbURL, hostMatched := req.NZBURL, (*int64)(nil)
+	if !soulseek {
+		nzbURL, hostMatched = h.signNZBURL(ctx, req.NZBURL, signWith)
+	}
 	if decision.Kind == pinUseIndexer {
 		// The decided indexer is the row's indexer, whoever signed the URL.
 		id := decision.IndexerID
@@ -1822,6 +1850,7 @@ func (h *QueueHandler) grab(ctx context.Context, req grabRequest) (*models.Downl
 		DownloadDir:          h.downloadDir,
 		AudiobookDownloadDir: h.audiobookDownloadDir,
 		GlobalRemap:          h.downloadPathRemap,
+		DownloadID:           dl.ID,
 	}.WithSeedLimits(h.resolveSeedLimits(ctx, indexerID)))
 	if err != nil {
 		slog.Error("failed to send download", "client", client.Name, "error", err, "title", req.Title)
@@ -2144,4 +2173,18 @@ func (h *QueueHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, bulkResponse{Results: results})
+}
+
+// soulseekQueueInfo builds the Soulseek part of a queue row. The peer's name
+// comes from the stored address before it is redacted for the response.
+func soulseekQueueInfo(item enrichedQueueItem) *queueSoulseek {
+	out := &queueSoulseek{}
+	if g, err := slskd.DecodeGrab(item.Download.NZBURL); err == nil {
+		out.User = g.User
+	}
+	if item.HasLive && item.Live.Soulseek != nil {
+		l := item.Live.Soulseek
+		out.State, out.Files, out.FilesDone, out.QueuePosition = l.State, l.Files, l.FilesDone, l.QueuePosition
+	}
+	return out
 }
