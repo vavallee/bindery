@@ -1359,6 +1359,9 @@
       "rootfolders": "Root Folders",
       "logs": "Logs",
       "general": "General",
+      "naming": "File Naming",
+      "storage": "Storage",
+      "schedules": "Schedules",
       "calibre": "Calibre",
       "abs": "Audiobookshelf",
       "grimmory": "Grimmory",
@@ -1715,7 +1718,7 @@
         "calibredbUnreachable": "✗ calibredb unreachable",
         "button": "Test connection"
       },
-      "intro": "Calibre only knows about books recorded in its <code>metadata.db</code>; a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over: register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below), or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, under File Naming on the General tab). Neither the write integration nor the CWA mirror runs in External import mode. The <guide>Calibre integration guide</guide> compares them.",
+      "intro": "Calibre only knows about books recorded in its <code>metadata.db</code>; a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over: register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below), or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, on the File Naming tab). Neither the write integration nor the CWA mirror runs in External import mode. The <guide>Calibre integration guide</guide> compares them.",
       "fields": {
         "libraryPath": "Library path",
         "libraryPathHint": "Directory containing <code>metadata.db</code>. Used by both the write integration and library import.",
@@ -1766,7 +1769,7 @@
         }
       },
       "cwa": {
-        "intro": "When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the General tab for that setup. Leave blank to disable.",
+        "intro": "When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the File Naming tab for that setup. Leave blank to disable.",
         "ingestPath": "Ingest folder path",
         "ingestPathHint": "Mount the same path into both containers. CWA’s docs use <code>{{path}}</code>."
       }
@@ -2180,6 +2183,12 @@
       "runtimeLevelHint": "Controls which log levels are written to the database"
     },
     "general": {
+      "desc": {
+        "general": "Theme, language and who can sign in.",
+        "naming": "How imported books are named and filed, and how Bindery picks up finished downloads.",
+        "storage": "Where Bindery keeps downloads and books, plus library scanning and the database check.",
+        "schedules": "Release filters and how often Bindery searches, syncs and checks for new books."
+      },
       "hardcoverTokenRejected": "Hardcover rejected the API token, so Hardcover requests are paused. Save a working token below, or use Test connection once it is fixed on Hardcover.",
       "hardcoverPausedUntil": "Hardcover is paused until {{time}} because its daily quota was reached. Retry interrupted imports after this time.",
       "appearance": "Appearance",

@@ -121,7 +121,7 @@ The format dropdown beside **add all** sets the media type of every book the fil
 
 ## Monitoring a series
 
-The **Shortlisted** switch on a series card is the series' Monitored flag. Until series checking is turned on it only marks the series. In `Settings -> General -> Series checking`, pick an interval (daily, weekly or monthly) and Bindery checks each monitored series that often against its Hardcover link and adds new books as wanted and monitored, the way **add all** would. It ships off: before this existed the switch did nothing, so every series you had already switched on starts adding books the moment you pick an interval.
+The **Shortlisted** switch on a series card is the series' Monitored flag. Until series checking is turned on it only marks the series. In `Settings -> Schedules -> Series checking`, pick an interval (daily, weekly or monthly) and Bindery checks each monitored series that often against its Hardcover link and adds new books as wanted and monitored, the way **add all** would. It ships off: before this existed the switch did nothing, so every series you had already switched on starts adding books the moment you pick an interval.
 
 Beside the switch, **What to add** chooses the books a check adds:
 

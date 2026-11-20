@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react'
-import GeneralTab from './GeneralTab'
+import GeneralTab from '../../test/allGeneralSections'
 import { api } from '../../api/client'
 
 vi.mock('../../components/ThemeToggle', () => ({ default: () => <button type="button">Theme</button> }))
