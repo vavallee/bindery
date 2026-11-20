@@ -57,22 +57,16 @@ func escapesDownloadRoot(root string, files []string) bool {
 	return false
 }
 
-// openRegularSource opens src for reading without following a symlink at the
-// last component and confirms the open handle is a regular file, so a link
-// swapped in after the caller's own checks is refused rather than followed.
-func openRegularSource(src string) (*os.File, error) {
-	f, err := openNoFollow(src)
-	if err != nil {
-		return nil, err
-	}
+// requireRegularFile fails unless the open handle f is a regular file, so a
+// link swapped in after the caller's own checks, or a device or directory, is
+// refused rather than copied.
+func requireRegularFile(f *os.File, src string) error {
 	fi, err := f.Stat()
 	if err != nil {
-		_ = f.Close()
-		return nil, err
+		return err
 	}
 	if !fi.Mode().IsRegular() {
-		_ = f.Close()
-		return nil, fmt.Errorf("source is not a regular file: %s", src)
+		return fmt.Errorf("source is not a regular file: %s", src)
 	}
-	return f, nil
+	return nil
 }

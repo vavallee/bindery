@@ -7,15 +7,18 @@ import (
 	"os"
 )
 
-// openNoFollow has no O_NOFOLLOW on Windows, so it Lstats first and refuses a
-// link; the caller's Stat of the open handle still requires a regular file.
-func openNoFollow(path string) (*os.File, error) {
+// noFollowFlag is zero: Windows has no O_NOFOLLOW.
+const noFollowFlag = 0
+
+// refuseLinkSource Lstats the source and refuses a link; the caller's check of
+// the open handle still requires a regular file.
+func refuseLinkSource(path string) error {
 	li, err := os.Lstat(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if li.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("source is a symlink: %s", path)
+		return fmt.Errorf("source is a symlink: %s", path)
 	}
-	return os.Open(path)
+	return nil
 }

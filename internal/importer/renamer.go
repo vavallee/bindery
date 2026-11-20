@@ -1499,11 +1499,17 @@ func copyFileExclusiveCtx(ctx context.Context, src, dst string) error {
 // download also confine it to the download root (sourceWithinRoot), which this
 // function cannot know.
 func copyFileModeCtx(ctx context.Context, src, dst string, exclusive bool) error {
-	in, err := openRegularSource(src)
+	if err := refuseLinkSource(src); err != nil {
+		return err
+	}
+	in, err := os.OpenFile(src, os.O_RDONLY|noFollowFlag, 0)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
+	if err := requireRegularFile(in, src); err != nil {
+		return err
+	}
 
 	if exclusive {
 		return copyToNewFileCtx(ctx, in, dst)
