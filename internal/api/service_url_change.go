@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/url"
 	"strings"
 
@@ -54,21 +55,32 @@ var credentialsBoundToURL = map[string][]string{
 
 // clearCredentialsOnURLChange clears the credentials bound to a service URL
 // setting when newValue names a different server than the stored value.
-func clearCredentialsOnURLChange(ctx context.Context, settings *db.SettingsRepo, key, newValue string) error {
+// An unset URL counts as the empty string, so setting a URL where none was, or
+// deleting the URL, is a change whenever a credential is still stored. It
+// returns the settings keys it cleared (never their values) and logs them.
+func clearCredentialsOnURLChange(ctx context.Context, settings *db.SettingsRepo, key, newValue string) ([]string, error) {
 	creds, ok := credentialsBoundToURL[key]
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	old, _ := settings.Get(ctx, key)
-	if old == nil || sameServiceURL(old.Value, newValue) {
-		return nil
+	oldValue := ""
+	if old, _ := settings.Get(ctx, key); old != nil {
+		oldValue = old.Value
 	}
+	if sameServiceURL(oldValue, newValue) {
+		return nil, nil
+	}
+	var cleared []string
 	for _, ck := range creds {
 		if cur, _ := settings.Get(ctx, ck); cur != nil && cur.Value != "" {
 			if err := settings.Set(ctx, ck, ""); err != nil {
-				return err
+				return cleared, err
 			}
+			cleared = append(cleared, ck)
 		}
 	}
-	return nil
+	if len(cleared) > 0 {
+		slog.Info("settings: cleared saved credentials because the service URL changed", "urlKey", key, "cleared", cleared)
+	}
+	return cleared, nil
 }

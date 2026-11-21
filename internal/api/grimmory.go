@@ -51,6 +51,9 @@ type GrimmoryConfigResponse struct {
 	Username           string `json:"username"`
 	PasswordConfigured bool   `json:"passwordConfigured"`
 	ServerVersion      string `json:"serverVersion,omitempty"`
+	// CredentialsCleared names the saved credentials ("apiKey", "password")
+	// the save dropped because the base URL moved. Never their values.
+	CredentialsCleared []string `json:"credentialsCleared,omitempty"`
 }
 
 type grimmoryConfigRequest struct {
@@ -122,64 +125,84 @@ func (h *GrimmoryHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Every field is validated before anything is written, and the writes land
+	// in one transaction, so a rejected request saves nothing and a failed
+	// write cannot leave a new URL next to the old credentials.
 	ctx := r.Context()
-	storedBaseURL := LoadGrimmoryConfig(h.settings).BaseURL
-	set := func(key, val string) {
-		if err := h.settings.Set(ctx, key, val); err != nil {
-			// The handler returns the re-read config either way, so a failed
-			// write is otherwise invisible: the user saves and nothing persists.
-			slog.Warn("grimmory: failed to persist setting", "key", key, "error", err)
-		}
-	}
+	stored := LoadGrimmoryConfig(h.settings)
+	var kvs []db.SettingKV
 
 	if req.Enabled != nil {
 		val := "false"
 		if *req.Enabled {
 			val = "true"
 		}
-		set(SettingGrimmoryEnabled, val)
+		kvs = append(kvs, db.SettingKV{Key: SettingGrimmoryEnabled, Value: val})
 	}
-	if req.BaseURL != nil {
-		u, err := grimmory.ValidateBaseURLSecure(*req.BaseURL)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		set(SettingGrimmoryBaseURL, u)
-		// Stored credentials belong to the server they were issued for. When
-		// the URL moves and no replacement came with it, drop them rather
-		// than send them to the new address.
-		if !sameServiceURL(u, storedBaseURL) {
-			if req.APIKey == nil || strings.TrimSpace(*req.APIKey) == "" {
-				set(SettingGrimmoryAPIKey, "")
-			}
-			if req.Password == nil || *req.Password == "" {
-				set(SettingGrimmoryPassword, "")
-			}
-		}
-	}
+
+	newKey := ""
 	if req.APIKey != nil {
 		k, err := httpsec.NormalizeAPIKey(*req.APIKey)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if k != "" {
-			set(SettingGrimmoryAPIKey, k)
-		}
-	}
-	if req.Username != nil {
-		set(SettingGrimmoryUsername, strings.TrimSpace(*req.Username))
+		newKey = k
 	}
 	// Password is write-only: a non-empty value replaces the stored one, an
-	// empty value is "leave unchanged" (matching the API-key semantics above,
-	// so the UI can round-trip the form without wiping credentials).
-	if req.Password != nil && *req.Password != "" {
-		set(SettingGrimmoryPassword, *req.Password)
+	// empty value is "leave unchanged" (matching the API-key semantics, so the
+	// UI can round-trip the form without wiping credentials).
+	newPassword := ""
+	if req.Password != nil {
+		newPassword = *req.Password
 	}
 
-	cfg := LoadGrimmoryConfig(h.settings)
-	writeJSON(w, http.StatusOK, grimmoryConfigResponse(cfg))
+	var cleared []string
+	if req.BaseURL != nil {
+		u, err := grimmory.ValidateBaseURLSecure(*req.BaseURL)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		kvs = append(kvs, db.SettingKV{Key: SettingGrimmoryBaseURL, Value: u})
+		// Stored credentials belong to the server they were issued for. When
+		// the URL moves and no replacement came with it, drop them rather
+		// than send them to the new address.
+		if !sameServiceURL(u, stored.BaseURL) {
+			if newKey == "" && stored.APIKey != "" {
+				kvs = append(kvs, db.SettingKV{Key: SettingGrimmoryAPIKey, Value: ""})
+				cleared = append(cleared, "apiKey")
+			}
+			if newPassword == "" && stored.Password != "" {
+				kvs = append(kvs, db.SettingKV{Key: SettingGrimmoryPassword, Value: ""})
+				cleared = append(cleared, "password")
+			}
+		}
+	}
+	if newKey != "" {
+		kvs = append(kvs, db.SettingKV{Key: SettingGrimmoryAPIKey, Value: newKey})
+	}
+	if req.Username != nil {
+		kvs = append(kvs, db.SettingKV{Key: SettingGrimmoryUsername, Value: strings.TrimSpace(*req.Username)})
+	}
+	if newPassword != "" {
+		kvs = append(kvs, db.SettingKV{Key: SettingGrimmoryPassword, Value: newPassword})
+	}
+
+	if len(kvs) > 0 {
+		if err := h.settings.SetMany(ctx, kvs); err != nil {
+			slog.Warn("grimmory: failed to persist settings", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save Grimmory settings"})
+			return
+		}
+	}
+	if len(cleared) > 0 {
+		slog.Info("grimmory: cleared saved credentials because the base URL changed", "cleared", cleared)
+	}
+
+	resp := grimmoryConfigResponse(LoadGrimmoryConfig(h.settings))
+	resp.CredentialsCleared = cleared
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // Test probes the configured Grimmory server and returns version info. When
