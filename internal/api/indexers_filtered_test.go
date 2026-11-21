@@ -94,7 +94,7 @@ func (f *grabSecFixture) droppedRelease(guid, title, stage, reason string) index
 	return indexer.DroppedRelease{
 		Stage: stage, Reason: reason,
 		Result: newznab.SearchResult{
-			GUID: guid, IndexerID: f.indexerID, IndexerName: "prowlarr", Title: title,
+			GUID: guid, IndexerID: &f.indexerID, IndexerName: "prowlarr", Title: title,
 			Size: 4321, NZBURL: signed, Protocol: "usenet",
 		},
 	}

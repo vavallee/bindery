@@ -61,7 +61,7 @@ A good pre-import cleanup pass in ABS is worth it. If your library already has s
 ## Import Flow
 
 1. Open `Settings -> ABS`.
-2. Save the ABS base URL, API key, label, target book libraries, and any optional path remaps. Saving stores normalized settings without contacting ABS.
+2. Save the ABS base URL, API key, label, target book libraries, and any optional path remaps. Saving stores normalized settings without contacting ABS. If you change the base URL and do not enter a new API key, the saved key is cleared so it is never sent to the new address.
    - The base URL needs a scheme, and it may carry a port. On a single host running everything under Compose that is usually `http://audiobookshelf:13378`. Typing `audiobookshelf:13378` without the scheme is rejected, because Go reads the port as the scheme.
 3. Test the connection and list available book libraries.
 4. Pick one or more book libraries from the list, or keep known saved library IDs until listing succeeds.

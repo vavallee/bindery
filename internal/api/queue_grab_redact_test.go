@@ -21,7 +21,7 @@ func TestSearchAndGrab_JackettCredentialsNeverLeaveTheServer(t *testing.T) {
 			f := newGrabSecFixture(t)
 			raw := f.indexerURL + "/dl/jackett?jackett_apikey=REALSECRET&passkey=REALSECRET&path=abc&file=One+Shot"
 			f.searcher.results = []newznab.SearchResult{{
-				GUID: raw, InfoURL: raw, IndexerID: f.indexerID, Title: "Lee Child - One Shot (epub)",
+				GUID: raw, InfoURL: raw, IndexerID: &f.indexerID, Title: "Lee Child - One Shot (epub)",
 				NZBURL: raw, Protocol: "usenet",
 			}}
 

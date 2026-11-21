@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/vavallee/bindery/internal/calibre"
 	"github.com/vavallee/bindery/internal/covers"
@@ -91,6 +92,15 @@ type Scanner struct {
 	series          *db.SeriesRepo
 	renamer         *Renamer
 	remapper        *Remapper
+	// downloadPathRemap is the raw BINDERY_DOWNLOAD_PATH_REMAP, kept for the
+	// downloader calls that parse it themselves (a slskd download's folder).
+	downloadPathRemap string
+	// slskd stall tracking (slskd_poll.go). Zero values mean the defaults.
+	slskdMu         sync.Mutex
+	slskdProgress   map[int64]*slskdProgress
+	slskdQueueStall time.Duration
+	slskdBytesStall time.Duration
+	slskdNow        func() time.Time
 	calibreQueue    calibreDeliveryQueue
 	grimmory        grimmoryPusher
 	calibreMode     func() calibre.Mode
@@ -205,16 +215,17 @@ func NewScanner(downloads *db.DownloadRepo, clients *db.DownloadClientRepo,
 		audiobookDir = libraryDir
 	}
 	return &Scanner{
-		downloads:    downloads,
-		clients:      clients,
-		books:        books,
-		authors:      authors,
-		history:      history,
-		renamer:      NewRenamerWithAudiobook(namingTemplate, audiobookTemplate),
-		remapper:     ParseRemap(downloadPathRemap),
-		libraryDir:   libraryDir,
-		audiobookDir: audiobookDir,
-		windowsPaths: onWindows,
+		downloads:         downloads,
+		clients:           clients,
+		books:             books,
+		authors:           authors,
+		history:           history,
+		renamer:           NewRenamerWithAudiobook(namingTemplate, audiobookTemplate),
+		remapper:          ParseRemap(downloadPathRemap),
+		downloadPathRemap: downloadPathRemap,
+		libraryDir:        libraryDir,
+		audiobookDir:      audiobookDir,
+		windowsPaths:      onWindows,
 	}
 }
 

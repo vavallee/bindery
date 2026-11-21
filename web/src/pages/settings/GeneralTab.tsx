@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import { restoreSetting, useAutoSave } from './useAutoSave'
 import RichText from '../../components/RichText'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, AuthConfig, AuthStatus, BINDERY_BASE, StorageDirStatus, StorageHealth } from '../../api/client'
@@ -13,16 +14,25 @@ import { inputCls } from './formStyles'
 import RenameFilesModal from '../../components/RenameFilesModal'
 import NamingTemplateField from './NamingTemplateField'
 import SaveButton from './SaveButton'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import DatabaseCheckSection from './DatabaseCheckSection'
 import { useSaveResult } from './useSaveResult'
 import { btn, slateFill, primaryFill } from '../../components/buttons'
 import { errorText } from '../../util/errorText'
+import type { GeneralSection } from './generalSections'
 
 // Tab identifiers used by onNavigate for soft (no-reload) cross-tab links.
 // Kept loose (string) so GeneralTab doesn't need to import SettingsPage's Tab
 // union; SettingsPage validates the value.
 export interface GeneralTabProps {
   onNavigate?: (tab: string) => void
+}
+
+// Shared by the General, File Naming, Storage and Schedules tabs (#3990); see
+// generalSections.ts for which sections each one shows.
+export interface GeneralSettingsProps extends GeneralTabProps {
+  sections: GeneralSection[]
 }
 
 // Preset values offered by the Hardcover sync-interval picker. Anything else in
@@ -43,8 +53,15 @@ const DISCOVERY_INTERVAL_PRESETS = ['off', '24h', '168h', '720h']
 const AUTH_CONFIG_WAIT_MS = 2500
 
 export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
+  return <GeneralSettings sections={['general']} onNavigate={onNavigate} />
+}
+
+export function GeneralSettings({ sections, onNavigate }: GeneralSettingsProps) {
+  const has = (s: GeneralSection) => sections.includes(s)
+  const showGeneral = has('general')
   const fid = useId()
   const { t } = useTranslation()
+  const autoSave = useAutoSave()
   const importModeLabel = (mode: 'auto' | 'move' | 'copy' | 'hardlink' | 'external') => {
     switch (mode) {
       case 'auto': return t('settings.general.importMode.auto', 'Auto')
@@ -54,6 +71,26 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       case 'external': return t('settings.general.importMode.external', 'External')
     }
   }
+  // Display text for the current-value subtitles (#3989). The same labels the
+  // controls show, so a subtitle never names a setting key or a raw value.
+  const intervalLabel = (v: string) => {
+    const m = /^(\d+)(m|h)$/.exec(v)
+    if (!m) return v
+    const n = Number(m[1])
+    if (m[2] === 'm') return t('settings.general.interval.minutes', { count: n })
+    return n % 168 === 0 ? t('settings.general.interval.days', { count: n / 24 }) : t('settings.general.interval.hours', { count: n })
+  }
+  const cadenceLabel = (v: string) => {
+    switch (v) {
+      case 'off': return t('settings.general.discoveryOff')
+      case '24h': return t('settings.general.discoveryDaily')
+      case '168h': return t('settings.general.discoveryWeekly')
+      case '720h': return t('settings.general.discoveryMonthly')
+      default: return intervalLabel(v)
+    }
+  }
+  const contentCheckLabel = (m: 'off' | 'warn' | 'block') =>
+    m === 'off' ? t('settings.general.contentCheckOff') : m === 'block' ? t('settings.general.contentCheckBlock') : t('settings.general.contentCheckWarn')
   const { isAdmin } = useAuth()
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -130,7 +167,8 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         setSettings(map)
       })
       .catch(console.error)
-    const authCfgLoaded = api.authConfig().then(setAuthCfg).catch(console.error)
+    // Only the General tab renders Security, so only it asks for the config.
+    const authCfgLoaded = showGeneral ? api.authConfig().then(setAuthCfg).catch(console.error) : Promise.resolve()
     const authCfgCapped = Promise.race([
       authCfgLoaded,
       new Promise<void>(resolve => { timer = setTimeout(resolve, AUTH_CONFIG_WAIT_MS) }),
@@ -140,25 +178,28 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       setLoading(false)
     })
     return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // GET /system/storage is admin only, and both places that read it (the
   // hardlink warning and the Storage section) sit inside the isAdmin block
   // below, so a non admin never asks. Keyed on isAdmin like the scan status.
+  const needsStorage = has('naming') || has('storage')
   useEffect(() => {
-    if (!isAdmin) return
+    if (!isAdmin || !needsStorage) return
     api.getStorage().then(setStorage).catch(console.error)
-  }, [isAdmin])
+  }, [isAdmin, needsStorage])
 
   // The last scan summary names the library roots and the absolute path of
   // every unmatched file, so the endpoint is admin only (#2361) and the panel
   // that renders it sits inside the isAdmin block below. A non admin never
   // asks. Keyed on isAdmin so an admin whose auth status resolves after mount
   // still loads it.
+  const needsScanStatus = has('storage')
   useEffect(() => {
-    if (!isAdmin) return
+    if (!isAdmin || !needsScanStatus) return
     api.libraryScanStatus().then(setLastScan).catch(() => {/* no prior scan yet: 404 */})
-  }, [isAdmin])
+  }, [isAdmin, needsScanStatus])
 
   // Rethrows: the caller wraps this in useSaveResult, which needs a rejected
   // promise to show "Error" instead of a false "Saved ✓" (#1668).
@@ -334,10 +375,21 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const audiobookMode = audiobookModeSetting || importMode
   const anyExternal = importMode === 'external' || audiobookMode === 'external'
 
+  // Every tab but General renders one section, so the first one names the page.
+  // A caller that mounts several (the tests do) gets the General line.
+  const pageDescription = sections.length > 1 || has('general')
+    ? t('settings.general.desc.general')
+    : has('naming') ? t('settings.general.desc.naming')
+    : has('storage') ? t('settings.general.desc.storage')
+    : t('settings.general.desc.schedules')
+
   if (loading) return <div className="text-fg-muted">{t('common.loading')}</div>
 
   return (
     <div className="space-y-8">
+      {/* One line saying what this page is for (#3990). */}
+      <p data-testid="settings-page-desc" className="text-sm text-fg-muted">{pageDescription}</p>
+      {showGeneral && (<>
       {/* Appearance */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.appearance')}</h3>
@@ -364,14 +416,17 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       {/* Mounted with its config, so a config that arrives after the cap
           still shows the section rather than an empty one. */}
       {authCfg && <SecuritySection initialCfg={authCfg} />}
+      </>)}
 
       {isAdmin && (<>
+      {has('naming') && (<>
       {/* Naming */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.fileNaming')}</h3>
         <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
           <div id="import.mode">
             <label className="block text-xs text-fg-muted mb-1">{t('settings.general.importMode.label', 'Import Mode')}</label>
+            <FieldValue for="import-mode" value={settings['import.mode'] ? importModeLabel(importMode as 'auto') : ''} defaultValue={importModeLabel('auto')} />
             <p className="text-xs text-fg-muted mb-2">
               {/* JSX drops the newline between a text line and a following
                   <strong> on the next line, so each sentence that ends right
@@ -379,13 +434,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   ("the library.Auto (the default)"). */}
               <RichText text={t('settings.general.importMode.hint', 'How Bindery places completed downloads into the library. <b>Auto</b> (the default) hardlinks when the download folder and library share a volume, otherwise copies — either way the source stays in place so torrent seeding keeps working. <b>Move</b> relocates the source out of the download folder, which breaks seeding. Use <b>Hardlink</b> or <b>Copy</b> to force keeping the source file intact; Hardlink requires the download folder and library to be on the same filesystem/volume. Use <b>External</b> if another tool (Calibre, Grimmory, etc.) manages your library — Bindery grabs the download and stops; your tool processes it, then Bindery reconciles on the next library scan.')} components={{ b: <strong /> }} />
             </p>
-            <div className="flex gap-2 flex-wrap">
+            <div role="group" aria-label={t('settings.general.importMode.label', 'Import Mode')} aria-describedby={fieldValueId('import-mode')} className="flex gap-2 flex-wrap">
               {(['auto', 'move', 'copy', 'hardlink', 'external'] as const).map(m => (
                 <button
                   key={m}
                   onClick={async () => {
                     setSettings(s => ({ ...s, 'import.mode': m }))
-                    await api.setSetting('import.mode', m).catch(console.error)
+                    await autoSave('import.mode', () => api.setSetting('import.mode', m), { value: importModeLabel(m), previous: settings['import.mode'], next: m, revert: to => restoreSetting(setSettings, 'import.mode', to) })
                   }}
                   className={`px-3 py-1.5 rounded text-xs font-medium border transition-colors ${
                     importMode === m
@@ -415,17 +470,19 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="import-audiobook-mode" className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookImportMode')}
             </label>
+            <FieldValue for="import-audiobook-mode" value={audiobookModeSetting ? importModeLabel(audiobookModeSetting as 'auto') : ''} defaultValue={t('settings.general.audiobookImportModeSame')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.audiobookImportModeHint')}
             </p>
             <select
               id="import-audiobook-mode"
+              aria-describedby={fieldValueId('import-audiobook-mode')}
               data-testid="import-audiobook-mode"
               value={audiobookModeSetting}
               onChange={async e => {
                 const v = e.target.value
                 setSettings(s => ({ ...s, 'import.audiobook.mode': v }))
-                await api.setSetting('import.audiobook.mode', v).catch(console.error)
+                await autoSave('import.audiobook.mode', () => api.setSetting('import.audiobook.mode', v), { previous: settings['import.audiobook.mode'], next: v, revert: to => restoreSetting(setSettings, 'import.audiobook.mode', to) })
               }}
               className={inputCls}
             >
@@ -445,7 +502,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                   onChange={async e => {
                     const v = e.target.checked ? 'true' : 'false'
                     setSettings(s => ({ ...s, 'import.audiobook.flatten_multi_disc': v }))
-                    await api.setSetting('import.audiobook.flatten_multi_disc', v).catch(console.error)
+                    await autoSave('import.audiobook.flatten_multi_disc', () => api.setSetting('import.audiobook.flatten_multi_disc', v), { previous: settings['import.audiobook.flatten_multi_disc'], next: v, revert: to => restoreSetting(setSettings, 'import.audiobook.flatten_multi_disc', to) })
                   }}
                 />
                 <span>
@@ -463,17 +520,19 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="import-ebook-content-check" className="block text-xs text-fg-muted mb-1">
               {t('settings.general.ebookContentCheck')}
             </label>
+            <FieldValue for="import-ebook-content-check" value={contentCheckLabel(contentCheckMode(settings['import.ebook.content_check']))} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.ebookContentCheckHint')}
             </p>
             <select
               id="import-ebook-content-check"
+              aria-describedby={fieldValueId('import-ebook-content-check')}
               data-testid="import-ebook-content-check"
               value={contentCheckMode(settings['import.ebook.content_check'])}
               onChange={async e => {
                 const v = e.target.value
                 setSettings(s => ({ ...s, 'import.ebook.content_check': v }))
-                await api.setSetting('import.ebook.content_check', v).catch(console.error)
+                await autoSave('import.ebook.content_check', () => api.setSetting('import.ebook.content_check', v), { previous: settings['import.ebook.content_check'], next: v, revert: to => restoreSetting(setSettings, 'import.ebook.content_check', to) })
               }}
               className={inputCls}
             >
@@ -486,17 +545,19 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="import-audiobook-content-check" className="block text-xs text-fg-muted mb-1">
               {t('settings.general.audiobookContentCheck')}
             </label>
+            <FieldValue for="import-audiobook-content-check" value={contentCheckLabel(contentCheckMode(settings['import.audiobook.content_check']))} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.audiobookContentCheckHint')}
             </p>
             <select
               id="import-audiobook-content-check"
+              aria-describedby={fieldValueId('import-audiobook-content-check')}
               data-testid="import-audiobook-content-check"
               value={contentCheckMode(settings['import.audiobook.content_check'])}
               onChange={async e => {
                 const v = e.target.value
                 setSettings(s => ({ ...s, 'import.audiobook.content_check': v }))
-                await api.setSetting('import.audiobook.content_check', v).catch(console.error)
+                await autoSave('import.audiobook.content_check', () => api.setSetting('import.audiobook.content_check', v), { previous: settings['import.audiobook.content_check'], next: v, revert: to => restoreSetting(setSettings, 'import.audiobook.content_check', to) })
               }}
               className={inputCls}
             >
@@ -556,12 +617,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
               <div className="flex gap-6 flex-wrap">
                 <div id="import.drop_layout">
                   <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.general.dropLayout', 'Layout')}</label>
-                  <select id={`${fid}-1`}
+                  <FieldValue for={`${fid}-1`} value={(settings['import.drop_layout'] ?? 'flat') === 'templated' ? t('settings.general.dropLayoutTemplated', 'Templated ({Author}/{Title}…)') : t('settings.general.dropLayoutFlat', 'Flat (file in folder root)')} />
+                  <select id={`${fid}-1`} aria-describedby={fieldValueId(`${fid}-1`)}
                     value={settings['import.drop_layout'] ?? 'flat'}
                     onChange={async e => {
                       const v = e.target.value
                       setSettings(s => ({ ...s, 'import.drop_layout': v }))
-                      await api.setSetting('import.drop_layout', v).catch(console.error)
+                      await autoSave('import.drop_layout', () => api.setSetting('import.drop_layout', v), { previous: settings['import.drop_layout'], next: v, revert: to => restoreSetting(setSettings, 'import.drop_layout', to) })
                     }}
                     className={inputCls}
                   >
@@ -571,12 +633,13 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 </div>
                 <div id="import.drop_link_mode">
                   <label htmlFor={`${fid}-2`} className="block text-xs text-fg-muted mb-1">{t('settings.general.dropLinkMode', 'Placement')}</label>
-                  <select id={`${fid}-2`}
+                  <FieldValue for={`${fid}-2`} value={(settings['import.drop_link_mode'] ?? 'copy') === 'hardlink' ? t('settings.general.dropLinkHardlink', 'Hardlink (same filesystem)') : t('settings.general.dropLinkCopy', 'Copy')} />
+                  <select id={`${fid}-2`} aria-describedby={fieldValueId(`${fid}-2`)}
                     value={settings['import.drop_link_mode'] ?? 'copy'}
                     onChange={async e => {
                       const v = e.target.value
                       setSettings(s => ({ ...s, 'import.drop_link_mode': v }))
-                      await api.setSetting('import.drop_link_mode', v).catch(console.error)
+                      await autoSave('import.drop_link_mode', () => api.setSetting('import.drop_link_mode', v), { previous: settings['import.drop_link_mode'], next: v, revert: to => restoreSetting(setSettings, 'import.drop_link_mode', to) })
                     }}
                     className={inputCls}
                   >
@@ -619,7 +682,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
                 onChange={async e => {
                   const v = e.target.checked ? 'true' : 'false'
                   setSettings(s => ({ ...s, 'import.write_opf_sidecar': v }))
-                  await api.setSetting('import.write_opf_sidecar', v).catch(console.error)
+                  await autoSave('import.write_opf_sidecar', () => api.setSetting('import.write_opf_sidecar', v), { previous: settings['import.write_opf_sidecar'], next: v, revert: to => restoreSetting(setSettings, 'import.write_opf_sidecar', to) })
                 }}
               />
               <span>
@@ -680,56 +743,9 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           </div>
         </div>
       </section>
+      </>)}
 
-      {/* Downloads */}
-      <section>
-        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.downloads')}</h3>
-        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
-          <div id="search.preferredLanguage">
-            <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('settings.general.preferredLanguage')}</label>
-            <p className="text-xs text-fg-muted mb-2">{t('settings.general.preferredLanguageHint')}</p>
-            <div className="flex flex-wrap gap-2">
-              <select id={`${fid}-5`}
-                value={settings['search.preferredLanguage'] ?? 'en'}
-                onChange={e => setSettings(s => ({ ...s, 'search.preferredLanguage': e.target.value }))}
-                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
-              >
-                <option value="any">{t('settings.general.preferredLanguageAny')}</option>
-                <option value="en">{t('settings.general.preferredLanguageEn')}</option>
-              </select>
-              <SaveButton
-                result={langSaveResult}
-                saving={saving === 'search.preferredLanguage'}
-                onClick={() => langSave(savePreferredLanguage)}
-              />
-            </div>
-            {langErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{langErr}</p>}
-          </div>
-          {isAdmin && (
-            <div id="search.rejectWords">
-              <label htmlFor={`${fid}-rejectwords`} className="block text-xs text-fg-muted mb-1">{t('settings.general.rejectWords')}</label>
-              <p className="text-xs text-fg-muted mb-2">{t('settings.general.rejectWordsHint')}</p>
-              <div className="flex flex-wrap gap-2">
-                <textarea id={`${fid}-rejectwords`}
-                  rows={2}
-                  value={settings['search.rejectWords'] ?? ''}
-                  onChange={e => setSettings(s => ({ ...s, 'search.rejectWords': e.target.value }))}
-                  placeholder={t('settings.general.rejectWordsPlaceholder')}
-                  className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
-                />
-                <SaveButton
-                  result={rejectSaveResult}
-                  saving={saving === 'search.rejectWords'}
-                  onClick={() => rejectSave(saveRejectWords)}
-                  testId="search-reject-words-save"
-                />
-              </div>
-              {rejectErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{rejectErr}</p>}
-            </div>
-          )}
-        </div>
-      </section>
-
+      {has('storage') && (<>
       {/* Storage */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.storage')}</h3>
@@ -909,6 +925,73 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         )}
       </section>
 
+      {/* Default library location */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.defaultLibraryLocation')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <p className="text-xs text-fg-muted mb-3">
+            {t('settings.general.defaultLibraryLocationHint')}
+          </p>
+          <button
+            onClick={() => onNavigate ? onNavigate('rootfolders') : window.location.assign('/settings?tab=rootfolders')}
+            className="text-sm text-accent-text hover:underline"
+          >
+            {t('settings.general.defaultLibraryLocationLink')}
+          </button>
+        </div>
+      </section>
+      </>)}
+
+      {has('schedules') && (<>
+      {/* Downloads */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.downloads')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
+          <div id="search.preferredLanguage">
+            <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('settings.general.preferredLanguage')}</label>
+            <p className="text-xs text-fg-muted mb-2">{t('settings.general.preferredLanguageHint')}</p>
+            <div className="flex flex-wrap gap-2">
+              <select id={`${fid}-5`}
+                value={settings['search.preferredLanguage'] ?? 'en'}
+                onChange={e => setSettings(s => ({ ...s, 'search.preferredLanguage': e.target.value }))}
+                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
+              >
+                <option value="any">{t('settings.general.preferredLanguageAny')}</option>
+                <option value="en">{t('settings.general.preferredLanguageEn')}</option>
+              </select>
+              <SaveButton
+                result={langSaveResult}
+                saving={saving === 'search.preferredLanguage'}
+                onClick={() => langSave(savePreferredLanguage)}
+              />
+            </div>
+            {langErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{langErr}</p>}
+          </div>
+          {isAdmin && (
+            <div id="search.rejectWords">
+              <label htmlFor={`${fid}-rejectwords`} className="block text-xs text-fg-muted mb-1">{t('settings.general.rejectWords')}</label>
+              <p className="text-xs text-fg-muted mb-2">{t('settings.general.rejectWordsHint')}</p>
+              <div className="flex flex-wrap gap-2">
+                <textarea id={`${fid}-rejectwords`}
+                  rows={2}
+                  value={settings['search.rejectWords'] ?? ''}
+                  onChange={e => setSettings(s => ({ ...s, 'search.rejectWords': e.target.value }))}
+                  placeholder={t('settings.general.rejectWordsPlaceholder')}
+                  className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
+                />
+                <SaveButton
+                  result={rejectSaveResult}
+                  saving={saving === 'search.rejectWords'}
+                  onClick={() => rejectSave(saveRejectWords)}
+                  testId="search-reject-words-save"
+                />
+              </div>
+              {rejectErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{rejectErr}</p>}
+            </div>
+          )}
+        </div>
+      </section>
+
       {/* Wanted search interval */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.search')}</h3>
@@ -917,15 +1000,16 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor={`${fid}-10`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.searchIntervalLabel')}
             </label>
+            <FieldValue for={`${fid}-10`} value={settings['search.interval'] ? intervalLabel(settings['search.interval']) : ''} defaultValue={intervalLabel('12h')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.searchIntervalHint')}
             </p>
-            <select id={`${fid}-10`}
+            <select id={`${fid}-10`} aria-describedby={fieldValueId(`${fid}-10`)}
               value={settings['search.interval'] ?? '12h'}
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'search.interval': next }))
-                await api.setSetting('search.interval', next).catch(console.error)
+                await autoSave('search.interval', () => api.setSetting('search.interval', next), { previous: settings['search.interval'], next, revert: to => restoreSetting(setSettings, 'search.interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -953,16 +1037,17 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor={`${fid}-11`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.hardcoverSyncIntervalLabel', 'Hardcover list sync interval')}
             </label>
+            <FieldValue for={`${fid}-11`} value={settings['hardcover.sync_interval'] ? intervalLabel(settings['hardcover.sync_interval']) : ''} defaultValue={intervalLabel('24h')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.hardcoverSyncIntervalHint', 'How often Bindery re-syncs your enabled Hardcover import lists. Lower it if you curate a Hardcover list as your main way of adding books. Use Sync now on the Import tab for an immediate run.')}
             </p>
-            <select id={`${fid}-11`}
+            <select id={`${fid}-11`} aria-describedby={fieldValueId(`${fid}-11`)}
               data-testid="hardcover-sync-interval"
               value={hardcoverSyncInterval}
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'hardcover.sync_interval': next }))
-                await api.setSetting('hardcover.sync_interval', next).catch(console.error)
+                await autoSave('hardcover.sync_interval', () => api.setSetting('hardcover.sync_interval', next), { previous: settings['hardcover.sync_interval'], next, revert: to => restoreSetting(setSettings, 'hardcover.sync_interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -997,16 +1082,17 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor={`${fid}-12`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.libraryScanIntervalLabel', 'Library scan interval')}
             </label>
+            <FieldValue for={`${fid}-12`} value={settings['library.scan_interval'] ? intervalLabel(settings['library.scan_interval']) : ''} defaultValue={intervalLabel('6h')} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.libraryScanIntervalHint')}
             </p>
-            <select id={`${fid}-12`}
+            <select id={`${fid}-12`} aria-describedby={fieldValueId(`${fid}-12`)}
               data-testid="library-scan-interval"
               value={libraryScanInterval}
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'library.scan_interval': next }))
-                await api.setSetting('library.scan_interval', next).catch(console.error)
+                await autoSave('library.scan_interval', () => api.setSetting('library.scan_interval', next), { previous: settings['library.scan_interval'], next, revert: to => restoreSetting(setSettings, 'library.scan_interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -1040,16 +1126,18 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="discovery-interval" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.discoveryIntervalLabel')}
             </label>
+            <FieldValue for="discovery-interval" value={cadenceLabel(discoveryInterval)} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.discoveryIntervalHint')}
             </p>
             <select
               id="discovery-interval"
+              aria-describedby={fieldValueId('discovery-interval')}
               value={discoveryInterval}
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'authors.discovery.interval': next }))
-                await api.setSetting('authors.discovery.interval', next).catch(console.error)
+                await autoSave('authors.discovery.interval', () => api.setSetting('authors.discovery.interval', next), { previous: settings['authors.discovery.interval'], next, revert: to => restoreSetting(setSettings, 'authors.discovery.interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -1075,16 +1163,18 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             <label htmlFor="series-check-interval" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.general.seriesCheckIntervalLabel')}
             </label>
+            <FieldValue for="series-check-interval" value={cadenceLabel(seriesCheckInterval)} />
             <p className="text-xs text-fg-muted mb-2">
               {t('settings.general.seriesCheckIntervalHint')}
             </p>
             <select
               id="series-check-interval"
+              aria-describedby={fieldValueId('series-check-interval')}
               value={seriesCheckInterval}
               onChange={async e => {
                 const next = e.target.value
                 setSettings(s => ({ ...s, 'series.monitoring.interval': next }))
-                await api.setSetting('series.monitoring.interval', next).catch(console.error)
+                await autoSave('series.monitoring.interval', () => api.setSetting('series.monitoring.interval', next), { previous: settings['series.monitoring.interval'], next, revert: to => restoreSetting(setSettings, 'series.monitoring.interval', to) })
               }}
               className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
             >
@@ -1099,22 +1189,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           </div>
         </div>
       </section>
-
-      {/* Default library location */}
-      <section>
-        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.defaultLibraryLocation')}</h3>
-        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <p className="text-xs text-fg-muted mb-3">
-            {t('settings.general.defaultLibraryLocationHint')}
-          </p>
-          <button
-            onClick={() => onNavigate ? onNavigate('rootfolders') : window.location.assign('/settings?tab=rootfolders')}
-            className="text-sm text-accent-text hover:underline"
-          >
-            {t('settings.general.defaultLibraryLocationLink')}
-          </button>
-        </div>
-      </section>
+      </>)}
 
       </>)}
     </div>
@@ -1251,7 +1326,8 @@ function SecuritySection({ initialCfg }: { initialCfg: AuthConfig }) {
         {isAdmin && (<>
         <div>
           <label htmlFor={`${fid}-1`} className="block text-xs text-fg-muted mb-1">{t('settings.general.auth.authMode', 'Authentication Mode')}</label>
-          <select id={`${fid}-1`}
+          <FieldValue for={`${fid}-1`} value={cfg.mode === 'enabled' ? t('settings.general.auth.modeEnabled', 'Enabled') : cfg.mode === 'local-only' ? t('settings.general.auth.modeLocalOnly', 'Local only (bypass for private IPs)') : t('settings.general.auth.modeDisabled', 'Disabled (no auth)')} />
+          <select id={`${fid}-1`} aria-describedby={fieldValueId(`${fid}-1`)}
             value={cfg.mode}
             onChange={e => setMode(e.target.value as AuthStatus['mode'])}
             disabled={savingMode}

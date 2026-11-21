@@ -696,6 +696,8 @@ describe('SettingsPage', () => {
   })
 
   it('persists import mode, naming templates, and preferred language', async () => {
+    // The General tab was split (#3990): this control lives on the naming tab.
+    window.history.replaceState(null, '', '/settings?tab=naming')
     renderSettings({
     settings: [
       { key: 'import.mode', value: 'move' },
@@ -731,6 +733,9 @@ describe('SettingsPage', () => {
     expect(api.setSetting).toHaveBeenCalledWith('naming_template_audiobook', '{Author}/{Title}')
     })
 
+    // Preferred language moved to the Schedules tab (#3990).
+    fireEvent.click(screen.getByRole('button', { name: 'settings.tabs.schedules' }))
+    await screen.findByRole('heading', { name: 'settings.general.downloads' })
     const downloads = sectionForHeading('settings.general.downloads')
     // The Downloads section holds more than one Save button now (#3416), so
     // take the one that sits in the language selector's own row.
@@ -743,6 +748,8 @@ describe('SettingsPage', () => {
   })
 
   it('defaults the import mode selector to Auto when unset and persists an explicit Auto choice', async () => {
+    // The General tab was split (#3990): this control lives on the naming tab.
+    window.history.replaceState(null, '', '/settings?tab=naming')
     // No import.mode row (seedSettingsMocks default) — the backend treats an
     // absent value as auto (hardlink/copy), so the UI must show Auto selected,
     // not Move (#1444: the display default used to be 'move' and contradicted
@@ -764,6 +771,8 @@ describe('SettingsPage', () => {
   })
 
   it('defaults the audiobook import mode to Same as ebooks and shows only the drop folders that apply (#1632)', async () => {
+    // The General tab was split (#3990): this control lives on the naming tab.
+    window.history.replaceState(null, '', '/settings?tab=naming')
     renderSettings({
     settings: [
       { key: 'import.mode', value: 'external' },
@@ -791,6 +800,8 @@ describe('SettingsPage', () => {
   })
 
   it('shows only the audiobook drop folder when just audiobooks are external (#1632)', async () => {
+    // The General tab was split (#3990): this control lives on the naming tab.
+    window.history.replaceState(null, '', '/settings?tab=naming')
     renderSettings({
     settings: [
       { key: 'import.mode', value: 'copy' },
@@ -810,6 +821,8 @@ describe('SettingsPage', () => {
   })
 
   it('refreshes library scan status', async () => {
+    // The General tab was split (#3990): this control lives on the storage tab.
+    window.history.replaceState(null, '', '/settings?tab=storage')
     vi.mocked(api.libraryScanStatus)
     .mockResolvedValueOnce({ ran_at: new Date(Date.now() - 10_000).toISOString(), files_found: 2, reconciled: 1, unmatched: 1 })
     .mockResolvedValueOnce({ ran_at: new Date(Date.now() + 10_000).toISOString(), files_found: 9, reconciled: 5, unmatched: 4 })
@@ -830,6 +843,8 @@ describe('SettingsPage', () => {
   })
 
   it('surfaces scanned paths and warns when no files were found', async () => {
+    // The General tab was split (#3990): this control lives on the storage tab.
+    window.history.replaceState(null, '', '/settings?tab=storage')
     vi.mocked(api.libraryScanStatus).mockResolvedValue({
     ran_at: new Date().toISOString(),
     files_found: 0,
@@ -852,6 +867,8 @@ describe('SettingsPage', () => {
   })
 
   it('counts unmatched books and links to the Import page instead of listing files', async () => {
+    // The General tab was split (#3990): this control lives on the storage tab.
+    window.history.replaceState(null, '', '/settings?tab=storage')
     // The per file table and its reason hints moved to the Import page's
     // "In your library" view, where each book can be acted on. Settings keeps
     // the count and the way there.
@@ -875,6 +892,8 @@ describe('SettingsPage', () => {
   })
 
   it('shows no review link when nothing needs a decision', async () => {
+    // The General tab was split (#3990): this control lives on the storage tab.
+    window.history.replaceState(null, '', '/settings?tab=storage')
     vi.mocked(api.libraryScanStatus).mockResolvedValue({
     ran_at: new Date().toISOString(),
     files_found: 3,
@@ -890,6 +909,8 @@ describe('SettingsPage', () => {
   })
 
   it('soft-navigates to Root Folders from the Default library location link', async () => {
+    // The General tab was split (#3990): this control lives on the storage tab.
+    window.history.replaceState(null, '', '/settings?tab=storage')
     // The "Default library location" section is now an informational pointer to
     // the Root Folders tab. The link must switch tabs in place (soft nav) rather
     // than full-page-reload.
@@ -1045,6 +1066,7 @@ describe('SettingsPage', () => {
     expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_mode', 'latest')
     })
     fireEvent.change(authorDefaults.getByRole('spinbutton'), { target: { value: '3' } })
+    fireEvent.blur(authorDefaults.getByRole('spinbutton'))
     await waitFor(() => {
     expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_latest_count', '3')
     })

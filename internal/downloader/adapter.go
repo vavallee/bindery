@@ -30,6 +30,20 @@ type LiveStatus struct {
 	// non-empty errorString values are exposed as error statuses; otherwise the
 	// integer torrent status code is serialised via strconv.Itoa.
 	Status string
+	// Soulseek is set for a slskd download: what the queue shows besides the
+	// percentage. nil for every other client.
+	Soulseek *SoulseekLive
+}
+
+// SoulseekLive is the part of a slskd download's state the queue shows.
+type SoulseekLive struct {
+	// State is waiting, starting, downloading, completed or failed.
+	State string `json:"state"`
+	// Files and FilesDone count the download's files and the finished ones.
+	Files     int `json:"files"`
+	FilesDone int `json:"filesDone"`
+	// QueuePosition is the place in the peer's upload queue, nil when unknown.
+	QueuePosition *int `json:"queuePosition,omitempty"`
 }
 
 // LiveStatusIsError reports whether a client status string represents an error
@@ -68,6 +82,10 @@ type SendOptions struct {
 	// to it when the client's own PathRemap does not cover the download
 	// folder, the same precedence the importer reads paths back with (#2665).
 	GlobalRemap string
+	// DownloadID is the download row's id. slskd uses it for the folder the
+	// files land in (slskd.DownloadFolder), so no title or user name reaches
+	// the disk.
+	DownloadID int64
 }
 
 // SeedLimits is the set of per-indexer seeding overrides resolved for a grab.
@@ -159,15 +177,32 @@ func IsNZBGetClient(clientType string) bool {
 	return clientType == "nzbget"
 }
 
+// ClientTypeSlskd is the download client type for slskd, the Soulseek daemon
+// (#1717). It is the only client of the soulseek protocol.
+const ClientTypeSlskd = "slskd"
+
+// ProtocolSoulseek is the release protocol served by slskd.
+const ProtocolSoulseek = "soulseek"
+
+// IsSlskdClient reports whether the given client type is slskd.
+func IsSlskdClient(clientType string) bool {
+	return clientType == ClientTypeSlskd
+}
+
 func ProtocolForClient(clientType string) string {
-	if IsTorrentClient(clientType) {
+	switch {
+	case IsTorrentClient(clientType):
 		return "torrent"
+	case IsSlskdClient(clientType):
+		return ProtocolSoulseek
 	}
 	return "usenet"
 }
 
 func TestClient(ctx context.Context, client *models.DownloadClient) error {
 	switch client.Type {
+	case ClientTypeSlskd:
+		return SlskdFor(client).Test(ctx)
 	case "transmission":
 		trans := TransmissionFor(client)
 		return trans.Test(ctx)
@@ -224,6 +259,8 @@ func sendDownload(ctx context.Context, client *models.DownloadClient, sourceURL,
 	}
 
 	switch client.Type {
+	case ClientTypeSlskd:
+		return sendSlskd(ctx, client, sourceURL, opts, result)
 	case "transmission":
 		trans := TransmissionFor(client)
 		// Transmission's download-dir must be an absolute path. The Category
@@ -405,6 +442,8 @@ func RemoveTransmissionTorrent(ctx context.Context, trans *transmission.Client, 
 // remap as fallback. Pass "" when there is no global remap configured.
 func RemoveDownload(ctx context.Context, client *models.DownloadClient, dl *models.Download, deleteFiles bool, globalRemap string) error {
 	switch client.Type {
+	case ClientTypeSlskd:
+		return removeSlskdDownload(ctx, client, dl, deleteFiles, globalRemap)
 	case "transmission":
 		if dl.TorrentID == nil || *dl.TorrentID == "" {
 			return nil
@@ -576,6 +615,10 @@ func GetStalledTorrents(ctx context.Context, client *models.DownloadClient) (Sta
 }
 
 func GetLiveStatuses(ctx context.Context, client *models.DownloadClient) (map[string]LiveStatus, bool, error) {
+	if IsSlskdClient(client.Type) {
+		statuses, err := getSlskdLiveStatuses(ctx, client)
+		return statuses, false, err
+	}
 	if IsTorrentClient(client.Type) {
 		statuses, err := getTorrentLiveStatuses(ctx, client)
 		return statuses, true, err

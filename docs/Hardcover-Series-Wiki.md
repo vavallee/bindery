@@ -51,7 +51,7 @@ The filter combines with the title search and is kept in the page address (`?fil
 7. Optionally use **Set genre** before adding books. The override is applied to current and newly added books in the series and locked against metadata refresh.
 8. Use **add** on a single missing row, or **add all** / **Fill gaps** to queue every missing catalog entry.
 
-Added Hardcover books are created as wanted and monitored rows. Bindery then queues indexer searches the same way it does for other wanted books, unless **Auto-grab** is switched off in `Settings -> General`. With auto-grab off, fill still creates the books and marks them wanted and monitored, and queues no searches at all: grab them by hand from the Wanted page when you are ready.
+Added Hardcover books are created as wanted and monitored rows. Bindery then queues indexer searches the same way it does for other wanted books, unless **Auto-grab** is switched off in `Settings -> Metadata Profiles`. With auto-grab off, fill still creates the books and marks them wanted and monitored, and queues no searches at all: grab them by hand from the Wanted page when you are ready.
 
 ## Where Series Come From
 
@@ -121,7 +121,7 @@ The format dropdown beside **add all** sets the media type of every book the fil
 
 ## Monitoring a series
 
-The **Shortlisted** switch on a series card is the series' Monitored flag. Until series checking is turned on it only marks the series. In `Settings -> General -> Series checking`, pick an interval (daily, weekly or monthly) and Bindery checks each monitored series that often against its Hardcover link and adds new books as wanted and monitored, the way **add all** would. It ships off: before this existed the switch did nothing, so every series you had already switched on starts adding books the moment you pick an interval.
+The **Shortlisted** switch on a series card is the series' Monitored flag. Until series checking is turned on it only marks the series. In `Settings -> Schedules -> Series checking`, pick an interval (daily, weekly or monthly) and Bindery checks each monitored series that often against its Hardcover link and adds new books as wanted and monitored, the way **add all** would. It ships off: before this existed the switch did nothing, so every series you had already switched on starts adding books the moment you pick an interval.
 
 Beside the switch, **What to add** chooses the books a check adds:
 
@@ -175,7 +175,7 @@ A refresh does not put a book back into a series you took it out of, here or fro
 ## Known Behavior
 
 - Hardcover-backed controls require outbound HTTPS access to Hardcover.
-- The fill action can also contact configured indexers because it queues searches immediately. Switching **Auto-grab** off in `Settings -> General` stops that, for fill as well as for the scheduled sweep.
+- The fill action can also contact configured indexers because it queues searches immediately. Switching **Auto-grab** off in `Settings -> Metadata Profiles` stops that, for fill as well as for the scheduled sweep.
 - A linked series can still have local-only or uncertain entries when local metadata does not cleanly match the Hardcover catalog.
 - **View on Hardcover** is built from the series slug, which is the only identifier hardcover.app routes series pages on. Series linked before Bindery started recording the slug have none stored, so their link appears the next time the catalog diff is loaded. If Hardcover reports a series with no slug at all, Bindery shows no link rather than one that leads to a missing page.
 - **Shortlisting** a series only marks it so you can find it again. No job checks a shortlisted series for new books, and Fill gaps ignores the flag.
@@ -188,7 +188,7 @@ A refresh does not put a book back into a series you took it out of, here or fro
 - Hardcover test fails: verify the token at [Hardcover API settings](https://hardcover.app/account/api) and make sure Bindery can reach `hardcover.app`. Both `hc_pat_` personal access tokens and the older JWTs are accepted. The test tells you which side failed: `token rejected (HTTP 401: ...)` is a token to reissue, while `HTTP 500 (upstream returned a non-JSON response ...)` is a Hardcover outage to wait out. See [Troubleshooting](./Troubleshooting-Wiki.md#hardcover-fails-with-http-500-or-the-token-test-shows-a-hardcover-error-page).
 - Search finds the wrong series: choose a different result manually, or remove the link and search again with a more specific local series name.
 - Fill gaps adds nothing: check whether the missing books already exist locally, are excluded, are filtered out by the author's metadata profile (the result line counts those), or whether the linked Hardcover catalog has no missing entries relative to the local series.
-- Searches are not queued after fill: check the **Auto-grab** toggle in `Settings -> General` first, since it suppresses fill's searches deliberately, then verify your indexers and download-client search flow are working for normal wanted books.
+- Searches are not queued after fill: check the **Auto-grab** toggle in `Settings -> Metadata Profiles` first, since it suppresses fill's searches deliberately, then verify your indexers and download-client search flow are working for normal wanted books.
 
 ## See Also
 

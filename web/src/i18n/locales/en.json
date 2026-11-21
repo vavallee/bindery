@@ -415,6 +415,13 @@
     "grabFailedStatus": "The server could not start that download ({{status}}). Try again.",
     "grabFailedNetwork": "Could not reach the server to start that download. Check your connection and try again.",
     "indexerLink": "indexer",
+    "soulseek": {
+      "badge": "Soulseek",
+      "freeSlot": "free slot",
+      "queued": "queue {{count}}",
+      "files_one": "{{count}} file",
+      "files_other": "{{count}} files"
+    },
     "grabs": "{{n}} grabs",
     "seeders_one": "{{count}} seeder",
     "seeders_other": "{{count}} seeders",
@@ -952,6 +959,13 @@
     "noMatch": "No {{type}} events"
   },
   "queue": {
+    "soulseek": {
+      "queuedAt": "Queued in {{user}}'s upload queue (position {{position}})",
+      "waiting": "Waiting for {{user}} to start sending",
+      "downloading": "Downloading from {{user}} ({{done}} of {{total}} files done)",
+      "completed": "Downloaded from {{user}}",
+      "from": "From {{user}} on Soulseek"
+    },
     "title": "Queue",
     "empty": "Queue is empty",
     "errorDetails": "Show full error",
@@ -979,6 +993,15 @@
     "retryImportError": "Retry failed: {{error}}",
     "retryDownload": "Retry download",
     "retryingDownload": "Retrying…",
+    "scanLibrary": "Scan library",
+    "scanningLibrary": "Scanning…",
+    "scanLibraryFor": "Scan library for {{title}}",
+    "scanLibraryHint": "Runs a library scan so the file the external tool placed is picked up.",
+    "scanStarted": "Library scan started. It picks up the file the external tool placed in your library and the book then shows as owned. This row stays under Handed off until you remove it.",
+    "scanQueued": "A scan is already running. Another one starts as soon as it finishes, so the file is picked up either way.",
+    "scanRunning": "A scan is already running. Try again once it has finished.",
+    "scanError": "Scan failed: {{error}}",
+    "scanFailedFallback": "Scan failed",
     "retryDownloadHint": "Sends this same release to your download client again. It does not search for a different release; use Search on the book for that.",
     "partialWarning": "Could not reach {{clients}}. This list may be incomplete, so a download missing from it is not necessarily gone.",
     "partialWarningUnnamed": "A download client did not answer. This list may be incomplete, so a download missing from it is not necessarily gone.",
@@ -1038,6 +1061,13 @@
     "viewAll": "All ({{count}})",
     "viewActive": "Active ({{count}})",
     "viewFailed": "Failed ({{count}})",
+    "viewDownloading": "Downloading ({{count}})",
+    "viewImporting": "Importing ({{count}})",
+    "viewHeld": "Held ({{count}})",
+    "viewExternal": "Handed off ({{count}})",
+    "viewAttention": "Needs attention ({{count}})",
+    "viewAttentionEmpty": "Nothing needs attention",
+    "viewStateEmpty": "No downloads in this state",
     "viewFailedEmpty": "No failed downloads",
     "viewActiveEmpty": "No downloads in progress",
     "viewShowAll": "Show all"
@@ -1335,6 +1365,9 @@
       "rootfolders": "Root Folders",
       "logs": "Logs",
       "general": "General",
+      "naming": "File Naming",
+      "storage": "Storage",
+      "schedules": "Schedules",
       "calibre": "Calibre",
       "abs": "Audiobookshelf",
       "grimmory": "Grimmory",
@@ -1691,7 +1724,7 @@
         "calibredbUnreachable": "✗ calibredb unreachable",
         "button": "Test connection"
       },
-      "intro": "Calibre only knows about books recorded in its <code>metadata.db</code>; a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over: register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below), or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, under File Naming on the General tab). Neither the write integration nor the CWA mirror runs in External import mode. The <guide>Calibre integration guide</guide> compares them.",
+      "intro": "Calibre only knows about books recorded in its <code>metadata.db</code>; a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over: register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below), or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, on the File Naming tab). Neither the write integration nor the CWA mirror runs in External import mode. The <guide>Calibre integration guide</guide> compares them.",
       "fields": {
         "libraryPath": "Library path",
         "libraryPathHint": "Directory containing <code>metadata.db</code>. Used by both the write integration and library import.",
@@ -1742,7 +1775,7 @@
         }
       },
       "cwa": {
-        "intro": "When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the General tab for that setup. Leave blank to disable.",
+        "intro": "When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the File Naming tab for that setup. Leave blank to disable.",
         "ingestPath": "Ingest folder path",
         "ingestPathHint": "Mount the same path into both containers. CWA’s docs use <code>{{path}}</code>."
       }
@@ -1960,7 +1993,9 @@
       "transmissionDirHint": "Optional absolute path override. Leave blank to use Transmission's configured default download directory.",
       "delugeLabelHint": "Applied via the Deluge label plugin. Leave blank if the plugin is not installed.",
       "pathRemapLabel": "Download client path remap",
+      "slskdHint": "Needs slskd 0.26.0 or newer and an API key with the readwrite role. Searches send your wanted titles to the Soulseek network, and downloading shows your IP address to peers, so run slskd behind a VPN with a forwarded port.",
       "remapHelp": {
+        "slskd": "Map slskd's downloads folder to the path Bindery can read. Example: if slskd saves to /app/downloads but Bindery sees that folder at /media/soulseek, use /app/downloads:/media/soulseek. Leave empty when both already see the same mount.",
         "qbittorrent": "Map the path qBittorrent reports to the path Bindery can read. Example: if qBittorrent shows /downloads/books but Bindery sees that folder at /media/books, use /downloads:/media/books. Bindery also uses this in reverse when sending new torrents.",
         "rtorrent": "Map the path rTorrent reports to the path Bindery can read. Seedbox installs almost always need this — e.g. rTorrent writes to /home/user/downloads while Bindery mounts that share at /media/books, so use /home/user/downloads:/media/books. Bindery also uses this in reverse when setting a new torrent's download directory, and to locate files when you remove a download with its data.",
         "other": "Map the path this client reports to the path Bindery can read: the client's path, a colon, then Bindery's. Example: if the client shows /downloads/books but Bindery sees that folder at /media/books, use /downloads:/media/books. A Windows path works on the client side, such as S:\\Downloads:/downloads. Leave empty when both already see the same mount. Diagnose checks the mapping end to end."
@@ -2074,7 +2109,7 @@
       "heading": "Metadata Profiles",
       "newProfile": "+ New Profile",
       "empty": "No metadata profiles configured.",
-      "description": "Books in languages outside the profile's allowed list are filtered out when an author is added or refreshed. Leave the list empty to accept any language. A metadata profile decides which books enter an author's catalogue. It does not filter releases: to stop a search grabbing another language, set Preferred language under General.",
+      "description": "Books in languages outside the profile's allowed list are filtered out when an author is added or refreshed. Leave the list empty to accept any language. A metadata profile decides which books enter an author's catalogue. It does not filter releases: to stop a search grabbing another language, set Preferred language under Schedules.",
       "minPages": "Min pages:",
       "minEditionCount": "Min editions:",
       "languages": "Languages:",
@@ -2154,6 +2189,12 @@
       "runtimeLevelHint": "Controls which log levels are written to the database"
     },
     "general": {
+      "desc": {
+        "general": "Theme, language and who can sign in.",
+        "naming": "How imported books are named and filed, and how Bindery picks up finished downloads.",
+        "storage": "Where Bindery keeps downloads and books, plus library scanning and the database check.",
+        "schedules": "Release filters and how often Bindery searches, syncs and checks for new books."
+      },
       "hardcoverTokenRejected": "Hardcover rejected the API token, so Hardcover requests are paused. Save a working token below, or use Test connection once it is fixed on Hardcover.",
       "hardcoverPausedUntil": "Hardcover is paused until {{time}} because its daily quota was reached. Retry interrupted imports after this time.",
       "appearance": "Appearance",
@@ -2172,7 +2213,7 @@
       "rejectWordsPlaceholder": "Graphic Audio, Full Cast, abridged",
       "autoGrab": "Auto-grab",
       "autoGrabLabel": "Enable automatic grabbing",
-      "autoGrabHint": "When enabled, Bindery searches for wanted books and sends what it finds to the download client. When disabled, Bindery runs no searches of its own and the bulk Search actions on the Authors, Books, author and Wanted pages refuse to run and tell you why, but a single book Search Indexers still runs and lets you grab a release yourself. This is one switch for the whole instance, not a per profile setting. The sweep it controls runs on the Wanted search interval under General.",
+      "autoGrabHint": "When enabled, Bindery searches for wanted books and sends what it finds to the download client. When disabled, Bindery runs no searches of its own and the bulk Search actions on the Authors, Books, author and Wanted pages refuse to run and tell you why, but a single book Search Indexers still runs and lets you grab a release yourself. This is one switch for the whole instance, not a per profile setting. The sweep it controls runs on the Wanted search interval under Schedules.",
       "recommendations": "Recommendations",
       "recommendationsLabel": "Enable book recommendations",
       "recommendationsHint": "Analyse your library to suggest new books on the Discover page. Runs locally every 24 hours — no data leaves your server.",
@@ -2376,6 +2417,8 @@
       "defaultMediaTypeHint": "Applied to new authors, and to books you add on their own, when no explicit choice is made. Existing rows are unaffected: change authors with the Authors page bulk action, and books from the Books page with Set ebook, Set audiobook or Set both, which also covers your wanted list once Books is filtered to Wanted.",
       "authorWikidataLabel": "Author photos and bios from Wikidata",
       "authorWikidataHint": "Fills an author's missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author's library authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Lookups ride on the daily author refresh, and each photo and bio is credited on the author's page. While this is off, Wikimedia is sent no request.",
+      "bookRanobeDBLabel": "Light novel titles from RanobeDB",
+      "bookRanobeDBHint": "Gives light novels their official English title from RanobeDB (ranobedb.org, data under the ODbL). A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a title you locked. It applies to books added after you switch it on, and existing books keep their titles. Lookups are paced to RanobeDB's 60 requests a minute. While this is off, RanobeDB is sent no request.",
       "enrichersHeading": "Enrichers",
       "enrichersHint": "These providers fill in what the primary leaves empty. Untick one and Bindery stops using it as an enricher, which means fewer requests but less fill in: DNB also supplies covers through its cover service, and Hardcover also supplies curated genres, series and edition language evidence. Takes effect from the next lookup, with no restart.",
       "enricherPrimaryNote": "This is the primary provider, so it cannot be turned off.",
@@ -2418,6 +2461,7 @@
       "defaultMonitorModeLabel": "Default monitor mode",
       "defaultMonitorModeHint": "Applied to newly added authors. Existing authors keep their current mode unless edited.",
       "defaultMonitorLatestCountLabel": "Latest book count",
+      "defaultMonitorLatestCountInvalid": "Enter a whole number of 1 or more.",
       "defaultMonitorNewItemsLabel": "Default for monitoring newly discovered books",
       "defaultMonitorNewItemsHint": "Applied to newly added authors. Choose whether a metadata refresh may add books it discovers later. Existing authors keep their own setting.",
       "audiobookFileTemplate": "Audiobook file naming (per track)",
@@ -2772,6 +2816,29 @@
     },
     "pathRemap": {
       "syntaxHint": "Use comma-separated <code>from:to</code> prefix rewrites."
+    },
+    "toast": {
+      "saved": "{{name}} saved",
+      "set": "{{name}} set to {{value}}",
+      "failed": "Couldn't save {{name}}",
+      "genericName": "Setting"
+    },
+    "currentValue": {
+      "current": "Current: {{value}}",
+      "notSet": "Not set",
+      "set": "Set",
+      "default": "Default ({{value}})",
+      "enabled": "On",
+      "disabled": "Off",
+      "seriesSelected_one": "{{count}} series selected",
+      "seriesSelected_other": "{{count}} series selected",
+      "provider": {
+        "openlibrary": "OpenLibrary",
+        "dnb": "DNB (Deutsche Nationalbibliothek)",
+        "nb": "Nasjonalbiblioteket",
+        "bnf": "BnF (Bibliothèque nationale de France)",
+        "hardcover": "Hardcover"
+      }
     }
   },
   "addToLibrary": {
@@ -2869,6 +2936,18 @@
       "alreadyInLibrary": "Already in your library. Change its format or monitoring from the book page.",
       "formatWidenedInLibrary": "Already in your library, and now tracked as both ebook and audiobook.",
       "openExisting": "Open existing book"
+    },
+    "manual": {
+      "open": "Add by hand",
+      "openHint": "Add a book no metadata source knows, typed in yourself",
+      "heading": "Add a book by hand",
+      "hint": "Nothing is looked up. The book is added exactly as you type it, and metadata refreshes leave it alone. Use Re-bind on the book page to link it to a metadata record later.",
+      "titleLabel": "Title",
+      "authorLabel": "Author",
+      "authorHint": "An author already in your library is reused. Any other name becomes a new author with no metadata, which Link metadata on the author page can connect later.",
+      "seriesLabel": "Series (optional)",
+      "positionLabel": "Position",
+      "alreadyInLibrary": "This author already has a book with this title in your library."
     }
   },
   "authorMetadataLink": {
@@ -3297,6 +3376,7 @@
       "heading": "Metadata source",
       "current": "Current",
       "unknownProvider": "Unknown provider",
+      "manual": "Added by hand",
       "copyId": "Copy {{id}}",
       "hint": "Re-bind this book if the record above is the wrong one."
     },

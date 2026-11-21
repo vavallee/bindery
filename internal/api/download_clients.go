@@ -217,7 +217,8 @@ func (h *DownloadClientHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if c.Port == 0 {
 		c.Port = 8080
 	}
-	if c.Category == "" {
+	// slskd has no categories, so its row keeps an empty one.
+	if c.Category == "" && c.Type != downloader.ClientTypeSlskd {
 		c.Category = "books"
 	}
 	// Eligible for both media types unless the caller explicitly opts a

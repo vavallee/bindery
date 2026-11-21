@@ -65,7 +65,7 @@ func freeleechFixture(t *testing.T, freeleechOnly bool, results []newznab.Search
 		t.Fatalf("indexer create: %v", err)
 	}
 	for i := range results {
-		results[i].IndexerID = idx.ID
+		results[i].IndexerID = &idx.ID
 	}
 
 	s := &Scheduler{

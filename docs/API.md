@@ -79,6 +79,7 @@ Outside these trees the format differs on purpose. The Calibre bridge adds a mac
 GET    /api/v1/author                             list authors (paginated, filterable)
 POST   /api/v1/author                             add an author (triggers async book fetch)
 POST   /api/v1/author/book                        add one book by foreign id (creates its author if needed); with `searchOnAdd` the book in the response carries `searchRunId` (see search runs)
+POST   /api/v1/author/book/manual                 add a book no metadata provider knows, exactly as typed (#3840); see below
 POST   /api/v1/author/bulk                        bulk add/update
 GET    /api/v1/author/{id}                        author detail
 PUT    /api/v1/author/{id}                        update monitored / metadata profile, or the bio: `description` set by hand is kept as the user's own and no refresh replaces it; an empty string clears it for the provider to fill again (#3287). 409 when the author changed since it was read, such as a scheduled refresh in between: reload and save again
@@ -133,6 +134,56 @@ the Add Author conflict:
   "existingBook": { "id": 42, "foreignBookId": "OL27448W", "title": "The Hobbit", "monitored": false }
 }
 ```
+
+`POST /api/v1/author/book/manual` adds a book that no metadata provider knows,
+or knows too badly to use, without asking any provider (#3840):
+
+```json
+{
+  "title": "The Last Church",
+  "authorName": "Graham McNeill",
+  "seriesTitle": "The Horus Heresy",
+  "seriesPosition": "9.5",
+  "mediaType": "ebook",
+  "searchOnAdd": false
+}
+```
+
+`title` is required, and so is one of `authorId` (a library author the caller
+can see) or `authorName`. A name is matched against the authors in the caller's
+library first (with multiple users enabled, an admin's name match looks only at
+the admin's own authors and unowned ones, never another user's); any other name
+becomes a new, unmonitored author with a `manual:author:<slug>` id, and the same
+spelling later reuses it. The book gets a `manual:book:<uuid>` id and
+`metadataProvider: "manual"`, is monitored and wanted, has its title locked (see
+`lockedFields`), and takes the `default.media_type` setting when `mediaType` is
+empty.
+`seriesTitle` joins the series of that title the author is already in, else any
+series of that title in the caller's library, else a new hand-made series;
+`seriesPosition` needs a `seriesTitle` and is a number such as `1` or `1.5`, or
+a range such as `2-3`. `title`, `authorName` and `seriesTitle` are trimmed, have
+runs of white space collapsed to one space, and may not contain control
+characters or line breaks. A file already in the library for the
+title is bound to the book as for any added book, and then `searchOnAdd` does
+not search.
+
+No provider owns the `manual:` prefix, so nothing refreshes these rows: the
+scheduled profile and release discovery refreshes skip such authors, an author
+catalogue sync that lists a work with the same title leaves the book alone
+rather than recording the work's ids on it or creating a second row, an
+Audiobookshelf import that matches the book by title does not relink it to a
+provider work, and the locked title survives Audiobookshelf and Calibre imports. `POST /book/{id}/rebind` binds
+one to a provider work, and Add Author or `relink-upstream` relinks such an
+author in place, as for a Calibre or Audiobookshelf placeholder.
+
+It answers **201** with the book, **409** with the body above when the author
+already has a book with that exact title (the same after case, Unicode form,
+white space, punctuation and bracketed suffix such as "(Unabridged)" are folded;
+unlike Add Book, a subtitle or prefix variant such as "Mistborn: Secret History"
+beside "Mistborn" is a different book and is accepted; a different
+`seriesPosition` in the same series is also a different book), **404** when `authorId` names no author the caller
+can see, and **400** for a missing or invalid field, a control character, a
+malformed `seriesPosition`, or a field longer than 500 bytes. Requesters cannot call it.
 
 To change the format or monitoring of a book you already have (for example an
 imported ebook you now also want as an audiobook), update it through
@@ -433,6 +484,15 @@ GET    /api/v1/book/{id}/calibre                  where the book stands in the C
 * `filteredTotal` is how many the filters removed. `filtered` holds at most 100
   of them, the likeliest matches first (for a dual-format book, alternating between the two formats), so `filteredTotal` can be larger than
   `filtered.length`.
+
+Soulseek results (#1717). With an enabled slskd client, `POST /book/{id}/search`
+and `GET /indexer/search` also return releases from Soulseek peers. They have
+`protocol: "soulseek"`, a `guid` starting `slskd:`, `indexerId: null`, an empty
+`nzbUrl`, and a `soulseek` object with `username`, `freeSlot`, `queueLength`,
+`uploadSpeed`, `fileCount` and `format`. `POST /queue/grab` refuses them with
+409 for now, because grabbing from Soulseek is not built yet. `debug.sources`
+lists each source asked, with its result count and any error. Automatic
+searches never ask Soulseek.
 
 Clients written before this ignore the two new keys and see no change. Automatic
 searches never see a filtered release. The free text search
@@ -1247,7 +1307,7 @@ DELETE /api/v1/backup/{filename}                  delete one backup (admin)
 POST   /api/v1/backup/{filename}/restore          stage a backup for the next restart (admin, X-Confirm-Restore: true)
 GET    /api/v1/system/status                      version, commit, build date, newest published release, image cache size (`imageCacheBytes`) and its ceiling (`imageCacheMaxBytes`, both in bytes as counted on disk; the cache is full when they are close), Hardcover feature state; `hardcoverPausedUntil` while the daily quota holds, `hardcoverTokenRejected` while Hardcover has refused the saved token; `features` lists optional API behaviour an integration can detect (`requestsForUser`)
 GET    /api/v1/system/setup-state                 first run checklist state (indexer, client, author, grab, import, complete); admins also get `blocked`, `blockedArea`, `blockedReason` and `hasLibraryFolder` (a root folder exists, or BINDERY_LIBRARY_DIR is writable; left out while the storage probe has no answer)
-POST   /api/v1/library/scan                       start a library scan in the background (202; {"queued": true} when one is already running)
+POST   /api/v1/library/scan                       start a library scan in the background (admin; 202; {"queued": true} when one is already running)
 GET    /api/v1/library/duplicate-candidates      read-only duplicate title groups across every author, paginated (#2999)
 GET    /api/v1/library/scan/status                summary of the last library scan, paths included (admin)
 GET    /api/v1/library/unmatched                  books the scan could not match, one row per book (admin)
@@ -1918,8 +1978,9 @@ is asked: there is no fallback to the others, so a German ASIN needs `de`. The
 result still goes through the same match against the primary provider as before.
 
 A `PUT` (or `DELETE`) of `metadata.primary_provider`, `metadata.enrichers_disabled`, `metadata.audnex_region`,
-`googlebooks.apiKey`, `google_books_api_key`, `hardcover.api_token` or
-`metadata.author_enrichment.wikidata` (#3287) rebuilds the metadata providers
+`googlebooks.apiKey`, `google_books_api_key`, `hardcover.api_token`,
+`metadata.author_enrichment.wikidata` (#3287) or
+`metadata.book_enrichment.ranobedb` (#2012) rebuilds the metadata providers
 before it answers, so the next lookup already uses the new set, with no restart
 (#1771). The `PUT` response for those keys carries an extra boolean:
 
@@ -2074,7 +2135,7 @@ an id with no account `422`. Answers:
 | `201` | the request, as below |
 | `403` | `forUser` sent by anyone but an admin session or the API key |
 | `400`, `422` | `forUser` is not a user id, or no account has that id |
-| `409` | already in the library with the requested format on disk or monitored (a book the library holds without it can still be requested, #3898), or, with `BINDERY_ENFORCE_TENANCY` on, held by another account whether or not it has the format (same `error` sentence as a covered book); already requested by this user (pending or declined); the `error` field says which |
+| `409` | already in the library with the requested format on disk or monitored (a book the library holds without it can still be requested, #3898), or, with `BINDERY_ENFORCE_TENANCY` on, held by another account, or shared with no owner when the caller is not an admin, and it lacks the requested format (the `error` then says to ask an admin to add that format); already requested by this user (pending or declined); the `error` field says which |
 | `429` | this user already has `requests.max_pending_per_user` requests waiting (default 25), or a requester made creates or searches faster than the per user allowance (burst of 20, then one every 3 seconds; `Retry-After` says when). The cap is checked in the same statement as the insert, so concurrent creates cannot pass it |
 | `502`, `404` | the provider did not answer, or has no such id |
 

@@ -389,6 +389,7 @@ func (h *AuthorHandler) refreshProviderFields(ctx context.Context, existing, inc
 	for field, conflictName := range map[string]string{
 		models.BookFieldReleaseDate: "release_date",
 		models.BookFieldDescription: "description",
+		models.BookFieldLanguage:    "language",
 	} {
 		has, err := h.books.HasABSConflictFor(ctx, existing.ID, conflictName)
 		if err != nil || has {

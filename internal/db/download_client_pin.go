@@ -90,10 +90,14 @@ func (e *PinnedClientError) Message(includeClient bool) string {
 	}
 }
 
-// ClientProtocol reports "torrent" or "usenet" for a download client type.
+// ClientProtocol reports "torrent", "soulseek" or "usenet" for a download
+// client type.
 func ClientProtocol(clientType string) string {
 	if slices.Contains(torrentClientTypes, clientType) {
 		return "torrent"
+	}
+	if slices.Contains(soulseekClientTypes, clientType) {
+		return "soulseek"
 	}
 	return "usenet"
 }

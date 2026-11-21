@@ -17,9 +17,20 @@ export interface Download {
   book?: BookRef
 }
 
+// QueueSoulseek is the Soulseek part of a queue row (#1717): the peer the files
+// come from and, while slskd answers, where the download stands.
+export interface QueueSoulseek {
+  user: string
+  state?: 'waiting' | 'starting' | 'downloading' | 'completed' | 'failed'
+  files?: number
+  filesDone?: number
+  queuePosition?: number
+}
+
 export interface QueueItem extends Download {
   percentage?: string
   timeLeft?: string
+  soulseek?: QueueSoulseek
 }
 
 export interface ManualImportLookup {

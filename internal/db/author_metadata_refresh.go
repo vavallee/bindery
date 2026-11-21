@@ -22,11 +22,12 @@ import (
 // the eligible count, so the batch size the scheduler derives from the count
 // is always a share of the same set it then walks.
 //
-// Monitored authors only, as the refresh always was, and not Calibre shells,
-// whose synthetic foreign id no provider answers for. Unlike discovery this
-// does not drop authors whose monitor_new_items is "none": that setting is
-// about adding books, and an author's profile is worth keeping fresh either way.
-const metadataRefreshEligibleWhere = `monitored = 1 AND foreign_id NOT LIKE 'calibre:%'`
+// Monitored authors only, as the refresh always was, and not Calibre shells or
+// authors made by hand (#3840), whose synthetic foreign ids no provider answers
+// for. Unlike discovery this does not drop authors whose monitor_new_items is
+// "none": that setting is about adding books, and an author's profile is worth
+// keeping fresh either way.
+const metadataRefreshEligibleWhere = `monitored = 1 AND foreign_id NOT LIKE 'calibre:%' AND foreign_id NOT LIKE 'manual:%'`
 
 // ListMetadataRefreshDue returns up to limit eligible authors whose profile was
 // last refreshed before cutoff, never refreshed authors first and then the

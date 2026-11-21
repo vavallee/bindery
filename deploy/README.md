@@ -5,6 +5,12 @@ primary bindery app and telemetry/ping server are deployed through their
 own charts (`charts/bindery`) and the `bindery-ping` Deployment; manifests
 in this directory cover small companion services.
 
+The ping server (`cmd/telemetry-server`) caches the dashboard numbers behind
+`/stats` and `/api/stats` for up to 60 seconds, so both can lag a new ping by
+up to a minute. `/stats.json`, which the Discord stats job below reads, is
+still computed on every request (its responses carry
+`Cache-Control: max-age=60`), and pings are recorded immediately either way.
+
 ## `discord-stats.yaml` — Discord stats voice channels
 
 A CronJob that runs every 10 minutes on the `hetz1` cluster in the

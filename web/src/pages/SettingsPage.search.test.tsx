@@ -54,6 +54,12 @@ vi.mock('../components/ProtocolMismatchWarning', () => ({ default: () => null })
 vi.mock('./settings/GeneralTab', () => ({
   default: () => <div><p>general tab</p><div id="import.mode"><input aria-label="import mode" /></div></div>,
 }))
+// The File Naming, Storage and Schedules tabs were sections of General (#3990).
+vi.mock('./settings/NamingTab', () => ({
+  default: () => <div><p>naming tab</p><div id="import.mode"><input aria-label="import mode" /></div></div>,
+}))
+vi.mock('./settings/StorageTab', () => ({ default: () => <p>storage tab</p> }))
+vi.mock('./settings/SchedulesTab', () => ({ default: () => <p>schedules tab</p> }))
 vi.mock('./settings/AboutTab', () => ({ default: () => <p>about tab</p> }))
 vi.mock('./settings/IndexersTab', () => ({ default: () => <p>indexers tab</p> }))
 vi.mock('./settings/ClientsTab', () => ({ default: () => <p>clients tab</p> }))
@@ -162,9 +168,9 @@ describe('Settings search', () => {
     state.overrides = { 'settings.general.fileNaming': 'Dateibenennung' }
     renderSettings()
     type('dateiben')
-    expect(optionNames()).toEqual(['DateibenennungGeneral'])
+    expect(optionNames()).toEqual(['DateibenennungFile Naming'])
     type('file naming')
-    expect(optionNames()).not.toContain('File namingGeneral')
+    expect(optionNames()).not.toContain('File namingFile Naming')
   })
 
   it('finds an active setting key and opens Advanced, ignoring inert keys', async () => {
@@ -290,6 +296,20 @@ describe('Settings search', () => {
       await waitFor(() => expect(document.getElementById('autoGrab.enabled')).toHaveClass('ring-2'))
     })
 
+    it('sends an old General link for a moved setting to its new tab and keeps the hash (#3990)', async () => {
+      renderSettings('/settings?tab=general#import.mode')
+      expect(await screen.findByText('naming tab')).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('?tab=naming#import.mode'))
+      await waitFor(() => expect(document.getElementById('import.mode')).toHaveClass('ring-2'))
+    })
+
+    it('marks the open settings page with aria-current (#3990)', async () => {
+      renderSettings('/settings?tab=storage')
+      expect(await screen.findByText('storage tab')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Storage' })).toHaveAttribute('aria-current', 'page')
+      expect(screen.getByRole('button', { name: 'General' })).not.toHaveAttribute('aria-current')
+    })
+
     it('does not land a non admin on an admin only field of a tab they can open', async () => {
       state.isAdmin = false
       renderSettings('/settings#import.mode')
@@ -355,7 +375,7 @@ describe('Settings search', () => {
     renderSettings()
     for (const k of general) {
       type(text(k))
-      const offered = optionNames().some(n => n?.endsWith('General') && n.startsWith(text(k)))
+      const offered = optionNames().some(n => n?.startsWith(text(k)))
       expect(offered, k).toBe(EVERYONE.includes(k))
     }
     cleanup()
@@ -363,7 +383,7 @@ describe('Settings search', () => {
     renderSettings()
     for (const k of general) {
       type(text(k))
-      expect(optionNames().some(n => n?.endsWith('General') && n.startsWith(text(k))), k).toBe(true)
+      expect(optionNames().some(n => n?.startsWith(text(k))), k).toBe(true)
     }
   })
 
@@ -420,7 +440,7 @@ describe('Settings search', () => {
     fireEvent.keyDown(box(), { key: 'ArrowDown' })
     expect(options[1]).toHaveAttribute('aria-selected', 'true')
     expect(options[0]).toHaveAttribute('aria-selected', 'false')
-    expect(options[0].textContent).toBe('Hardcover list syncGeneral')
+    expect(options[0].textContent).toBe('Hardcover list syncSchedules')
     expect(options[1].textContent).toMatch(/Import/)
     fireEvent.keyDown(box(), { key: 'Enter' })
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('tab=import'))

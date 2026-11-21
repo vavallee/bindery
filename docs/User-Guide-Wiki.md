@@ -53,7 +53,7 @@ an arbitrary release is unreliable. The escape hatches:
   the toggle is on, so a rescan cannot drop it twice. It is offered again once
   the drop fails or is blocked, or its Queue row is removed.
   The folder browser starts at your root folders, the download directories and
-  any **import source folders** an admin lists under Settings, General, Import
+  any **import source folders** an admin lists under Settings, File Naming, Import
   (`import.source_folders`, one absolute path per line). A source folder is a
   place to import from, for example an old library: it is not a root folder, no
   author is filed there and it is never scanned as a library. Bindery never
@@ -99,8 +99,8 @@ Almost every "why is Bindery doing that?" question comes down to one of these.
 
 ### 1. Library Scan is a reconciler, not an importer
 
-**Scan Library** (Settings → General → Library, and automatically every 6
-hours by default; change that under Settings → General → Library scan, from 15
+**Scan Library** (Settings → Storage → Library, and automatically every 6
+hours by default; change that under Settings → Schedules → Library scan, from 15
 minutes to 7 days, applied after a restart) matches files already on disk to books **already in your catalogue**.
 It never creates authors or books from files on its own. If you point a fresh
 install at a folder of 3,000 epubs and hit Scan, you get a long list of
@@ -212,7 +212,7 @@ Consequences:
 
 ### 4. Naming templates are for output, not input
 
-The templates in Settings → General → File Naming control how Bindery names
+The templates in Settings → File Naming control how Bindery names
 and organises files **it imports itself**. The Library Scan does **not** use
 them — it reads existing files with a fixed parser that prefers an
 `{Author}/{Book Title}/` folder structure and reads a bare `X - Y` filename as
@@ -273,9 +273,10 @@ monitored.
 |---|---|
 | **Add to library → an author row** (the **Add Author** button on Authors) | The author **plus their full catalogue** (up to 2,000 titles, after deduplication and the metadata profile's filters), monitored per the monitor mode you pick |
 | **Add to library → a book row** (the **Add Book** button on Books or Authors) | One book, and only that book, silently creating its author if needed. Select a search result to review its cover and identifiers before confirming; ISBN lookups show the searched ISBN separately from identifiers reported by the metadata source |
+| **Add to library → Add by hand** | One book exactly as you type it, for a book no metadata source knows. See [Adding a book by hand](#adding-a-book-by-hand) |
 | **Discover → Add to Wanted** | One recommended book |
 | **Series → Fill gaps** | The missing books of a linked series, wanted + monitored |
-| **Import lists** (Settings → Import / Migrate, Hardcover reading lists) | Every list item, re-synced on the Hardcover list sync interval (Settings → General, 24h by default). Whether the items are also marked wanted is the per-list **Download books from this list** checkbox: on (the default) creates them monitored and queues downloads; off catalogues them unmonitored, so you can browse a Want to Read shelf in Bindery and fetch books one at a time. Authors created by a list never pull their back-catalogue in — only the listed books are added. **Sync now** starts the sync in the background and the row reports its progress, so a large shelf isn't cut short by a request timeout |
+| **Import lists** (Settings → Import / Migrate, Hardcover reading lists) | Every list item, re-synced on the Hardcover list sync interval (Settings → Schedules, 24h by default). Whether the items are also marked wanted is the per-list **Download books from this list** checkbox: on (the default) creates them monitored and queues downloads; off catalogues them unmonitored, so you can browse a Want to Read shelf in Bindery and fetch books one at a time. Authors created by a list never pull their back-catalogue in — only the listed books are added. **Sync now** starts the sync in the background and the row reports its progress, so a large shelf isn't cut short by a request timeout |
 | **Library imports** (Calibre, Readarr, ABS, Goodreads CSV, author list) | Your existing catalogue — see the next section |
 
 **Add Author** and **Add Book** open the same dialog. Type an author name, a
@@ -307,6 +308,44 @@ still lets another provider's record through.
 Searches run against the metadata providers only
 when you press Enter or Search, never as you type; the header library search is
 the one that reacts to keystrokes, because it only reads your own catalogue.
+
+#### Adding a book by hand
+
+Some books have no usable record anywhere: short stories, anthology pieces, fan
+translations, self published work. **Add by hand**, at the bottom of the Add to
+library dialog, adds one anyway without asking any metadata source. Type the
+title (what you searched for is filled in) and the author, and optionally a
+series with the book's position in it, the format, and whether to search
+indexers straight away (off by default, since a book like this is usually one
+you already have the file for).
+
+- **Author.** An author already in your library with that name is reused.
+  Any other name becomes a new author with no metadata, unmonitored like any
+  author Add Book brings in. **Link metadata** on that author's page, or adding
+  the real author with Add Author, connects it to a metadata source later and
+  keeps its books.
+- **Series.** The book joins the series of that title its author is already
+  in, otherwise any series of that title in your library, so a story added to
+  *The Horus Heresy* lands in the series the other books are in. If there is
+  none, a new series is made.
+- **Files.** A file already in your library that matches the title and author
+  is attached right away, the same as for any added book, and the indexer
+  search is then skipped. Otherwise import or hardlink the file as usual;
+  Manual Import and **Fix match** find the book by its title.
+- **Refreshes and imports leave it alone.** The book has no metadata source, so
+  a metadata refresh never changes it, and when an author refresh finds a work
+  with the same title it does not attach that record to your book or add a
+  second copy. Its title is locked, so an Audiobookshelf or Calibre import that
+  matches the book by title keeps the title you typed, and an Audiobookshelf
+  import does not relink it to a provider record.
+  Edit the book as usual to fill in the rest. To link it to a real record
+  later, use **Re-bind** on the book page.
+
+If the author already has a book with that exact title (ignoring case,
+spacing and a bracketed suffix such as "(Unabridged)"), the add is refused with
+a link to the existing one. A title with a subtitle, such as "Mistborn: Secret
+History" beside "Mistborn", counts as a different book. The same title at a different position in the same
+series counts as a different book.
 
 Two settings decide whether an author add stays a trickle or becomes a flood:
 
@@ -348,8 +387,8 @@ to correct one that is wrong.
 
 ## From Wanted to your library
 
-**Search.** A scheduled sweep (default every 12 hours; interval in Settings →
-General, restart required) searches your indexers for every book on the
+**Search.** A scheduled sweep (default every 12 hours; interval in Settings → Schedules,
+restart required) searches your indexers for every book on the
 Wanted page and auto-grabs the best release. The **Auto-grab** toggle in
 Settings → Metadata Profiles → Library Defaults turns grabbing off entirely if you prefer to grab by hand
 from the Wanted page. It covers every path that can start a download: the
@@ -776,7 +815,7 @@ than 20 EPUBs is not judged (a verdict on a prefix could condemn the right book)
 and the `contentCheck` note says `truncated`. The object lists at most 10
 mismatches and says how many more there were.
 
-What happens next is set by **Check ebook contents** under Settings, General,
+What happens next is set by **Check ebook contents** under Settings,
 File Naming (`import.ebook.content_check`, admin only):
 
 - **Warn** (the default): the file imports as before, and the History row and the
@@ -876,7 +915,7 @@ a library scan, manual import or **Match to book**, and it does not change the
 files or their tags.
 
 If the library app downstream reads sidecar metadata, turn on **Write a
-metadata.opf sidecar** in Settings → General (off by default). Bindery then
+metadata.opf sidecar** in Settings → File Naming (off by default). Bindery then
 writes a Calibre style `metadata.opf` next to each imported ebook and
 audiobook with its own title, author, series and identifiers. The book file
 itself is never modified.
@@ -903,7 +942,15 @@ book** (attach a failed import to the right book and import it from disk), and
 per-row error detail. An `imported` row leaves the Queue after 7 days (it stays on History), failed and blocked rows stay until you deal with them, and Bindery deletes finished download rows older than `BINDERY_DOWNLOAD_RETENTION_DAYS` (90 by default, `0` keeps them). Once a row is trimmed, Bindery no longer remembers that exact release was grabbed, so if you later delete the file and the book is wanted again, the same release can be grabbed again. Tick rows for **Retry selected**, or use **Retry all
 failed** to cover every failed row at once. If a download client does not answer
 in time the page says so above the list, so a short Queue is never mistaken for
-lost downloads. History records every grab/import/failure and can
+lost downloads. The chips above the list filter by state, each with a count:
+**All**, **Active** (everything that has not failed), **Downloading**,
+**Importing**, **Held** (parked for pair gating), **Handed off** (waiting on your
+External import tool), **Needs attention** (an import that failed or is blocked
+and waits for Match to book or Retry import) and **Failed**. A state chip with
+nothing in it is hidden. Failed also holds the rows Needs attention shows, plus
+downloads that never produced a file. The chosen chip is kept in the address
+(`/queue?view=held`), and the older `?view=active` and `?view=failed` links work
+as before. A **Handed off** row has a **Scan library** button (admins only): it runs the same library scan as Settings, which picks up the file your External import tool placed in your library, and the book then shows as owned. The row stays under Handed off until you use **Remove** on it. The scan covers the whole library, since there is no narrower scan, and the page says so if a scan is already running. Held rows have nothing to act on until the paired format arrives, and Needs attention rows keep Match to book and Retry import. History records every grab/import/failure and can
 blocklist a bad release in one click. A release NZBGet or SABnzbd fails as
 broken (missing articles, a failed repair or unpack, a corrupt archive) is
 blocklisted for you, with the client's verdict as the reason, so the next
@@ -970,7 +1017,7 @@ matches where your metadata lives, then scan:
 | Just a list of authors | Settings → Import / Migrate → **Upload CSV**, one author name per line |
 | Only folders of files | Scan the library, then adopt on **Import → In your library**; or use **Import → From a folder** for files outside the library |
 
-Then run **Settings → General → Library → Scan Library** to attach your files
+Then run **Settings → Storage → Library → Scan Library** to attach your files
 to the records. Things worth knowing before you judge the results:
 
 - Library imports create **records only** — no covers, no descriptions, no
@@ -1349,7 +1396,7 @@ Three scopes, all the same preview:
 |---|---|
 | One book | the book page, **More** → Rename files |
 | One author | the author page, **More** → Rename files |
-| Your whole library | Settings → General → Library → **Reorganize Library** (#2296) |
+| Your whole library | Settings → Storage → Library → **Reorganize Library** (#2296) |
 
 **External import mode.** If ebooks or audiobooks are in External import mode, another
 tool owns that layout, so the dialog shows a warning and the Rename button stays off
@@ -1570,7 +1617,7 @@ same sync as **Refresh metadata**, so the same rules apply: the author must be m
 take new items, the metadata profile's language and junk filters still run,
 and each new book is monitored or not according to the author's monitor mode.
 
-- **Turning it on and how often:** Settings → General → **New release
+- **Turning it on and how often:** Settings → Schedules → **New release
   discovery**. It starts on Off; choose Daily, Weekly or Monthly to turn it
   on, and Off again to stop it. The change applies within the hour, no
   restart.
@@ -1783,7 +1830,7 @@ agree.
 ## Rejecting releases by words in the title
 
 If you never want a kind of release, such as Graphic Audio or full cast
-recordings, list the words in **Settings, General, Downloads, Reject releases by
+recordings, list the words in **Settings, Schedules, Downloads, Reject releases by
 title words** (admins only). Put one word or phrase per entry, separated by
 commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
 `search.rejectWords` and it is empty by default, which rejects nothing.
@@ -1813,6 +1860,104 @@ commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
   and you can still grab it by hand. The same reason appears in the search debug
   view.
 
+## Where settings live
+
+General used to be one long page. It is now four, each with a one line
+description under it:
+
+| Tab | What is on it | Who sees it |
+|---|---|---|
+| **General** | Appearance (theme and language) and Security (sign in mode, API key, password, OIDC) | Everyone |
+| **File Naming** | Import mode, content checks, drop folders, import source folders, the metadata.opf sidecar and the naming templates | Admins |
+| **Storage** | The download and library folders and their health, the database check, Scan Library, Reorganize Library and the pointer to Root Folders | Admins |
+| **Schedules** | Reject releases by title words, preferred language, the search, Hardcover sync, library scan, release discovery and series check intervals | Admins |
+
+File Naming and Storage sit under Library in the sidebar, Schedules under
+System. An old link such as `/settings?tab=general#import.mode` still works:
+the setting key in the link decides the tab, so it opens File Naming and lands
+on that field.
+
+## How Settings save
+
+Settings save in one of two ways, and both tell you the result. A field with its
+own **Save** button, such as a folder path or a naming template, saves when you
+press the button, which shows Saving, then Saved or Error. Everything else saves
+the moment you change it: a select, a toggle, or a button like the Import Mode
+choices. Those show a short message in the bottom corner, such as "Import Mode
+set to External" or "Telemetry saved", and a red "Couldn't save ..." message if
+the request failed, so you no longer need to reload the page to check that a
+change stuck. Messages stack, up to five at a time, rather than replacing each
+other, so a failure is never hidden by a later success. A failed save also puts
+the control back on the value that is actually saved. A number field such as
+Latest book count saves when you leave the field or press Enter, not on each
+digit, and says so beside the field if the number is not valid.
+
+## Soulseek results in interactive search
+
+If you have added a slskd client in **Settings, Download Clients** and left it
+enabled, interactive search also searches Soulseek. This is opt in: with no
+enabled slskd client, nothing is sent to Soulseek. The automatic search for
+wanted books never uses it.
+
+- A Soulseek result sits in the same list as your indexer results and goes
+  through the same ranking and filtering. It has a **Soulseek** badge, the
+  user name of the peer, how many files that peer offers in the folder, and
+  either **free slot** (the peer would start sending at once) or the length of
+  its queue.
+- One result is one folder from one peer in one format, so a peer who shares an
+  EPUB and a PDF of the same book shows two results. Bindery reads the format
+  from the file extension and leaves out files that are not books or
+  audiobooks. It does not guess an author or title it cannot read from the
+  names.
+- **Grab works on these results**, the same button as for any other result.
+  Grabbing is by hand only: the automatic search for wanted books never uses
+  Soulseek and never grabs from it. Auto grab is not included.
+- The Queue shows a Soulseek download with the peer's name and where it stands,
+  for example "Queued in alice's upload queue (position 4)" while it waits,
+  then how many files are done. A download is complete only when every file
+  arrived. If one file fails, the whole download fails and the rest is cleaned
+  up, and you can pick another result. A download that sits queued for 30
+  minutes, or stops receiving bytes for 10 minutes, is cancelled and failed the
+  same way. Removing it from the Queue cancels it in slskd.
+- Files from peers are checked in block mode when they are imported. An EPUB or
+  Kindle file that will not open, one that is a different book, audiobook tags
+  for another book, the wrong format, or a language your profile does not allow
+  is refused, blocklisted and left for Match to book. A content check you set
+  to off stays off. PDF has no content check, so a PDF only has to be the
+  right format.
+- slskd and Bindery must share the downloads volume, or the client's path remap
+  must reach slskd's downloads folder, because Bindery imports from
+  `bindery/<download id>/` inside it. See the
+  [deployment guide](DEPLOYMENT.md#slskd-soulseek).
+- A search usually takes about 15 seconds longer while slskd waits for peers,
+  and slskd runs only one search at a time. Bindery waits at most 20 seconds
+  for slskd, so the worst case is 20 extra seconds. After that you get your
+  indexer results without Soulseek, and the search debug view lists slskd as
+  timed out.
+- The title and the author's last name leave your machine as search text on the
+  Soulseek network. See the privacy note in the
+  [deployment guide](DEPLOYMENT.md#slskd-soulseek).
+
+## Reading a setting without opening it
+
+Under the label of each setting that holds a choice, a switch or a value, a
+quiet line starts with "Current:" and shows what is set right now, for example
+"Current: Hardlink" under Import Mode or "Current: Default (12 hours)" under the
+wanted search interval. You can read your setup down the page without touching
+a control. The line is the same state the control shows, so it changes the
+moment a save lands and goes back with the control if a save fails. When
+nothing is stored it says "Not set", or "Default (...)" with the value Bindery
+uses instead. Choices show their name and not the stored key, a long folder
+path is cut to one line (hover it to read the whole path), and a secret such as
+an API key or token never shows its value, only "Set" or "Not set". Fields with
+their own Save button are left out on purpose, because what you have typed is
+not saved yet and the line would otherwise show something that is not true. A saved
+URL never shows a user name or password, only its host and path. The Edit Author
+dialog has the same line under its profile, root folder and monitor fields, but
+it shows what is saved for that author, not what you are picking: it stays put
+while you change a field and shows the new value the next time you open the
+dialog after pressing Save.
+
 ## Finding a setting when you do not know its tab
 
 The search box at the top of Settings matches tab names, section headings and
@@ -1841,7 +1986,7 @@ Import and Notifications tabs, which save through their own forms rather than as
 stored settings, and rows you created yourself (individual indexers, download
 clients, notification targets). Those are found through their tab or section.
 Non admins are only offered the tabs, sections and settings they can see: the
-admin sections of General, such as File Naming and Downloads, are left out for
+admin tabs that used to be sections of General (File Naming, Storage and Schedules) are left out for
 them, and a link to an admin setting does nothing for them.
 
 ## Settings most people never touch
@@ -1908,7 +2053,8 @@ Knowing the edges saves time:
   not a book file: imports place regular files only (a symlink inside a
   download never lands in your library, and a download folder that is itself
   a symlink is refused in every import mode, including the drop folder
-  handoff), Library Scan and the
+  handoff; a file the download client lists that sits behind a symlinked
+  folder resolving outside the download is skipped), Library Scan and the
   Audiobookshelf import do not attach one to a book, and downloads (browser,
   OPDS, the Calibre bridge) refuse to serve one. An audiobook zip leaves out
   any link inside the book folder, file or folder. Replace a linked file with

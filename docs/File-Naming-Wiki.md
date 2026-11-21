@@ -18,7 +18,7 @@ The third one has its year stripped on purpose, to show what an empty `{Year}` d
 
 ## Where the settings live
 
-Settings, General, **File Naming**. The section is admin only. There are three templates:
+Settings, **File Naming**. The section is admin only. There are three templates:
 
 | Setting | Names | Default |
 |-|-|-|
@@ -322,6 +322,6 @@ Changing a template only affects new imports. To move files you already have, us
 |-|-|
 | One book | the book page, **More**, Rename files |
 | One author | the author page, **More**, Rename files |
-| Whole library | Settings, General, Library, **Reorganize Library** |
+| Whole library | Settings, Storage, Library, **Reorganize Library** |
 
 All three are admin only. They show a preview first (Will move, Already correct, Destination exists, Not on disk, Error) and nothing moves until you confirm. Ebooks are renamed and moved, audiobook folders are moved as a whole, and a single file audiobook is also renamed by the per track template. Run **Scan library** first, since only files already attached to a book can be moved. More in the [User guide](User-Guide-Wiki.md#restyling-files-you-already-have).

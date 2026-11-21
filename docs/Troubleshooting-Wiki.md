@@ -20,7 +20,7 @@ button. Releases dropped as not a book (video, a movie or console category, a
 raw usenet posting) are listed in the search details panel only.
 
 Releases dropped because their title contains one of your own rejected words
-(Settings, General, Downloads, `search.rejectWords`) are listed there too, with
+(Settings, Schedules, Downloads, `search.rejectWords`) are listed there too, with
 the word that matched. Clear the setting to stop rejecting anything.
 
 ### A release names the next book in the series
@@ -302,7 +302,7 @@ These checks use the release name. They do not open the download. A separate
 check does, once the download has finished: Bindery compares an EPUB's own title
 and author with the book it was grabbed for, and for an audiobook compares the
 audio tags of its files with the book. It is set per format under Settings,
-General, File Naming (`import.ebook.content_check` and
+File Naming (`import.ebook.content_check` and
 `import.audiobook.content_check`), defaults to
 `warn`, which imports the file and records what it found on the History row and
 in webhooks as `contentCheck`, and only refuses a download in `block` mode. See
@@ -893,7 +893,7 @@ The skip counts are also in the log (`Settings → Logs`): the `author books syn
 ## Ebooks lost their file extension after Rename files
 
 A template without a dot before `{ext}`, such as `{Title}{ext}`, renames
-`Title.epub` to `Titleepub`. Fix the ebook template (Settings → General → File
+`Title.epub` to `Titleepub`. Fix the ebook template (Settings → File
 Naming) to `{Title}.{ext}`, then run Rename files again. Bindery gets the
 extension back from the file's rename history or its contents and moves the
 file to the corrected name. A file where neither answers is listed as Error and
@@ -965,7 +965,7 @@ hover its sentence.
 
 ## Collecting logs for a bug report
 
-`Settings → Logs` is the whole log store, so you don't need shell access to the container (rootless images give you nowhere to `cat` a file anyway). Entries age out on the retention window, fourteen days by default, so collect the logs while the problem is recent. The window is the **Log retention** setting on the General tab if you need longer.
+`Settings → Logs` is the whole log store, so you don't need shell access to the container (rootless images give you nowhere to `cat` a file anyway). Entries age out on the retention window, fourteen days by default, so collect the logs while the problem is recent. The window is the **Log retention** setting on the Logs tab if you need longer.
 
 Filter down to the problem first — level, component, a search term, and a date range around when it happened — then click **Download** next to *Clear filters*. You get a plain-text file named `bindery-logs-<timestamp>.txt` containing exactly the entries the table was showing, with a header block recording which filters produced it. Attach that to the issue.
 

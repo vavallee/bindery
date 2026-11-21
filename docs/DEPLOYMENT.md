@@ -347,7 +347,7 @@ env:
 
 > **Don't point a library/download dir at an unmounted path.** `BINDERY_LIBRARY_DIR` / `BINDERY_DOWNLOAD_DIR` / `BINDERY_AUDIOBOOK_DIR` must resolve *inside* a mounted volume. A dir that isn't backed by a volume writes to ephemeral container storage and is lost on restart. The chart's stock defaults (`/downloads`, `/books`) are placeholders — override them to subpaths of your real mount.
 
-> **Importing from somewhere else.** To import from a folder that is neither a library root nor a download dir (an old library, an archive disk), mount it into the container and add it under Settings, General, Import source folders (`import.source_folders`). It is not a root folder, never a destination for authors and never scanned as a library, and Bindery never writes new files into it. Importing in move mode (`import.mode=move`) does remove the imported files from it, and an imported audiobook folder is removed whole, so picking the source root as that folder deletes the root. Mount the folder read only if you want a move to fail instead of delete, or use copy or hardlink mode. Admin only, the path must exist inside the container, at most 32 paths, and a path that resolves to `/` or to Bindery's own data or database folder is refused.
+> **Importing from somewhere else.** To import from a folder that is neither a library root nor a download dir (an old library, an archive disk), mount it into the container and add it under Settings, File Naming, Import source folders (`import.source_folders`). It is not a root folder, never a destination for authors and never scanned as a library, and Bindery never writes new files into it. Importing in move mode (`import.mode=move`) does remove the imported files from it, and an imported audiobook folder is removed whole, so picking the source root as that folder deletes the root. Mount the folder read only if you want a move to fail instead of delete, or use copy or hardlink mode. Admin only, the path must exist inside the container, at most 32 paths, and a path that resolves to `/` or to Bindery's own data or database folder is refused.
 
 If you genuinely can't use a single mount (the download client mounts the share at a different path than Bindery), keep them separate and use [path remapping](#path-remapping-multi-container--multi-pod-setups) below — but note imports will then **`copy`**, not hardlink.
 
@@ -404,7 +404,7 @@ downloads. Import paths come from the **download client's API, per job**: when
 SABnzbd or qBittorrent reports a job complete, it also reports where the files
 are, and Bindery imports from that reported path. The env var is used for:
 
-- startup validation and the Settings → General storage-health panel,
+- startup validation and the Settings → Storage storage-health panel,
 - the hardlink probe (whether imports can link instead of copy),
 - the save path Bindery submits with qBittorrent grabs (and the category
   save-path warning in Settings),
@@ -513,7 +513,7 @@ Covers are one extra mount. When the bridge supports them Bindery sends a cover 
 
 **2. Bindery owns the library, mirror a copy to CWA.** Bindery places the imported file in its library *and* additionally copies it into a Calibre-Web-Automated ingest folder, always a copy under the flat file name, ebooks only. Set **Settings, Calibre tab, Calibre-Web-Automated (CWA), Ingest folder path** (`cwa.ingest_path`). Use this when Bindery keeps its own library and you just want CWA to also see new ebooks. It is independent of topology 1 and does not run in `External` import mode.
 
-**3. An external tool owns the library (drop folder).** Bindery does *not* write into the library; instead it renames the finished download into a drop folder and lets the other tool ingest it and produce the managed copy. This is the right setup for "Bindery, then `/cwa-book-ingest`, then CWA writes `/books`", for Calibre auto ingest, and for Storyteller's watched folder. Configure under **Settings, General tab, File Naming**, with **Import Mode** set to `External`; the drop folder fields appear underneath:
+**3. An external tool owns the library (drop folder).** Bindery does *not* write into the library; instead it renames the finished download into a drop folder and lets the other tool ingest it and produce the managed copy. This is the right setup for "Bindery, then `/cwa-book-ingest`, then CWA writes `/books`", for Calibre auto ingest, and for Storyteller's watched folder. Configure under **Settings, File Naming tab**, with **Import Mode** set to `External`; the drop folder fields appear underneath:
 
 - **Drop folder**: the watch folder the other tool ingests from (e.g. `/cwa-book-ingest`). Empty disables the drop and Bindery just hands off in place (the file stays in the download dir).
 - **Layout**: `flat` (each book file the download carries, sanely named, in the folder root, what most watch folder tools expect) or `templated` (recreate the `{Author}/{Title (Year)}/…` tree inside the drop folder).
@@ -619,6 +619,47 @@ Open the qBittorrent client form, expand **Proxy login (optional)** and fill in 
 
 The proxy password is stored like the other client passwords and is never sent back to the browser. Leave it blank when editing to keep the stored one, or empty the proxy username to remove the proxy login. The header is only sent to the scheme and host you configured, never to a redirect target on another host or from `https` down to `http`, and `user:pass@` in the Host field still does not work. The section only exists for qBittorrent.
 
+### slskd (Soulseek)
+
+Soulseek is opt in. Bindery does nothing with it until you add a slskd client, and it never speaks the Soulseek protocol itself: slskd does, and Bindery talks to slskd's REST API ([#1717](https://github.com/vavallee/bindery/issues/1717)). You can add the client, test it and run Diagnose on it. With it enabled, interactive search also searches Soulseek and you can grab what it finds by hand.
+
+What you need:
+
+- **slskd 0.26.0 or newer.** Bindery uses the batch download endpoint that first appears in 0.26.0, and Diagnose tells you to update when slskd is older.
+- **An API key with a write role.** slskd's default API keys are read only. In slskd's settings, create a key with the `readwrite` (or `administrator`) role and put it in the client's API Key field. Diagnose checks the role and says so when the key is read only. Bindery sends the key only in the `X-API-Key` header, never in a URL.
+- **slskd logged in to Soulseek.** The slskd Soulseek username and password are set in slskd, not in Bindery.
+- **A VPN and a forwarded port.** Peers connect to you to send files. Without a forwarded port most peers cannot reach slskd, and downloads stall or fail. Forward slskd's listen port (50300 by default) on your router, or use slskd's VPN port forwarding. slskd reports a forwarded port only with its VPN integration, so Diagnose cannot detect a router port forward. It shows that row as informational when no port is reported, and it never counts against the client.
+- **A path remap if the folders differ.** Set the client's path remap from slskd's downloads folder to the folder Bindery sees, for example `/app/downloads:/media/soulseek`. Diagnose reads slskd's downloads folder and checks it through the remap.
+
+Fill in the client like any other: host, port (slskd listens on 5030 by default), URL base if slskd sits behind a reverse proxy, and the API key. There is no category field because slskd has no categories.
+
+What works today: with a slskd client enabled, the book page's interactive search, the Wanted page search and the free text Search page also ask slskd, and the Soulseek results appear in the same list as your indexer results. Each one carries a Soulseek badge, the peer's user name, how many files it holds, and whether the peer has a free upload slot or how long its queue is. You can grab them. Grabbing is interactive only: the automatic search that runs for wanted books does not use Soulseek at all, and nothing is ever grabbed from Soulseek without you pressing Grab. Auto grab is not included.
+
+How a Soulseek grab runs:
+
+- Bindery asks slskd for the files of the folder you picked, from that one peer, in one batch. The files land in slskd's downloads folder under `bindery/<download id>/`. The folder name holds the download's id and nothing else, so no title or user name is written to disk.
+- **slskd and Bindery must share the downloads volume**, or the client's path remap must reach slskd's downloads folder. Bindery reads the finished files from `<slskd downloads folder>/bindery/<id>/` through the remap, then imports them like any other download. If it cannot see the folder the download is marked as an import failure that says so, and it is retried for a few checks before it is blocked.
+- A download is complete only when every requested file finished. If any file fails, is rejected by the peer or is cancelled, the whole download is failed with a message, its transfers are cancelled in slskd and the files that did arrive are deleted. Nothing is imported from a half download, and you can pick another result.
+- A peer's queue can be long, so waiting is allowed: a download that has been queued or starting for 30 minutes with nothing moving is cancelled in slskd and failed. One that is transferring but has received no new bytes for 10 minutes is cancelled and failed the same way. The Queue shows the peer's name and, while queued, the place in its upload queue when slskd reports one.
+- Removing a Soulseek download from the Queue cancels its transfers in slskd. With "delete files" ticked it also deletes that download's own folder. Other downloads' folders are never touched. After a successful import the finished transfers are removed from slskd's list and the files stay where they are, in case slskd shares that folder back.
+- Bindery never follows a symbolic link inside the download folder, but a hardlink that slskd places there cannot be told apart from an ordinary file, so it is imported like one. A download is limited to 200 files and 10 GiB in total. A folder over either limit is not offered, because a grab of it would be refused.
+
+Files from peers are checked harder than files from an indexer. For a Soulseek download the import check runs in block mode whatever the content check settings say, with one exception: if you have set a content check to off, that stays off. In block mode the import is refused, the release is blocklisted and the book stays wanted when:
+
+- the folder holds the wrong format for what was grabbed, for example audio files for an ebook;
+- an EPUB or Kindle file cannot be opened;
+- an EPUB or Kindle file says it is a different book (its title and author do not match);
+- audiobook tags clearly name another book;
+- the file's language is outside the language profile, where the file says what it is.
+
+The blocklist entry is keyed on the Soulseek result itself (the peer and the files), since a Soulseek result has no indexer. A refused download keeps its folder, so Match to book in the Queue or manual import can still bring the files in if you decide they are right.
+
+**PDF has no content check.** Bindery does not read a PDF's inside, so a PDF from Soulseek is only held to the format rule above and always imports if the format matches. Look at the file yourself before you trust a PDF from a stranger.
+
+Soulseek searches are slow next to an indexer. slskd runs one search at a time and Bindery asks it to collect answers for about 15 seconds, so a search that includes Soulseek usually takes that long to finish. That wait is capped: Bindery never waits more than 20 seconds for slskd, so a busy or hung slskd delays your indexer results by at most 20 seconds. Past the cap the search goes on without Soulseek and the search debug view shows the slskd source as timed out, under Sources. A book that wants both an ebook and an audiobook sends one Soulseek search and splits the answer between the two formats. If slskd is busy or does not answer, the indexer results still show.
+
+Privacy, so you can decide with the facts: when an interactive search runs, the title and the author's last name you are looking for leave your machine as search text on the Soulseek network, where other users can see search terms. Downloading shows your IP address to the peers you download from. Run slskd behind a VPN, and keep it on a network you are comfortable exposing this way.
+
 ### Running Bindery behind a VPN (network_mode: service:*)
 
 When Bindery shares a VPN container's network namespace (for example `network_mode: service:gluetun`), all of Bindery's outbound traffic egresses through the VPN. gluetun's killswitch firewall blocks LAN bound traffic by default, so "Test connection" to on LAN services (Audiobookshelf, Calibre, download clients) times out with `Client.Timeout exceeded while awaiting headers`, even though those same services load fine from a browser on the LAN. That contrast is the tell: the browser reaches the service directly because it is on the LAN, but Bindery is inside the VPN namespace and its LAN bound requests are dropped by the killswitch.
@@ -708,7 +749,7 @@ docker run --rm -v bindery-config:/config ghcr.io/vavallee/bindery:latest db-rep
 
 If your platform doesn't let you change the container command (some NAS app UIs), set `BINDERY_DB_FK_CHECK=report` or `BINDERY_DB_FK_CHECK=repair` instead, start the container once, read the log, then unset the variable.
 
-**Checking from the web UI.** Settings, General has a "Check database" button (admin only) that counts the orphan rows per relationship and shows what the schema says should have happened to them. It is read only and runs only when you press it, because it reads the whole database. The check runs on its own read only connection, so Bindery keeps answering while it runs.
+**Checking from the web UI.** Settings, Storage has a "Check database" button (admin only) that counts the orphan rows per relationship and shows what the schema says should have happened to them. It is read only and runs only when you press it, because it reads the whole database. The check runs on its own read only connection, so Bindery keeps answering while it runs.
 
 **Cleaning up from the web UI.** When the check finds orphan rows, "Preview cleanup" lists, per relationship, what a cleanup would do: delete the rows (`ON DELETE CASCADE`), clear the reference and keep the rows (`ON DELETE SET NULL`), or leave them alone (anything else). Nothing changes until you press the confirm button, and the confirmation is tied to the preview you were shown: if the data changed in between, or the preview is older than 15 minutes, it is refused and you preview again. Then:
 

@@ -190,7 +190,7 @@ type capsCategory struct {
 // SearchResult is the domain type for an indexer search result.
 type SearchResult struct {
 	GUID        string `json:"guid"`
-	IndexerID   int64  `json:"indexerId"`
+	IndexerID   *int64 `json:"indexerId"` // nil for a result no indexer produced (a Soulseek peer, #1717)
 	IndexerName string `json:"indexerName"`
 	Title       string `json:"title"`
 	Size        int64  `json:"size"`
@@ -219,4 +219,25 @@ type SearchResult struct {
 	// which is not the same as a reported 0, a dead torrent.
 	Seeders *int `json:"seeders,omitempty"`
 	Peers   *int `json:"peers,omitempty"`
+
+	// Soulseek is set only on a result a Soulseek peer offered (protocol
+	// "soulseek"), through the slskd search source (#1717). nil for every
+	// indexer result.
+	Soulseek *SoulseekInfo `json:"soulseek,omitempty"`
+}
+
+// SoulseekInfo is what a Soulseek peer reported about one offered folder, for
+// ranking and for the search results table. Peer supplied, so display only.
+type SoulseekInfo struct {
+	Username string `json:"username"`
+	// FreeSlot is true when the peer has a free upload slot and would start the
+	// transfer at once; false means the transfer would queue.
+	FreeSlot    bool `json:"freeSlot"`
+	QueueLength int  `json:"queueLength"`
+	// UploadSpeed is the peer's reported upload speed in bytes per second.
+	UploadSpeed int64 `json:"uploadSpeed"`
+	// FileCount is how many files of Format the folder holds.
+	FileCount int `json:"fileCount"`
+	// Format is the file extension those files share: epub, pdf, m4b, mp3 ...
+	Format string `json:"format"`
 }

@@ -812,6 +812,13 @@ func (h *RequestHandler) autoApprove(ctx context.Context, req models.LibraryRequ
 		return nil, 0, "", fmt.Errorf("request %d is not owned by user %d", req.ID, owner)
 	}
 	search := claimed.Kind == models.RequestKindBook
+	// The approval acts as the account that owns the request, whoever filed
+	// it (an admin can file on a requester's behalf). A requester's own auto
+	// approval therefore never writes to a shared book, as the book routes
+	// refuse it too (auth.CheckWriteOwnership).
+	if u, uerr := h.users.GetByID(ctx, owner); uerr == nil && u != nil {
+		ctx = auth.WithUserRole(auth.WithUserID(ctx, owner), u.Role)
+	}
 	return h.runClaimedApproval(ctx, claimed, approveBody{SearchOnAdd: &search})
 }
 
@@ -908,8 +915,11 @@ func (h *RequestHandler) alreadyInLibrary(ctx context.Context, owner int64, kind
 		// the row (#3835). Only a book that is covered or held elsewhere
 		// refuses.
 		if b != nil {
-			if outcome, _, _ := existingBookOutcomeFor(b, owner, h.effectiveMediaType(ctx, mediaType)); outcome != outcomeWiden {
+			switch outcome, _, _ := existingBookOutcomeFor(ctx, b, owner, h.effectiveMediaType(ctx, mediaType)); outcome {
+			case outcomeCovered:
 				return "This book is already in the library.", nil
+			case outcomeRefused:
+				return bookHeldCreateMessage, nil
 			}
 		}
 	case models.RequestKindAuthor:
@@ -929,11 +939,21 @@ func (h *RequestHandler) alreadyInLibrary(ctx context.Context, owner int64, kind
 }
 
 // bookHeldByAnotherAccount reports whether book belongs to an account other
-// than owner while tenancy is enforced. Approving must not widen that
-// account's row, so a request that needs a format added to it is refused (and
-// can be declined). With tenancy off the library is shared and nothing is held.
-func bookHeldByAnotherAccount(book *models.Book, owner int64) bool {
-	return auth.EnforceTenancy() && book.OwnerUserID != 0 && book.OwnerUserID != owner
+// than owner while tenancy is enforced, or is shared (no owner) and the
+// account acting in ctx may not change shared rows. Approving must not widen
+// or search such a row, so a request that needs a format added to it is
+// refused (and can be declined). The shared case is the same rule the book
+// routes apply, auth.CheckWriteOwnership: an admin approving by hand may still
+// act on a shared book, a requester's own auto approval may not. With tenancy
+// off the library is shared and nothing is held.
+func bookHeldByAnotherAccount(ctx context.Context, book *models.Book, owner int64) bool {
+	if !auth.EnforceTenancy() {
+		return false
+	}
+	if book.OwnerUserID == 0 {
+		return !auth.CheckWriteOwnership(ctx, 0)
+	}
+	return book.OwnerUserID != owner
 }
 
 // defaultMediaType is the install wide default format, which a request for
@@ -1014,18 +1034,18 @@ const (
 // mediaType (already resolved to a concrete format) by owner. It is the one
 // rule shared by the approval and the queue badge, so the badge cannot claim
 // what approve then refuses.
-func (h *RequestHandler) existingBookPlan(book *models.Book, owner int64, mediaType string) (outcome existingBookOutcome, missingEbook, missingAudio bool) {
-	return existingBookOutcomeFor(book, owner, mediaType)
+func (h *RequestHandler) existingBookPlan(ctx context.Context, book *models.Book, owner int64, mediaType string) (outcome existingBookOutcome, missingEbook, missingAudio bool) {
+	return existingBookOutcomeFor(ctx, book, owner, mediaType)
 }
 
 // existingBookOutcomeFor is existingBookPlan without the handler, so the
 // search stamp can ask the same question the request and approval do.
-func existingBookOutcomeFor(book *models.Book, owner int64, mediaType string) (outcome existingBookOutcome, missingEbook, missingAudio bool) {
+func existingBookOutcomeFor(ctx context.Context, book *models.Book, owner int64, mediaType string) (outcome existingBookOutcome, missingEbook, missingAudio bool) {
 	missingEbook, missingAudio = missingRequestFormats(book, mediaType)
 	switch {
 	case !missingEbook && !missingAudio:
 		return outcomeCovered, false, false
-	case bookHeldByAnotherAccount(book, owner):
+	case bookHeldByAnotherAccount(ctx, book, owner):
 		return outcomeRefused, missingEbook, missingAudio
 	default:
 		return outcomeWiden, missingEbook, missingAudio
@@ -1035,6 +1055,10 @@ func existingBookOutcomeFor(book *models.Book, owner int64, mediaType string) (o
 // errBookHeldElsewhere is an approval that needs a format added to a book that
 // belongs to another account.
 var errBookHeldElsewhere = errors.New("book held by another account")
+
+// bookHeldCreateMessage answers a request for a missing format of a book the
+// requester cannot change: another account's, or a shared one with tenancy on.
+const bookHeldCreateMessage = "This book is in a shared library you can't change, so ask an admin to add that format."
 
 const (
 	bookHeldElsewhereMessage = "This book is already in the library under another account and does not have the requested format, so approving cannot add it. Decline the request instead."
@@ -1051,7 +1075,7 @@ const (
 // book is read again and the decision made once more, one time.
 func (h *RequestHandler) approveExistingBook(ctx context.Context, book *models.Book, owner int64, mediaType string, searchOnAdd bool) (runID, notice string, err error) {
 	for attempt := 0; ; attempt++ {
-		outcome, missingEbook, missingAudio := h.existingBookPlan(book, owner, mediaType)
+		outcome, missingEbook, missingAudio := h.existingBookPlan(ctx, book, owner, mediaType)
 		switch outcome {
 		case outcomeCovered:
 			// Covered by monitoring is not covered by a file (#3961). When
@@ -1061,7 +1085,7 @@ func (h *RequestHandler) approveExistingBook(ctx context.Context, book *models.B
 			// on this one book, as in the Add dialog. The row is not written.
 			// A book held by another account is left alone, as it is for a
 			// widen.
-			if searchOnAdd && coveredButNotOnDisk(book, mediaType) && !bookHeldByAnotherAccount(book, owner) {
+			if searchOnAdd && coveredButNotOnDisk(book, mediaType) && !bookHeldByAnotherAccount(ctx, book, owner) {
 				runID := h.adder.searchExistingBookCore(ctx, book)
 				return runID, "This book was already in the library and monitored for the requested format, so a search was started and the request is resolved.", nil
 			}
@@ -1223,7 +1247,7 @@ func (h *RequestHandler) flagCoveredPendingBooks(ctx context.Context, items []mo
 		if mediaType == "" {
 			mediaType = defaultType
 		}
-		outcome, _, _ := h.existingBookPlan(book, it.OwnerUserID, mediaType)
+		outcome, _, _ := h.existingBookPlan(ctx, book, it.OwnerUserID, mediaType)
 		it.AlreadyInLibrary = outcome == outcomeCovered
 	}
 }

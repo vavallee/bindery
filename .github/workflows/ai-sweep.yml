@@ -73,7 +73,7 @@ jobs:
           # plain-shell step posts it. gh is narrowed to the three subcommands
           # the sweep uses. This closes the "injected title -> curl secret to
           # attacker" exfil path (untrusted titles drive this run).
-          claude_args: --model ${{ vars.AI_BOT_MODEL || 'claude-sonnet-4-6' }} --max-turns 40 --allowedTools "Bash(gh issue list:*),Bash(gh pr list:*),Bash(gh issue edit:*),Read,Grep,Glob,Write"
+          claude_args: --model ${{ vars.AI_BOT_MODEL || 'claude-sonnet-4-6' }} --max-turns 40 --allowedTools "Bash(gh issue list:*),Bash(gh pr list:*),Bash(gh issue edit * --add-label needs-triage),Read,Grep,Glob,Write" --disallowedTools "Bash(gh issue edit * --body*),Bash(gh issue edit * -b *),Bash(gh issue edit * --body-file*),Bash(gh issue edit * -F *),Bash(gh issue edit * --title*),Bash(gh issue edit * -t *),Bash(gh issue edit * --remove-label*),Bash(gh issue edit * --add-assignee*),Bash(gh issue edit * --remove-assignee*),Bash(gh issue edit * --milestone*),Bash(gh issue edit * -m *),Bash(gh issue edit * --remove-milestone*),Bash(gh issue edit * --add-project*),Bash(gh issue edit * --remove-project*)"
           prompt: |
             You are Bindery's nightly backlog sweeper, running in CI on repo
             ${{ github.repository }}. You use the `gh` CLI (authenticated). Today
