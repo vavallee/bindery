@@ -64,23 +64,28 @@ func secondRelease(t *testing.T, f *regrabFixture, dl *models.Download, guid str
 // stored time keeps the driver's format.
 func ageHistory(t *testing.T, f *regrabFixture, d time.Duration) {
 	t.Helper()
-	rows, err := f.database.Query(`SELECT id, created_at FROM history`)
-	if err != nil {
-		t.Fatal(err)
-	}
 	type row struct {
 		id int64
 		at time.Time
 	}
 	var all []row
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.id, &r.at); err != nil {
+	func() {
+		rows, err := f.database.Query(`SELECT id, created_at FROM history`)
+		if err != nil {
 			t.Fatal(err)
 		}
-		all = append(all, r)
-	}
-	rows.Close()
+		defer rows.Close()
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.id, &r.at); err != nil {
+				t.Fatal(err)
+			}
+			all = append(all, r)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 	for _, r := range all {
 		if _, err := f.database.Exec(`UPDATE history SET created_at = ? WHERE id = ?`, r.at.Add(-d), r.id); err != nil {
 			t.Fatal(err)

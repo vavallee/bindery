@@ -90,23 +90,28 @@ func (r *clientErrorRepoll) next(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := r.database.Query(`SELECT id, created_at FROM history`)
-	if err != nil {
-		t.Fatal(err)
-	}
 	type row struct {
 		id int64
 		at time.Time
 	}
 	var all []row
-	for rows.Next() {
-		var x row
-		if err := rows.Scan(&x.id, &x.at); err != nil {
+	func() {
+		rows, err := r.database.Query(`SELECT id, created_at FROM history`)
+		if err != nil {
 			t.Fatal(err)
 		}
-		all = append(all, x)
-	}
-	rows.Close()
+		defer rows.Close()
+		for rows.Next() {
+			var x row
+			if err := rows.Scan(&x.id, &x.at); err != nil {
+				t.Fatal(err)
+			}
+			all = append(all, x)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 	for _, x := range all {
 		if _, err := r.database.Exec(`UPDATE history SET created_at = ? WHERE id = ?`, x.at.Add(-7*time.Hour), x.id); err != nil {
 			t.Fatal(err)

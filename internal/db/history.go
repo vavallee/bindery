@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -295,16 +296,17 @@ func (r *HistoryRepo) ReleaseFailureStreak(ctx context.Context, guid, title stri
 	if len(classes) == 0 || guid == "" {
 		return 0, time.Time{}, false, nil
 	}
-	marks := make([]string, len(classes))
-	args := []any{since, models.HistoryEventDownloadFailed, guid}
-	for i, c := range classes {
-		marks[i] = "?"
-		args = append(args, c)
+	// The class list is bound as one JSON array and expanded by json_each, so
+	// the statement is constant text whatever the number of classes.
+	classJSON, err := json.Marshal(classes)
+	if err != nil {
+		return 0, time.Time{}, false, fmt.Errorf("release failure streak: %w", err)
 	}
-	args = append(args, models.HistoryEventGrabbed, guid, models.HistoryEventBookImported, guid, title, title, bookID)
-	q := `SELECT event_type, COALESCE(json_extract(data, '$.class'), ''), created_at FROM history
+	args := []any{since, models.HistoryEventDownloadFailed, guid, string(classJSON),
+		models.HistoryEventGrabbed, guid, models.HistoryEventBookImported, guid, title, title, bookID}
+	const q = `SELECT event_type, COALESCE(json_extract(data, '$.class'), ''), created_at FROM history
 		WHERE created_at > ? AND (
-			(event_type = ? AND json_extract(data, '$.guid') = ? AND json_extract(data, '$.class') IN (` + strings.Join(marks, ",") + `))
+			(event_type = ? AND json_extract(data, '$.guid') = ? AND json_extract(data, '$.class') IN (SELECT value FROM json_each(?)))
 			OR (event_type = ? AND json_extract(data, '$.guid') = ?)
 			OR (event_type = ? AND (json_extract(data, '$.guid') = ?
 				OR (COALESCE(json_extract(data, '$.guid'), '') = '' AND source_title = ? AND ? != '' AND book_id IS ?)))
