@@ -273,6 +273,16 @@ type enrichmentSnapshot struct {
 	// display read a curated source instead of OpenLibrary's noisy "subjects"
 	// bag. Empty when no Hardcover match contributed genres.
 	genres []string
+	// title holds the book's title after enrichment. Only RanobeDB rewrites
+	// a title (#2012), so for every other book it is the input title back,
+	// and replaying it is a no-op. The sort title is not snapshotted: it is
+	// not in the cache key, so the replay derives it by the live rule.
+	title string
+}
+
+// bookHasAuthorName reports whether the book carries a non blank author name.
+func bookHasAuthorName(book *models.Book) bool {
+	return book.Author != nil && strings.TrimSpace(book.Author.Name) != ""
 }
 
 // enrichBookCacheKey is keyed on (MetadataProvider, ForeignID) because that
@@ -357,7 +367,19 @@ func (a *aggregatorCore) enrichBook(ctx context.Context, book *models.Book) bool
 	}
 
 	cacheable := true
+	// A title from RanobeDB is held until every enricher has run: each one
+	// searches and matches by book.Title, so writing it mid loop would change
+	// what the enrichers after it are asked.
+	enrichedTitle := ""
 	for i, enricher := range enrichers {
+		// RanobeDB's title is only trusted with an author to check it against.
+		// pickEnrichmentMatch skips its author check when the book has no
+		// author name, and a work from OpenLibrary can arrive with an author
+		// ID and no name, so without this a title match alone would rewrite
+		// the title. Skipping also means no request is sent for such a book.
+		if enricher.Name() == "ranobedb" && !bookHasAuthorName(book) {
+			continue
+		}
 		enriched, err := a.searchBoundProviderBooks(ctx, enricher, scopes[i], book.Title)
 		if err != nil {
 			// An enricher with no credentials (Hardcover without a token is
@@ -413,6 +435,20 @@ func (a *aggregatorCore) enrichBook(ctx context.Context, book *models.Book) bool
 			book.Genres = e.Genres
 			slog.Debug("enriched genres", "provider", enricher.Name(), "book", book.Title)
 		}
+		// Title: only RanobeDB, the opt in light novel source, writes one
+		// (#2012), and only its official English title for a match it has
+		// already checked for a clear winner, the same volume numbers and an
+		// author (internal/metadata/ranobedb). Every other enricher's title is
+		// a search result and stays one. A locked title is the user's.
+		if enricher.Name() == "ranobedb" && enrichedTitle == "" && book.CanWrite(models.BookFieldTitle) {
+			if t := strings.TrimSpace(e.Title); t != "" && t != book.Title {
+				enrichedTitle = t
+			}
+		}
+	}
+	if enrichedTitle != "" {
+		setEnrichedTitle(book, enrichedTitle)
+		slog.Debug("enriched title", "provider", "ranobedb", "book", book.Title)
 	}
 
 	// Cover-only fallback: any provider implementing CoverProvider gets
@@ -431,14 +467,18 @@ func (a *aggregatorCore) enrichBook(ctx context.Context, book *models.Book) bool
 	// book rather than hand one user's hand written text to another's library
 	// (#2767). A locked book is rare, so this costs one extra enricher round
 	// trip in a case that barely happens; every unlocked book caches as before.
+	// The title lock is checked for the same reason: a locked title is the
+	// user's own text.
 	if cacheKey != "" && ctx.Err() == nil &&
-		book.CanWrite(models.BookFieldDescription) && book.CanWrite(models.BookFieldGenres) {
+		book.CanWrite(models.BookFieldDescription) && book.CanWrite(models.BookFieldGenres) &&
+		book.CanWrite(models.BookFieldTitle) {
 		snap := enrichmentSnapshot{
 			description:   book.Description,
 			imageURL:      book.ImageURL,
 			averageRating: book.AverageRating,
 			ratingsCount:  book.RatingsCount,
 			genres:        slices.Clone(book.Genres),
+			title:         book.Title,
 		}
 		if cacheable {
 			a.cache.set(cacheKey, snap)
@@ -483,6 +523,26 @@ func applyEnrichmentSnapshot(book *models.Book, snap enrichmentSnapshot) {
 	if len(snap.genres) > 0 && book.CanWrite(models.BookFieldGenres) {
 		book.Genres = slices.Clone(snap.genres)
 	}
+	// The cache key carries the input title (inside enrichmentInputKey) and the
+	// provider scope, which lists every wired provider. A hit therefore replays
+	// the title the live call produced for this same input under this same
+	// provider set: the RanobeDB title when one was written, else the input
+	// title itself, which changes nothing (#2012). Switching RanobeDB off
+	// removes it from the scope, so a title cached while it was on is never
+	// replayed once it is off.
+	if snap.title != "" && snap.title != book.Title && book.CanWrite(models.BookFieldTitle) {
+		setEnrichedTitle(book, snap.title)
+	}
+}
+
+// setEnrichedTitle writes an enricher's title. The sort title follows it when
+// it was only a copy of the old title (or empty); a sort title that differs
+// was set on purpose and is kept.
+func setEnrichedTitle(book *models.Book, title string) {
+	if book.SortTitle == "" || book.SortTitle == book.Title {
+		book.SortTitle = title
+	}
+	book.Title = title
 }
 
 // ratingStrengthFactor is how many times larger an incoming ratings_count

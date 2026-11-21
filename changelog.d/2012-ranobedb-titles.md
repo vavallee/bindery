@@ -1,0 +1,2 @@
+### Added
+- **RanobeDB titles for light novels** (#2012). An opt in metadata source, off by default: when on, a light novel you add gets its official English title from RanobeDB, but only for a match with a clear best score, the same volume numbers and a matching author, never for a book with no author name, and never over a locked title. It applies to books added after you switch it on, and existing books keep their titles. Settings → Metadata. RanobeDB's data is ODbL and its API is for non commercial use; see `docs/third-party-data.md`. Thanks koseozgur.

@@ -99,6 +99,12 @@ const SettingMetadataPrimaryProvider = "metadata.primary_provider"
 // Wikimedia nothing.
 const SettingMetadataAuthorWikidata = "metadata.author_enrichment.wikidata"
 
+// SettingMetadataBookRanobeDB switches on the RanobeDB book enricher (#2012):
+// a light novel gets its official English title from RanobeDB, for a match
+// with a clear winner, the same volume numbers and a matching author. Off by
+// default, so an install that has not chosen it sends RanobeDB nothing.
+const SettingMetadataBookRanobeDB = "metadata.book_enrichment.ranobedb"
+
 // SettingMetadataAudnexRegion is the Audible marketplace audnex is asked for
 // an ASIN (#3982). Default "us". A German or French ASIN is a 404 in the US
 // catalogue and resolves in its own, so an operator whose library is bought
