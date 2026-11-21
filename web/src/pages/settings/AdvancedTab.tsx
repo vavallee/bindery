@@ -190,7 +190,7 @@ export default function AdvancedTab() {
 
   if (!isAdmin) {
     return (
-      <div className="rounded-lg border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 p-4 text-sm text-amber-800 dark:text-amber-300">
+      <div className="rounded-lg border border-warning-border bg-warning-subtle p-4 text-sm text-warning-strong">
         {t('settings.advanced.adminOnly', 'Advanced settings are available to administrators only.')}
       </div>
     )
@@ -200,7 +200,7 @@ export default function AdvancedTab() {
     return (
       <>
         {d.restartRequired && (
-          <span className={`${badgeCls} bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-400`}>
+          <span className={`${badgeCls} bg-warning-subtle text-warning-strong`}>
             {t('settings.advanced.restartRequired', 'Restart required')}
           </span>
         )}
@@ -210,7 +210,7 @@ export default function AdvancedTab() {
           </span>
         )}
         {d.state === 'internal' && (
-          <span className={`${badgeCls} bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300`}>
+          <span className={`${badgeCls} bg-info-subtle text-info-strong`}>
             {t('settings.advanced.internal', 'Bindery writes this')}
           </span>
         )}
@@ -427,7 +427,7 @@ export default function AdvancedTab() {
         )}
 
         {errors[d.key] && (
-          <p className="mt-1 text-xs text-red-700 dark:text-red-400">{errors[d.key]}</p>
+          <p className="mt-1 text-xs text-danger">{errors[d.key]}</p>
         )}
       </div>
     )
@@ -442,7 +442,7 @@ export default function AdvancedTab() {
       >
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <span className="font-mono text-xs text-slate-900 dark:text-zinc-100">{r.key}</span>
-          <span className={`${badgeCls} bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400`}>
+          <span className={`${badgeCls} bg-danger-subtle text-danger-strong`}>
             {t('settings.advanced.unknown', 'Unrecognised')}
           </span>
         </div>
@@ -463,7 +463,7 @@ export default function AdvancedTab() {
         >
           {t('settings.advanced.remove', 'Remove row')}
         </button>
-        {errors[r.key] && <p className="mt-1 text-xs text-red-700 dark:text-red-400">{errors[r.key]}</p>}
+        {errors[r.key] && <p className="mt-1 text-xs text-danger">{errors[r.key]}</p>}
       </div>
     )
   }
@@ -504,7 +504,7 @@ export default function AdvancedTab() {
 
       {loading && <p className="text-sm text-fg-muted">{t('common.loading')}</p>}
       {loadError && (
-        <p className="text-sm text-red-700 dark:text-red-400">
+        <p className="text-sm text-danger">
           {t('settings.advanced.loadError', 'Could not load the settings registry: {{error}}', { error: loadError })}
         </p>
       )}

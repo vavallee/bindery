@@ -529,7 +529,7 @@ describe('Settings search', () => {
     type('hardcover')
     const [first, second] = screen.getAllByRole('option')
     for (const row of [first, second]) expect(row).toHaveClass('min-h-11', 'border-l-4')
-    expect(first).toHaveClass('border-emerald-600', 'forced-colors:outline')
+    expect(first).toHaveClass('border-accent-ring', 'forced-colors:outline')
     expect(second).toHaveClass('border-transparent')
     expect(second).not.toHaveClass('forced-colors:outline')
   })

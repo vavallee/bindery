@@ -358,7 +358,7 @@ export default function MetadataTab() {
             </select>
           </div>
           {sourcesError && (
-            <p className="text-xs text-red-700 dark:text-red-400 mt-2" role="alert">
+            <p className="text-xs text-danger mt-2" role="alert">
               {t('settings.general.sourcesSaveFailed', 'Could not save that change, so it was put back. Try again.')}
             </p>
           )}
@@ -448,7 +448,7 @@ export default function MetadataTab() {
                 className="w-28 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
               />
               {latestCountInvalid && (
-                <p id={`${fid}-8-err`} className="text-xs text-red-700 dark:text-red-400 mt-1" role="alert">
+                <p id={`${fid}-8-err`} className="text-xs text-danger mt-1" role="alert">
                   {t('settings.general.defaultMonitorLatestCountInvalid', 'Enter a whole number of 1 or more.')}
                 </p>
               )}
@@ -720,7 +720,7 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
                 aria-pressed={on}
                 onClick={() => toggleLang(l.code)}
                 className={`text-xs px-2.5 py-1 rounded border transition-colors ${on
-                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-800 dark:text-emerald-300'
+                  ? 'bg-success-subtle border-success-border text-success-strong'
                   : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-fg-muted hover:border-slate-400 dark:hover:border-zinc-600'}`}
               >
                 {languageLabel(l.code, l.label, i18n?.resolvedLanguage)}
@@ -775,7 +775,7 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
           {t('settings.metadata.formSkipPartBooks')}
         </label>
       </div>
-      {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
+      {err && <div className="text-xs text-danger">{err}</div>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs text-fg-muted hover:text-slate-900 dark:hover:text-white">
           {t('common.cancel')}

@@ -380,7 +380,7 @@ function CalibreSection({
             />
           </div>
           {saveError?.key === 'calibre.library_path' && (
-            <p className="text-xs text-red-700 dark:text-red-400 mt-1">{saveError.msg}</p>
+            <p className="text-xs text-danger mt-1">{saveError.msg}</p>
           )}
         </div>
 
@@ -443,7 +443,7 @@ function CalibreSection({
               />
             </div>
             {saveError?.key === 'calibre.binary_path' && (
-              <p className="text-xs text-red-700 dark:text-red-400 mt-1">{saveError.msg}</p>
+              <p className="text-xs text-danger mt-1">{saveError.msg}</p>
             )}
           </div>
         )}
@@ -497,7 +497,7 @@ function CalibreSection({
               />
             </div>
             {saveError?.key === 'calibre.plugin_url' && (
-              <p className="text-xs text-red-700 dark:text-red-400 mt-1">{saveError.msg}</p>
+              <p className="text-xs text-danger mt-1">{saveError.msg}</p>
             )}
           </div>
         )}
@@ -526,7 +526,7 @@ function CalibreSection({
               />
             </div>
             {saveError?.key === 'calibre.plugin_api_key' && (
-              <p className="text-xs text-red-700 dark:text-red-400 mt-1">{saveError.msg}</p>
+              <p className="text-xs text-danger mt-1">{saveError.msg}</p>
             )}
           </div>
         )}
@@ -551,7 +551,7 @@ function CalibreSection({
               />
             </div>
             {saveError?.key === 'calibre.push_path_remap' && (
-              <p className="text-xs text-red-700 dark:text-red-400 mt-1">{saveError.msg}</p>
+              <p className="text-xs text-danger mt-1">{saveError.msg}</p>
             )}
           </div>
         )}
@@ -560,7 +560,7 @@ function CalibreSection({
           <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-zinc-800">
             <div className="text-xs">
               {testResult && (
-                <span className={testResult.ok ? 'text-accent-text' : 'text-red-700 dark:text-red-400'}>
+                <span className={testResult.ok ? 'text-accent-text' : 'text-danger'}>
                   {testResult.msg}
                 </span>
               )}
@@ -570,7 +570,7 @@ function CalibreSection({
                 </p>
               )}
               {testResult?.warning && (
-                <p data-testid="calibre-test-warning" className="text-amber-700 dark:text-amber-400 mt-1">
+                <p data-testid="calibre-test-warning" className="text-warning mt-1">
                   {testResult.warning}
                 </p>
               )}
@@ -597,13 +597,13 @@ function CalibreSection({
                   {t('settings.calibre.pushAll.description')}
                 </p>
                 {bridgeReachable === false && (
-                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">{t('settings.calibre.pushAll.bridgeUnreachable')}</p>
+                  <p className="text-xs text-warning mt-1">{t('settings.calibre.pushAll.bridgeUnreachable')}</p>
                 )}
               </div>
               <button
                 onClick={startSync}
                 disabled={!!syncProgress?.queueing || (!pulling && !pluginURL)}
-                className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+                className="px-4 py-2 bg-info-fill hover:bg-info-fill-hover text-on-fill rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
                 title={!pulling && !pluginURL ? t('settings.calibre.pushAll.needPluginUrl') : ''}
               >
                 {syncProgress?.queueing ? t('settings.calibre.pushAll.queueing') : t('settings.calibre.pushAll.label')}
@@ -669,14 +669,14 @@ function CalibreSection({
                 <button
                   onClick={startImport}
                   disabled={importProgress?.running || !settings['calibre.library_path']}
-                  className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
+                  className="px-4 py-2 bg-info-fill hover:bg-info-fill-hover text-on-fill rounded text-sm font-medium disabled:opacity-50 flex-shrink-0"
                 >
                   {importProgress?.running ? t('settings.calibre.import.running', 'Importing…') : t('settings.calibre.import.start', 'Import library')}
                 </button>
               </div>
 
               {importError && (
-                <p className="text-xs text-red-700 dark:text-red-400">{importError}</p>
+                <p className="text-xs text-danger">{importError}</p>
               )}
 
               {importProgress && (importProgress.running || importProgress.stats || importProgress.error) && (
@@ -689,7 +689,7 @@ function CalibreSection({
                       </div>
                       <div className="h-1.5 bg-slate-200 dark:bg-zinc-800 rounded overflow-hidden">
                         <div
-                          className="h-full bg-sky-600 transition-[width] duration-300"
+                          className="h-full bg-info-fill transition-[width] duration-300"
                           style={{
                             width: importProgress.total > 0
                               ? `${Math.min(100, (importProgress.processed / importProgress.total) * 100)}%`
@@ -700,7 +700,7 @@ function CalibreSection({
                     </>
                   )}
                   {!importProgress.running && importProgress.error && (
-                    <p className="text-xs text-red-700 dark:text-red-400">{t('settings.calibre.import.failed', { error: importProgress.error, defaultValue: 'Import failed: {{error}}' })}</p>
+                    <p className="text-xs text-danger">{t('settings.calibre.import.failed', { error: importProgress.error, defaultValue: 'Import failed: {{error}}' })}</p>
                   )}
                   {!importProgress.running && importProgress.stats && (
                     <p className="text-xs text-slate-700 dark:text-zinc-300">
@@ -751,7 +751,7 @@ function CalibreSection({
             />
           </div>
           {saveError?.key === 'cwa.ingest_path' && (
-            <p className="text-xs text-red-700 dark:text-red-400 mt-1">{saveError.msg}</p>
+            <p className="text-xs text-danger mt-1">{saveError.msg}</p>
           )}
         </div>
       </div>
@@ -859,7 +859,7 @@ function CalibreRunsList({
                 onClick={() => onRollback(run)}
                 disabled={rolledBack || running}
                 className={`px-3 py-1.5 rounded text-xs font-medium text-white disabled:opacity-50 ${
-                  rolledBack ? 'bg-slate-500 cursor-not-allowed' : 'bg-amber-700 hover:bg-amber-800'
+                  rolledBack ? 'bg-slate-500 cursor-not-allowed' : 'bg-warning-fill hover:bg-warning-fill-hover'
                 }`}
                 title={rolledBack ? t('settings.calibre.runs.rolledBack') : ''}
               >
@@ -948,7 +948,7 @@ export function CalibreRollbackModal({
           )}
 
           {error && (
-            <p className="text-sm text-red-700 dark:text-red-400">
+            <p className="text-sm text-danger">
               {t('settings.calibre.runs.error', { error })}
             </p>
           )}
@@ -1042,7 +1042,7 @@ export function CalibreRollbackModal({
             <button
               onClick={apply}
               disabled={applying || previewLoading || !!error || nothingToRollBack}
-              className="px-3 py-1.5 bg-amber-700 hover:bg-amber-800 rounded text-sm font-medium text-white disabled:opacity-50"
+              className="px-3 py-1.5 bg-warning-fill hover:bg-warning-fill-hover rounded text-sm font-medium text-on-fill disabled:opacity-50"
             >
               {applying ? t('settings.calibre.runs.applying') : t('settings.calibre.runs.applyRollback')}
             </button>
@@ -1091,7 +1091,7 @@ export function CalibreSyncModal({
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
           {error && (
-            <p className="text-xs text-red-700 dark:text-red-400">{error}</p>
+            <p className="text-xs text-danger">{error}</p>
           )}
           {progress && (
             <>
@@ -1100,7 +1100,7 @@ export function CalibreSyncModal({
                 <span>{processed} / {total || '?'}</span>
               </div>
               <div className="h-1.5 bg-slate-200 dark:bg-zinc-800 rounded overflow-hidden">
-                <div className="h-full bg-sky-600 transition-[width] duration-300" style={{ width: `${pct}%` }} />
+                <div className="h-full bg-info-fill transition-[width] duration-300" style={{ width: `${pct}%` }} />
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                 <div className="rounded border border-slate-200 dark:border-zinc-800 px-2 py-1.5">
@@ -1113,20 +1113,20 @@ export function CalibreSyncModal({
                 </div>
                 <div className="rounded border border-slate-200 dark:border-zinc-800 px-2 py-1.5">
                   <div className="text-fg-muted">{t('settings.calibre.pushAll.failed')}</div>
-                  <div className="font-semibold text-red-700 dark:text-red-400">{stats?.failed ?? 0}</div>
+                  <div className="font-semibold text-danger">{stats?.failed ?? 0}</div>
                 </div>
                 <div className="rounded border border-slate-200 dark:border-zinc-800 px-2 py-1.5">
                   <div className="text-fg-muted">{t('settings.calibre.pushAll.skipped')}</div>
                   <div
                     data-testid="calibre-sync-skipped"
-                    className="font-semibold text-amber-700 dark:text-amber-400"
+                    className="font-semibold text-warning"
                   >
                     {stats?.skipped ?? 0}
                   </div>
                 </div>
               </div>
               {!running && progress.error && (
-                <p className="text-xs text-red-700 dark:text-red-400">{t('settings.calibre.pushAll.syncFailed', { error: progress.error })}</p>
+                <p className="text-xs text-danger">{t('settings.calibre.pushAll.syncFailed', { error: progress.error })}</p>
               )}
               {!running && progress.finishedAt && !progress.error && (
                 <p className="text-xs text-accent-text">
@@ -1151,7 +1151,7 @@ export function CalibreSyncModal({
                       {progress.errors.map((e, i) => (
                         <tr key={`${e.bookId}-${i}`} className="border-t border-slate-200 dark:border-zinc-800">
                           <td className="px-2 py-1 text-slate-800 dark:text-zinc-200">{e.title || `#${e.bookId}`}</td>
-                          <td className="px-2 py-1 text-red-700 dark:text-red-400">{e.reason}</td>
+                          <td className="px-2 py-1 text-danger">{e.reason}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1174,7 +1174,7 @@ export function CalibreSyncModal({
                       {progress.skips.map((s, i) => (
                         <tr key={`skip-${s.bookId}-${i}`} className="border-t border-slate-200 dark:border-zinc-800">
                           <td className="px-2 py-1 text-slate-800 dark:text-zinc-200">{s.title || `#${s.bookId}`}</td>
-                          <td className="px-2 py-1 text-amber-700 dark:text-amber-400">{s.reason}</td>
+                          <td className="px-2 py-1 text-warning">{s.reason}</td>
                         </tr>
                       ))}
                     </tbody>

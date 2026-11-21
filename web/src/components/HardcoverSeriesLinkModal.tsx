@@ -197,7 +197,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                   key={result.foreignId}
                   className={`rounded-md border transition-colors ${
                     selectedResult
-                      ? 'border-success-marker bg-success-subtle/50'
+                      ? 'border-accent-ring bg-success-subtle/50'
                       : 'border-slate-300 dark:border-zinc-700 bg-slate-200/50 dark:bg-zinc-800/50 hover:bg-slate-200 dark:hover:bg-zinc-800'
                   }`}
                 >
@@ -207,7 +207,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                     className="w-full text-left p-4 pb-2"
                   >
                     <div className="flex items-start gap-3">
-                      <span className={`mt-1 h-4 w-4 rounded-full border flex-shrink-0 ${selectedResult ? 'border-success-marker bg-success-marker' : 'border-slate-400 dark:border-zinc-500'}`} />
+                      <span className={`mt-1 h-4 w-4 rounded-full border flex-shrink-0 ${selectedResult ? 'border-accent-ring bg-accent-ring' : 'border-slate-400 dark:border-zinc-500'}`} />
                       <div className="min-w-0 flex-1">
                         <div className="font-semibold truncate">{result.title}</div>
                         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-muted">

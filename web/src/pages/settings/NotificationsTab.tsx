@@ -142,8 +142,8 @@ export default function NotificationsTab() {
                 />
               )}
               {notificationTestResult[n.id] && (
-                <div role="status" className={`mt-1 px-3 py-1.5 rounded text-xs flex items-center gap-2 ${notificationTestResult[n.id].ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
-                  <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${notificationTestResult[n.id].ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                <div role="status" className={`mt-1 px-3 py-1.5 rounded text-xs flex items-center gap-2 ${notificationTestResult[n.id].ok ? 'bg-success-subtle text-success-strong' : 'bg-danger-subtle text-danger-strong'}`}>
+                  <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${notificationTestResult[n.id].ok ? 'bg-success-marker' : 'bg-danger-marker'}`} />
                   {notificationTestResult[n.id].msg}
                 </div>
               )}
@@ -206,7 +206,7 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
   const toggleCls = (active: boolean) =>
     `px-3 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer select-none ${
       active
-        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-800 dark:text-emerald-400'
+        ? 'bg-success-subtle border-success-border text-success-strong'
         : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-fg-muted'
     }`
 
@@ -251,7 +251,7 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
         <TriggerHints />
       </div>
       {saveError && (
-        <div role="alert" className="px-3 py-1.5 rounded text-xs bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">
+        <div role="alert" className="px-3 py-1.5 rounded text-xs bg-danger-subtle text-danger-strong">
           {saveError}
         </div>
       )}
@@ -307,7 +307,7 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
   const toggleCls = (active: boolean) =>
     `px-3 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer select-none ${
       active
-        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-800 dark:text-emerald-400'
+        ? 'bg-success-subtle border-success-border text-success-strong'
         : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-fg-muted'
     }`
 
@@ -352,7 +352,7 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
         <TriggerHints />
       </div>
       {saveError && (
-        <div role="alert" className="px-3 py-1.5 rounded text-xs bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">
+        <div role="alert" className="px-3 py-1.5 rounded text-xs bg-danger-subtle text-danger-strong">
           {saveError}
         </div>
       )}

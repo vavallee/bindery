@@ -761,8 +761,8 @@ describe('SettingsPage', () => {
 
     const autoBtn = fileNaming.getByRole('button', { name: 'Auto' })
     const moveBtn = fileNaming.getByRole('button', { name: 'Move' })
-    expect(autoBtn.className).toContain('bg-emerald-700')
-    expect(moveBtn.className).not.toContain('bg-emerald-700')
+    expect(autoBtn.className).toContain('bg-accent-fill')
+    expect(moveBtn.className).not.toContain('bg-accent-fill')
 
     // Clicking Auto writes the explicit value so the choice round-trips through
     // the settings table rather than relying on an absent key.
@@ -1706,7 +1706,7 @@ describe('SettingsPage', () => {
     await openIndexersTab()
 
     const held = await screen.findByText('settings.indexers.cooldown')
-    expect(held.parentElement?.className).toContain('amber')
+    expect(held.parentElement?.className).toContain('warning')
     // The held indexer shows the resume line only; the other one keeps the
     // stored failure line.
     expect(screen.getAllByText(/settings\.indexers\.healthFail/)).toHaveLength(1)
@@ -1725,11 +1725,11 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('settings.indexers.quotaUsage')).toBeInTheDocument()
     // The i18n mock returns the key, so the interpolated numbers are not
     // visible here. What is worth pinning is the styling difference: the
-    // reached row is amber, the partly spent one is not, because a capped
+    // reached row is warning, the partly spent one is not, because a capped
     // indexer that looks idle is the failure this line exists to prevent.
     const reached = screen.getByText('settings.indexers.quotaReached')
-    expect(reached.parentElement?.className).toContain('amber')
-    expect(screen.getByText('settings.indexers.quotaUsage').parentElement?.className).not.toContain('amber')
+    expect(reached.parentElement?.className).toContain('warning')
+    expect(screen.getByText('settings.indexers.quotaUsage').parentElement?.className).not.toContain('warning')
     // One usage line and one reached line, so the uncapped indexer rendered
     // neither rather than "0 of 0".
     expect(screen.getAllByText(/settings\.indexers\.quota/)).toHaveLength(2)

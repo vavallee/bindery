@@ -132,18 +132,18 @@ export default function AuthSettings() {
                   {p.status?.state === 'failed' ? (
                     <span
                       title={p.status.last_error}
-                      className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300"
+                      className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-danger-subtle text-danger-strong"
                     >
                       {t('settings.oidc.statusFailed')}
                     </span>
                   ) : p.status?.state === 'ok' ? (
-                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-success-subtle text-success-strong">
                       {t('settings.oidc.statusOk')}
                     </span>
                   ) : null}
                 </div>
                 {p.status?.state === 'failed' && p.status.last_error && (
-                  <p className="text-xs text-red-700 dark:text-red-400 mt-1 break-all">
+                  <p className="text-xs text-danger mt-1 break-all">
                     {p.status.last_error}
                   </p>
                 )}
@@ -151,14 +151,14 @@ export default function AuthSettings() {
               <button
                 onClick={() => { setShowAdd(false); setEditing(p.id) }}
                 disabled={saving}
-                className="text-xs text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 shrink-0"
+                className="text-xs text-progress hover:underline disabled:opacity-50 shrink-0"
               >
                 {t('common.edit')}
               </button>
               <button
                 onClick={() => remove(p.id)}
                 disabled={saving}
-                className="text-xs text-red-700 dark:text-red-400 hover:underline disabled:opacity-50 shrink-0"
+                className="text-xs text-danger hover:underline disabled:opacity-50 shrink-0"
               >
                 {t('common.remove')}
               </button>
@@ -180,7 +180,7 @@ export default function AuthSettings() {
         ) : (
           <button
             onClick={() => { setEditing(null); setShowAdd(true) }}
-            className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+            className="text-sm text-progress hover:underline"
           >
             {t('settings.oidc.addButton')}
           </button>
@@ -319,7 +319,7 @@ function ProviderForm({
           {t('settings.oidc.callbackUrlHint')}
         </p>
         {baseConfigured === false && (
-          <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
+          <p className="text-[11px] text-warning mt-1">
             {t('settings.oidc.callbackUrlNotConfiguredWarning')}
           </p>
         )}
@@ -335,7 +335,7 @@ function ProviderForm({
           <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldClientSecret')}</label>
           <input id={`${fid}-4`} {...secretInputAttrs} value={clientSecret} onChange={e => setClientSecret(e.target.value)} required={secretRequired} placeholder={secretRequired ? undefined : t('settings.oidc.clientSecretKeep')} type="password" className={inputCls} />
           {issuerChanged && (
-            <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">{t('settings.oidc.clientSecretIssuerChanged')}</p>
+            <p className="text-[11px] text-warning mt-1">{t('settings.oidc.clientSecretIssuerChanged')}</p>
           )}
         </div>
       </div>
@@ -442,7 +442,7 @@ function DiscoveryResultView({ result, entered }: { result: DiscoveryResult; ent
   if (result.state === 'idle' || result.state === 'probing') return null
   if (result.state === 'error') {
     return (
-      <p className="text-xs text-red-700 dark:text-red-400 mt-1.5 break-all">
+      <p className="text-xs text-danger mt-1.5 break-all">
         {t('settings.oidc.testDiscoveryFail')}: {result.message}
       </p>
     )
@@ -451,7 +451,7 @@ function DiscoveryResultView({ result, entered }: { result: DiscoveryResult; ent
   return (
     <div className="text-[11px] mt-1.5 space-y-0.5 text-fg-muted">
       {mismatch ? (
-        <p className="text-amber-700 dark:text-amber-400 break-all">
+        <p className="text-warning break-all">
           {t('settings.oidc.testDiscoveryMismatch', { entered, discovered: discovered.issuer })}
         </p>
       ) : (

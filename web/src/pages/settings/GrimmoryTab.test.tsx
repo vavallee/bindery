@@ -46,7 +46,7 @@ describe('GrimmoryTab failures', () => {
     render(<GrimmoryTab />)
     fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
     // red-700 on light: red-500 and red-600 are under 4.5:1 on light cards (#3084).
-    expect(await screen.findByText('base URL is not reachable')).toHaveClass('text-red-700', 'dark:text-red-400')
+    expect(await screen.findByText('base URL is not reachable')).toHaveClass('text-danger')
   })
 
   it('shows a test that reached Grimmory but failed, and one that could not run', async () => {

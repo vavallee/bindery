@@ -95,7 +95,7 @@ export default function ImportTab({ onNavigate }: ImportTabProps = {}) {
         </div>
         {r.failures && Object.keys(r.failures).length > 0 && (
           <details className="text-xs">
-            <summary className="cursor-pointer text-red-700 dark:text-red-400">{t('settings.import.showFailures', { count: Object.keys(r.failures).length, defaultValue: 'Show {{count}} failures' })}</summary>
+            <summary className="cursor-pointer text-danger">{t('settings.import.showFailures', { count: Object.keys(r.failures).length, defaultValue: 'Show {{count}} failures' })}</summary>
             <ul className="mt-2 space-y-0.5 font-mono">
               {Object.entries(r.failures).map(([name, reason]) => (
                 <li key={name}><span className="text-slate-800 dark:text-zinc-200">{name}</span>: <span className="text-fg-muted">{reason}</span></li>
@@ -146,7 +146,7 @@ export default function ImportTab({ onNavigate }: ImportTabProps = {}) {
           <p className="mt-3 text-xs text-fg-muted">{t('settings.import.importingReadarr')}</p>
         )}
         {readarrProgress?.error && !readarrProgress.running && (
-          <p className="mt-3 text-xs text-red-700 dark:text-red-400">{readarrProgress.error}</p>
+          <p className="mt-3 text-xs text-danger">{readarrProgress.error}</p>
         )}
         {readarrResult && (
           <div className="mt-4 space-y-2">
@@ -173,7 +173,7 @@ export default function ImportTab({ onNavigate }: ImportTabProps = {}) {
       <HardcoverListsSection onNavigate={onNavigate} />
 
       {err && (
-        <div className="px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+        <div className="px-3 py-2 bg-danger-subtle border border-danger-border rounded text-sm text-danger-strong">
           {err}
         </div>
       )}
@@ -279,7 +279,7 @@ function ManualImportSection() {
             </div>
           )}
           {result.match === 'none' && (
-            <p className="text-sm text-amber-700 dark:text-amber-400">{t('settings.import.manualImportNone')}</p>
+            <p className="text-sm text-warning">{t('settings.import.manualImportNone')}</p>
           )}
 
           {result.match !== 'none' && (
@@ -308,7 +308,7 @@ function ManualImportSection() {
         <p className="text-sm text-accent-text">{t('settings.import.manualImportSuccess')}</p>
       )}
       {err && (
-        <p className="text-sm text-red-700 dark:text-red-400">{err}</p>
+        <p className="text-sm text-danger">{err}</p>
       )}
     </section>
   )
@@ -671,8 +671,8 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
                     <span className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">{row.name}</span>
                       <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{row.slug}</span>
-                      {(row.local?.account || (!row.local && hcAccount)) && <span className="text-[10px] px-1.5 py-0.5 bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-400 rounded">@{row.local?.account || hcAccount}</span>}
-                      {row.stale && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 rounded">{t('settings.import.hardcoverSavedOnly', 'Saved only')}</span>}
+                      {(row.local?.account || (!row.local && hcAccount)) && <span className="text-[10px] px-1.5 py-0.5 bg-info-subtle text-info-strong rounded">@{row.local?.account || hcAccount}</span>}
+                      {row.stale && <span className="text-[10px] px-1.5 py-0.5 bg-warning-subtle text-warning-strong rounded">{t('settings.import.hardcoverSavedOnly', 'Saved only')}</span>}
                       {il && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{il.apiKeyConfigured ? t('settings.import.hardcoverOverrideConfigured', 'Override token') : t('settings.import.hardcoverGlobalToken', 'Global token')}</span>}
                     </span>
                     <span className="block text-xs text-fg-muted mt-0.5">
@@ -737,14 +737,14 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
                     >
                       {t('settings.import.hardcoverTokenOverride', 'Token override')}
                     </button>
-                    <button onClick={() => handleDelete(il.id)} className="text-xs text-red-700 dark:text-red-400 hover:underline">{t('common.delete')}</button>
+                    <button onClick={() => handleDelete(il.id)} className="text-xs text-danger hover:underline">{t('common.delete')}</button>
                   </div>
                 )}
               </div>
               {/* Live sync line: shown while this list is syncing and left in
                   place afterwards so the run's outcome is visible (#1854). */}
               {il && syncProgress?.listId === il.id && (
-                <p className={`mt-2 text-xs ${syncProgress.error ? 'text-red-700 dark:text-red-400' : 'text-accent-text'}`}>
+                <p className={`mt-2 text-xs ${syncProgress.error ? 'text-danger' : 'text-accent-text'}`}>
                   {syncProgress.running
                     ? `${syncProgress.message ?? t('settings.import.hardcoverSyncing', 'Syncing…')}${syncProgress.stats.total > 0 ? ` (${syncProgress.stats.processed}/${syncProgress.stats.total})` : ''}`
                     : syncProgress.error
@@ -791,7 +791,7 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
       </div>
 
       {error && (
-        <div className="mt-2 text-sm text-rose-700 dark:text-rose-400">
+        <div className="mt-2 text-sm text-danger">
           {error}
           {(error.toLowerCase().includes('token') || error.toLowerCase().includes('not configured')) && (
             <span className="block mt-1 text-xs">

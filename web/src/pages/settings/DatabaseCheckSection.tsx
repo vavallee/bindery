@@ -114,7 +114,7 @@ export default function DatabaseCheckSection() {
         </div>
 
         {error && (
-          <p role="alert" className="text-xs text-red-700 dark:text-red-400">
+          <p role="alert" className="text-xs text-danger">
             {t(`settings.general.${errorKey}`, { message: error })}
           </p>
         )}
@@ -125,7 +125,7 @@ export default function DatabaseCheckSection() {
 
         {report && report.total > 0 && (
           <div className="space-y-2">
-            <p role="status" className="text-xs text-amber-700 dark:text-amber-400">
+            <p role="status" className="text-xs text-warning">
               {t('settings.general.dbCheckFound', { count: report.total })}
             </p>
             <table className="w-full text-xs text-left">
@@ -217,7 +217,7 @@ export default function DatabaseCheckSection() {
                     type="button"
                     onClick={confirmCleanup}
                     disabled={busy}
-                    className="px-3 py-1.5 rounded text-xs font-medium bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-danger-fill-hover hover:bg-danger-fill text-on-fill disabled:opacity-50"
                   >
                     {cleaning ? t('settings.general.dbCleanupConfirming') : t('settings.general.dbCleanupConfirm')}
                   </button>
@@ -246,14 +246,14 @@ export default function DatabaseCheckSection() {
               {t('settings.general.dbCleanupBackupAt', { path: result.backupPath })}
             </p>
             {!result.verified && (
-              <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">{t('settings.general.dbCleanupNotVerified')}</p>
+              <p role="alert" className="text-xs text-warning">{t('settings.general.dbCleanupNotVerified')}</p>
             )}
             {result.verified && result.remainingTotal === 0 && (
               <p className="text-xs text-accent-text">{t('settings.general.dbCleanupRemainingNone')}</p>
             )}
             {result.verified && result.remainingTotal > 0 && (
               <>
-                <p role="status" className="text-xs text-amber-700 dark:text-amber-400">
+                <p role="status" className="text-xs text-warning">
                   {t('settings.general.dbCleanupRemaining', { count: result.remainingTotal })}
                 </p>
                 <table className="w-full text-xs text-left">
