@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -12,6 +13,9 @@ import (
 // canonicalServiceURL reduces a service base URL to the form used to decide
 // whether an edit moved it to a different server: lower case scheme and host,
 // default port dropped, trailing slashes dropped, query and fragment ignored.
+// A trailing dot on the host is kept: a bare name can resolve through a DNS
+// search domain to a different machine than the absolute name, so the two
+// count as different servers.
 // An unparseable value falls back to its trimmed text.
 func canonicalServiceURL(raw string) string {
 	raw = strings.TrimSpace(raw)
@@ -39,6 +43,30 @@ func canonicalServiceURL(raw string) string {
 // as moving the integration.
 func sameServiceURL(a, b string) bool {
 	return canonicalServiceURL(a) == canonicalServiceURL(b)
+}
+
+// rawStringSupplied reports whether the raw request body carries key as a
+// non-empty string, i.e. the caller sent a replacement rather than leaving the
+// field blank to mean "keep the saved value".
+func rawStringSupplied(raw map[string]json.RawMessage, key string) bool {
+	value, ok := raw[key]
+	if !ok {
+		return false
+	}
+	var s string
+	if err := json.Unmarshal(value, &s); err != nil {
+		return false
+	}
+	return strings.TrimSpace(s) != ""
+}
+
+// logCredentialsCleared records that saved credentials were dropped because
+// the integration's address moved. It names the fields, never their values.
+func logCredentialsCleared(kind string, id int64, fields ...string) {
+	if len(fields) == 0 {
+		return
+	}
+	slog.Info("cleared saved credentials because the address changed", "integration", kind, "id", id, "cleared", fields)
 }
 
 // credentialsBoundToURL lists, for each service URL setting the generic

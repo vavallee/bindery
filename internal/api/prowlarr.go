@@ -153,6 +153,7 @@ func (h *ProwlarrHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	previousKey := existing.APIKey
+	previousURL := existing.URL
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -179,6 +180,17 @@ func (h *ProwlarrHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	existing.APIKey = apiKey
 	existing.ID = id
+	// A saved key belongs to the server it was issued for. When the URL moves
+	// and no replacement key came with the request, drop the saved key rather
+	// than send it to the new address. The indexers synced from this instance
+	// keep pointing at the old address until the next sync, so the cleared key
+	// is not cascaded to them.
+	keyClearedForURLMove := false
+	if existing.APIKey != "" && !rawStringSupplied(raw, "apiKey") && !sameServiceURL(existing.URL, previousURL) {
+		existing.APIKey = ""
+		keyClearedForURLMove = true
+		logCredentialsCleared("prowlarr", id, "apiKey")
+	}
 	if err := httpsec.ValidateOutboundURL(existing.URL, httpsec.PolicyService); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid indexer URL: " + err.Error()})
 		return
@@ -187,7 +199,7 @@ func (h *ProwlarrHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, r, err)
 		return
 	}
-	if existing.APIKey != previousKey && h.indexers != nil {
+	if existing.APIKey != previousKey && !keyClearedForURLMove && h.indexers != nil {
 		if _, err := h.indexers.UpdateAPIKeyByProwlarrInstance(r.Context(), id, existing.APIKey); err != nil {
 			writeServerError(w, r, err)
 			return
