@@ -663,22 +663,22 @@ export default function QueuePage() {
                         already has a book was matched — survives reload so the
                         user isn't left wondering whether the match took (#1589). */}
                     {isMatchable(item.status) && item.book && (
-                      <div className="mt-1 text-xs text-accent-text bg-success-subtle/50 rounded px-2 py-1 break-words">
+                      <div className="mt-1 text-xs text-accent-text bg-success-marker/10 rounded px-2 py-1 break-words">
                         {t('queue.matchedTo', { title: item.book.title, defaultValue: `Matched to ${item.book.title} — use Retry import to import it.` })}
                       </div>
                     )}
                     {retryImportErrors[item.id] && (
-                      <div className="mt-1 text-xs text-danger-strong bg-danger-subtle/50 rounded px-2 py-1 break-words">
+                      <div className="mt-1 text-xs text-danger-strong bg-danger-marker/10 rounded px-2 py-1 break-words">
                         {t('queue.retryImportError', { error: retryImportErrors[item.id] })}
                       </div>
                     )}
                     {scanErrors[item.id] && (
-                      <div role="alert" className="mt-1 text-xs text-danger-strong bg-danger-subtle/50 rounded px-2 py-1 break-words">
+                      <div role="alert" className="mt-1 text-xs text-danger-strong bg-danger-marker/10 rounded px-2 py-1 break-words">
                         {t('queue.scanError', { error: scanErrors[item.id], defaultValue: 'Scan failed: {{error}}' })}
                       </div>
                     )}
                     {matchMessages[item.id] && (
-                      <div role="status" className="mt-1 text-xs text-accent-text bg-success-subtle/50 rounded px-2 py-1 break-words">
+                      <div role="status" className="mt-1 text-xs text-accent-text bg-success-marker/10 rounded px-2 py-1 break-words">
                         {matchMessages[item.id]}
                       </div>
                     )}

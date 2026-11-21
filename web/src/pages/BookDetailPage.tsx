@@ -1207,7 +1207,7 @@ function BookDetailPageInner() {
               {t('bookDetail.monitoredLabel', 'Monitored')}
             </Switch>
             {book.excluded && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-warning-subtle text-warning-strong">
+              <span className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-warning-marker/20 text-warning-strong">
                 {t('bookDetail.excludedBadge')}
               </span>
             )}
@@ -1225,7 +1225,7 @@ function BookDetailPageInner() {
               <span className="text-fg-muted">{lang}</span>
             ) : (
               <span
-                className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-warning-subtle text-warning-strong"
+                className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-warning-marker/20 text-warning-strong"
                 title={t('bookDetail.languageUnknownHint')}
               >
                 {t('bookDetail.languageUnknown')}
@@ -1709,7 +1709,7 @@ function BookDetailPageInner() {
                     : providerDisplayName(row.provider) || t('bookDetail.metadataSource.unknownProvider', 'Unknown provider')}
                 </span>
                 {row.primary && (
-                  <span className="text-xs px-1.5 py-0.5 rounded-full border border-success-border text-success">
+                  <span className="text-xs px-1.5 py-0.5 rounded-full border border-success-marker/40 text-success">
                     {t('bookDetail.metadataSource.current', 'Current')}
                   </span>
                 )}

@@ -177,7 +177,7 @@ export default function CalendarPage() {
                             <div
                               key={book.id}
                               title={book.title}
-                              className="text-[10px] leading-tight px-1.5 py-1 bg-success-subtle text-success-strong rounded truncate cursor-default"
+                              className="text-[10px] leading-tight px-1.5 py-1 bg-success-marker/20 text-success-strong rounded truncate cursor-default"
                             >
                               {book.title}
                             </div>
@@ -208,7 +208,7 @@ export default function CalendarPage() {
                 const isSelected = day !== null && day === selectedDay
                 const cellCls = `aspect-square flex flex-col items-center justify-center border-b border-r border-slate-200 dark:border-zinc-800 text-xs ${
                   idx % 7 === 6 ? 'border-r-0' : ''
-                } ${isSelected ? 'bg-success-subtle/70' : day ? 'bg-slate-100/50 dark:bg-zinc-900/50' : 'bg-slate-100/20 dark:bg-zinc-900/20'}`
+                } ${isSelected ? 'bg-success-marker/15' : day ? 'bg-slate-100/50 dark:bg-zinc-900/50' : 'bg-slate-100/20 dark:bg-zinc-900/20'}`
                 // A day with releases is a button: its dot used to be the only
                 // sign of them, and there was nothing to tap to see which.
                 if (day && hasBooks) {

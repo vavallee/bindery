@@ -155,7 +155,7 @@ export default function BlocklistTab() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <span className="text-xs px-2 py-0.5 rounded bg-danger-subtle text-danger-strong">
+                        <span className="text-xs px-2 py-0.5 rounded bg-danger-marker/20 text-danger-strong">
                           {entry.reason || t('common.unknown', 'Unknown')}
                         </span>
                       </td>
@@ -208,7 +208,7 @@ export default function BlocklistTab() {
                       <p className="text-[10px] text-fg-muted mt-0.5 font-mono truncate">{entry.guid}</p>
                     )}
                     <div className="flex flex-wrap items-center gap-2 mt-2">
-                      <span className="text-xs px-2 py-0.5 rounded bg-danger-subtle text-danger-strong">
+                      <span className="text-xs px-2 py-0.5 rounded bg-danger-marker/20 text-danger-strong">
                         {entry.reason || t('common.unknown', 'Unknown')}
                       </span>
                       <ScopeBadge scope={entry.scope} />

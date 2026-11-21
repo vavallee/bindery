@@ -381,7 +381,7 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                           the direct and proxied indexers are told apart by
                           more than their URL. */}
                       {idx.prowlarrInstanceId != null && (
-                        <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300">
+                        <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-caution-chip text-caution-strong">
                           Prowlarr
                         </span>
                       )}

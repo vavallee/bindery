@@ -121,7 +121,7 @@ export default function ABSConflictPanel({
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <RelinkButton conflict={group[0]} relinkAction={relinkAction} />
-                  <span className="text-[11px] px-2 py-1 rounded bg-warning-subtle text-warning-strong">{t('absConflicts.needsReview', 'Needs review')}</span>
+                  <span className="text-[11px] px-2 py-1 rounded bg-warning-chip text-warning-strong">{t('absConflicts.needsReview', 'Needs review')}</span>
                 </div>
               </div>
               {group.map(conflict => (

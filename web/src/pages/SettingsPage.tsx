@@ -101,7 +101,7 @@ function SettingsNavLink({ tab, active, onSelect, label, badge }: { tab: Tab; ac
       {badge ? (
         <>
           <span>{label}</span>
-          <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning-subtle text-warning-strong font-medium leading-none">
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning-chip text-warning-strong font-medium leading-none">
             {badge}
           </span>
         </>

@@ -33,8 +33,8 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
   const accepted = result?.accepted
 
   const badgeCls: Record<ScanItem['match'], string> = {
-    confident: 'bg-success-subtle text-accent-text',
-    ambiguous: 'bg-warning-subtle text-warning-strong',
+    confident: 'bg-success-chip text-accent-text',
+    ambiguous: 'bg-warning-chip text-warning-strong',
     none: 'bg-slate-200 dark:bg-zinc-800 text-fg-muted',
   }
 
@@ -59,7 +59,7 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
               {item.detectedFormat}
             </span>
             {item.alreadyImported && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-info-subtle text-info-strong">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-info-chip text-info-strong">
                 {item.handedOff
                   ? t('manualImport.handedOff', 'already handed off to your import tool')
                   : t('manualImport.alreadyImported', 'already imported')}

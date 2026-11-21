@@ -200,7 +200,7 @@ export default function AdvancedTab() {
     return (
       <>
         {d.restartRequired && (
-          <span className={`${badgeCls} bg-warning-subtle text-warning-strong`}>
+          <span className={`${badgeCls} bg-warning-chip text-warning-strong`}>
             {t('settings.advanced.restartRequired', 'Restart required')}
           </span>
         )}
@@ -210,7 +210,7 @@ export default function AdvancedTab() {
           </span>
         )}
         {d.state === 'internal' && (
-          <span className={`${badgeCls} bg-info-subtle text-info-strong`}>
+          <span className={`${badgeCls} bg-info-chip text-info-strong`}>
             {t('settings.advanced.internal', 'Bindery writes this')}
           </span>
         )}
@@ -442,7 +442,7 @@ export default function AdvancedTab() {
       >
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <span className="font-mono text-xs text-slate-900 dark:text-zinc-100">{r.key}</span>
-          <span className={`${badgeCls} bg-danger-subtle text-danger-strong`}>
+          <span className={`${badgeCls} bg-danger-chip text-danger-strong`}>
             {t('settings.advanced.unknown', 'Unrecognised')}
           </span>
         </div>

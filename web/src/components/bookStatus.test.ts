@@ -45,8 +45,8 @@ describe('bookStatusBadge', () => {
 // source. Here the badges have to stay on the token pair that is measured.
 describe('bookStatusBadge contrast (WCAG AA)', () => {
   it.each([
-    ['wanted', 'bg-warning-subtle', 'text-warning-strong'],
-    ['imported', 'bg-success-subtle', 'text-success-strong'],
+    ['wanted', 'bg-warning-marker/20', 'text-warning-strong'],
+    ['imported', 'bg-success-marker/20', 'text-success-strong'],
   ] as const)('%s uses the measured %s and %s pair', (status, bg, text) => {
     const classes = bookStatusBadge(status, true, t).colorClass.split(/\s+/)
     expect(classes).toContain(bg)

@@ -13,21 +13,29 @@
        emerald-400 (dark); the bare emerald-400 was ~1.76:1 on light. */
 /* Status colour tokens (#3994). Components say what a colour means, not which
    palette shade it is: text-danger, bg-success-subtle, border-warning-border,
-   bg-info-fill with text-on-fill. Five roles, each with seven parts:
+   bg-info-fill with text-on-fill. Six roles, each with these parts:
      --<role>:            text on a surface (page or card)
      --<role>-strong:     text on the role's own tint
-     --<role>-subtle:     the tint for chips, alerts and banners
+     --<role>-subtle:     the tint for alerts and banners (dark: 900 at 30%)
+     --<role>-chip:       the solid tint of a status chip (dark: 950)
      --<role>-border:     the border of a tint
      --<role>-fill:       a solid fill, with text-on-fill on it
      --<role>-fill-hover: the fill while hovered
-     --<role>-marker:     dots, bars and rings, never text
-   Roles: danger (red), warning (amber), success (emerald), info (sky) and
-   progress (blue, an in-flight download or import). accent-fill, accent-fill-hover
-   and accent-ring are the brand green for primary buttons and focus rings.
-   Every value equals the Tailwind shade it replaced and is measured in both
-   themes by src/theme/contrast.test.ts. Brand and category colours (the cover
-   palette, media badges) stay raw on purpose; src/theme/rawStatusAllowlist.ts
-   lists them. To change a status colour, edit it here and nowhere else. */
+     --<role>-marker:     dots, bars and rings, and a translucent wash
+                          (bg-<role>-marker/20); never text
+   Roles: danger (red), warning (amber), success (emerald), info (sky),
+   progress (blue, an in-flight download or import) and caution (orange, an
+   import that failed but can be retried).
+   Also: accent-fill, accent-fill-hover and accent-ring, the brand green for
+   primary buttons, selected pills and focus rings; link, link-fill and
+   link-fill-hover, the blue of text links and the sign in and setup buttons
+   (not the progress role); row-selected and row-selected-hover, the selected
+   table row.
+   Each value is the Tailwind shade named beside it, pinned and measured in both
+   themes by src/theme/contrast.test.ts. Category colours (media badges, the
+   cover palette) stay raw on purpose; src/theme/rawStatusAllowlist.ts lists
+   them and a guard test bars any other raw colour. To change a status colour,
+   edit it here and nowhere else. */
 @layer base {
   :root {
     --fg-muted: #475569;     /* slate-600 */
@@ -71,6 +79,24 @@
     --accent-fill: #007a55;  /* emerald-700 */
     --accent-fill-hover: #006045;  /* emerald-800 */
     --accent-ring: #009966;  /* emerald-600 */
+    --caution:                   #ca3500;  /* orange-700 */
+    --caution-strong:            #9f2d00;  /* orange-800 */
+    --caution-subtle:            #ffedd4;  /* orange-100 */
+    --caution-border:            #ffb86a;  /* orange-300 */
+    --caution-fill:              #ca3500;  /* orange-700 */
+    --caution-fill-hover:        #9f2d00;  /* orange-800 */
+    --caution-marker:            #ff6900;  /* orange-500 */
+    --danger-chip:               #ffe2e2;  /* red-100 */
+    --warning-chip:              #fef3c6;  /* amber-100 */
+    --success-chip:              #d0fae5;  /* emerald-100 */
+    --info-chip:                 #dff2fe;  /* sky-100 */
+    --progress-chip:             #dbeafe;  /* blue-100 */
+    --caution-chip:              #ffedd4;  /* orange-100 */
+    --link:                      #155dfc;  /* blue-600 */
+    --link-fill:                 #155dfc;  /* blue-600 */
+    --link-fill-hover:           #1447e6;  /* blue-700 */
+    --row-selected:              #ecfdf5;  /* emerald-50 */
+    --row-selected-hover:        #d0fae5;  /* emerald-100 */
   }
   html.dark {
     --fg-muted: #a1a1aa;     /* zinc-400 */
@@ -114,6 +140,24 @@
     --accent-fill: #007a55;  /* emerald-700 */
     --accent-fill-hover: #006045;  /* emerald-800 */
     --accent-ring: #00bc7d;  /* emerald-500 */
+    --caution:                   #ff8904;  /* orange-400 */
+    --caution-strong:            #ffb86a;  /* orange-300 */
+    --caution-subtle:            #371d17;  /* orange-900 at 30% over zinc-900 */
+    --caution-border:            #7e2a0c;  /* orange-900 */
+    --caution-fill:              #ca3500;  /* orange-700 */
+    --caution-fill-hover:        #9f2d00;  /* orange-800 */
+    --caution-marker:            #ff6900;  /* orange-500 */
+    --danger-chip:               #460809;  /* red-950 */
+    --warning-chip:              #461901;  /* amber-950 */
+    --success-chip:              #002c22;  /* emerald-950 */
+    --info-chip:                 #052f4a;  /* sky-950 */
+    --progress-chip:             #162456;  /* blue-950 */
+    --caution-chip:              #441306;  /* orange-950 */
+    --link:                      #51a2ff;  /* blue-400 */
+    --link-fill:                 #155dfc;  /* blue-600 */
+    --link-fill-hover:           #1447e6;  /* blue-700 */
+    --row-selected:              #002c22;  /* emerald-950 */
+    --row-selected-hover:        #023a2d;  /* selected row hover, was dark:hover:bg-[#023a2d] */
   }
   html { background-color: rgb(248 250 252); } /* slate-50 */
   html.dark { background-color: rgb(9 9 11); } /* zinc-950 */
@@ -161,6 +205,24 @@
   --color-accent-fill: var(--accent-fill);
   --color-accent-fill-hover: var(--accent-fill-hover);
   --color-accent-ring: var(--accent-ring);
+  --color-caution: var(--caution);
+  --color-caution-strong: var(--caution-strong);
+  --color-caution-subtle: var(--caution-subtle);
+  --color-caution-border: var(--caution-border);
+  --color-caution-fill: var(--caution-fill);
+  --color-caution-fill-hover: var(--caution-fill-hover);
+  --color-caution-marker: var(--caution-marker);
+  --color-danger-chip: var(--danger-chip);
+  --color-warning-chip: var(--warning-chip);
+  --color-success-chip: var(--success-chip);
+  --color-info-chip: var(--info-chip);
+  --color-progress-chip: var(--progress-chip);
+  --color-caution-chip: var(--caution-chip);
+  --color-link: var(--link);
+  --color-link-fill: var(--link-fill);
+  --color-link-fill-hover: var(--link-fill-hover);
+  --color-row-selected: var(--row-selected);
+  --color-row-selected-hover: var(--row-selected-hover);
 }
 
 /* Modal sizing on phones. `vh` is measured with the mobile browser toolbar

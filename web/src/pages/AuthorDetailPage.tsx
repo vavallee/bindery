@@ -817,7 +817,7 @@ export default function AuthorDetailPage() {
     list.map(book => (
       <tr
         key={book.id}
-        className={`${selected.has(book.id) ? 'bg-success-subtle/50' : 'bg-slate-100/50 dark:bg-zinc-900/50'} hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer`}
+        className={`${selected.has(book.id) ? 'bg-success-marker/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'} hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer`}
         // Client-side, matching the <Link> in this same row. The row used to do
         // a full page reload while the link inside it routed client-side, so
         // one row had two different navigation behaviours.
@@ -877,7 +877,7 @@ export default function AuthorDetailPage() {
                   {fmtPublishedYear(book.releaseDate)}
                 </span>
                 {book.excluded && (
-                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-subtle text-warning-strong">
+                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-marker/20 text-warning-strong">
                     {t('books.excluded', 'Excluded')}
                   </span>
                 )}
@@ -902,7 +902,7 @@ export default function AuthorDetailPage() {
             )
           })()}
           {book.excluded && (
-            <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-warning-subtle text-warning-strong">
+            <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-warning-marker/20 text-warning-strong">
               {t('books.excluded', 'Excluded')}
             </span>
           )}
@@ -1010,7 +1010,7 @@ export default function AuthorDetailPage() {
                   <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 {t('authorDetail.audioBadge', 'Audio')}</span>
                 )}
                 {book.excluded && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-subtle text-warning-strong">{t('books.excluded', 'Excluded')}</span>
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-marker/20 text-warning-strong">{t('books.excluded', 'Excluded')}</span>
                 )}
               </div>
               {/* No `book.releaseDate &&` guard: fmtPublishedYear already

@@ -1,12 +1,26 @@
 import { describe, it, expect } from 'vitest'
 import { RAW_STATUS_ALLOWLIST } from './rawStatusAllowlist'
 
-// A raw status palette class is a colour utility in a status hue: text-red-700,
-// dark:bg-emerald-900/30, hover:border-amber-300, ring-sky-500 and so on. The
-// status colours are tokens now (#3994, src/index.css), so a new raw class means
-// someone skipped them and the next accent or theme change has one more place
-// to find. This fails on one in any file that is not on the allowlist.
-const RAW_STATUS_CLASS = /(?<![\w-])(?:[a-z-]+:)*(?:text|bg|border|ring|outline|divide|from|via|to|fill|stroke|placeholder|decoration|accent|shadow)-(?:amber|rose|sky|emerald|red|green|yellow|blue)-\d{2,3}(?:\/\d+)?(?![\w-])/g
+// A raw palette colour is a colour utility in any Tailwind hue (text-red-700,
+// dark:bg-orange-900/30, hover:border-amber-300, ring-sky-500), an arbitrary
+// colour value (bg-[#dc2626], text-[rgb(220,38,38)]), or a class built at run
+// time ('text-' + hue, `text-${hue}-700`) that no scan can read. The status
+// colours are tokens now (#3994, src/index.css), so a new one means someone
+// skipped them and the next accent or theme change has one more place to find.
+// This fails on one in any file that is not on the allowlist.
+const UTILITY = '(?:text|bg|border|ring|outline|divide|from|via|to|fill|stroke|placeholder|decoration|accent|shadow)'
+const HUES = '(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)'
+const START = '(?<![\\w-])(?:[a-z-]+:)*'
+export const RAW_PALETTE_CLASS = new RegExp(`${START}${UTILITY}-${HUES}-\\d{2,3}(?:/\\d+)?(?![\\w-])`, 'g')
+export const RAW_ARBITRARY_COLOUR = new RegExp(`${START}${UTILITY}-\\[(?:#|rgba?\\(|hsla?\\(|oklch\\(|oklab\\(|color\\()[^\\]]*\\]`, 'g')
+// text-${hue}-700, and 'text-' + hue or "bg-" + hue + "-700": a class name
+// assembled from parts. Only the colour utilities are looked for, and a
+// template that merely builds a date (`${year}-${month}`) has none.
+export const DYNAMIC_COLOUR_CLASS = new RegExp(
+  `${START}${UTILITY}-\\$\\{|['"\`](?<![\\w-])${UTILITY}-['"\`]\\s*\\+|['"\`]${UTILITY}-['"\`]\\s*\\+`,
+  'g',
+)
+const PATTERNS = [RAW_PALETTE_CLASS, RAW_ARBITRARY_COLOUR, DYNAMIC_COLOUR_CLASS]
 
 const sources = import.meta.glob('../**/*.{ts,tsx,css}', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
@@ -16,27 +30,60 @@ function code(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
 
+function hitsIn(source: string): string[] {
+  const text = code(source)
+  return PATTERNS.flatMap(p => text.match(p) ?? [])
+}
+
 function rawClassesByFile(): Map<string, string[]> {
   const found = new Map<string, string[]>()
   for (const [path, source] of Object.entries(sources)) {
     const file = path.replace(/^\.\.\//, '')
     if (/\.test\.tsx?$/.test(file)) continue
-    const hits = code(source).match(RAW_STATUS_CLASS)
-    if (hits) found.set(file, [...new Set(hits)])
+    const hits = hitsIn(source)
+    if (hits.length) found.set(file, [...new Set(hits)])
   }
   return found
 }
 
-describe('raw status palette classes (#3994)', () => {
-  it('recognises the classes it is meant to catch, and not the tokens', () => {
-    const hit = (s: string) => (s.match(RAW_STATUS_CLASS) ?? []).length
-    expect(hit('text-red-700')).toBe(1)
-    expect(hit('dark:hover:bg-emerald-900/30')).toBe(1)
-    expect(hit('border-amber-300 ring-sky-500')).toBe(2)
-    expect(hit('focus-visible:outline-blue-600')).toBe(1)
-    expect(hit('text-danger bg-success-subtle border-warning-border ring-accent-ring')).toBe(0)
-    expect(hit('text-slate-700 bg-zinc-900 text-indigo-800 bg-violet-100')).toBe(0)
-    expect(hit('text-red')).toBe(0)
+describe('raw palette colours (#3994)', () => {
+  // One probe per way of writing a raw colour. Each must be caught, so a gap in
+  // a pattern shows up here and not in review.
+  it.each([
+    ['a status hue', 'text-red-700'],
+    ['a variant and an opacity', 'dark:hover:bg-emerald-900/30'],
+    ['a border', 'border-amber-300'],
+    ['a ring', 'ring-sky-500'],
+    ['an outline with a variant', 'focus-visible:outline-blue-600'],
+    ['orange', 'bg-orange-100'],
+    ['lime', 'text-lime-700'],
+    ['teal', 'border-teal-300'],
+    ['cyan', 'bg-cyan-500'],
+    ['pink', 'text-pink-600'],
+    ['fuchsia', 'bg-fuchsia-100'],
+    ['indigo', 'bg-indigo-600'],
+    ['an arbitrary hex', 'text-[#dc2626]'],
+    ['an arbitrary hex with a variant', 'dark:hover:bg-[#023a2d]'],
+    ['an arbitrary rgb', 'bg-[rgb(220,38,38)]'],
+    ['an interpolated hue', 'className={`text-${hue}-700`}'],
+    ['an interpolated shade', 'const c = `bg-${tone}`'],
+    ['a concatenated class', "const c = 'text-' + 'red-700'"],
+    ['a concatenated class in double quotes', 'const c = "bg-" + hue'],
+  ])('catches %s', (_name, probe) => {
+    expect(hitsIn(probe), probe).not.toEqual([])
+  })
+
+  it('does not flag the tokens, greys, sizes, dates or an ordinary string', () => {
+    for (const ok of [
+      'text-danger bg-success-subtle border-warning-border ring-accent-ring bg-caution-chip text-link',
+      'text-slate-700 bg-zinc-900 border-gray-300',
+      'text-red',
+      'text-[11px] bg-[length:10px] w-[1.25rem] [@media(hover:hover)]:opacity-0',
+      'const from = `${viewYear}-${pad(viewMonth + 1)}-01`',
+      "const label = 'text' + suffix",
+    ]) {
+      expect(hitsIn(ok), ok).toEqual([])
+    }
   })
 
   it('scans the source (so an empty result means something)', () => {
@@ -49,14 +96,14 @@ describe('raw status palette classes (#3994)', () => {
       .map(([file, hits]) => `${file}: ${hits.join(' ')}`)
     expect(
       offenders,
-      `Use a status token from src/index.css (text-danger, bg-success-subtle, border-warning-border, bg-info-fill with text-on-fill and so on) instead of a raw palette class. If the colour is a category or a brand colour and not a status, add the file to src/theme/rawStatusAllowlist.ts with the reason.`,
+      `Use a status token from src/index.css (text-danger, bg-success-subtle, border-warning-border, bg-info-fill with text-on-fill and so on) instead of a raw palette class, an arbitrary colour or a class built at run time. If the colour is a category or a decoration and not a status, add the file to src/theme/rawStatusAllowlist.ts with the reason.`,
     ).toEqual([])
   })
 
   it('every allowlisted file still needs its place', () => {
     const found = rawClassesByFile()
     const stale = Object.keys(RAW_STATUS_ALLOWLIST).filter(file => !found.has(file))
-    expect(stale, 'These files no longer write a raw status class; remove them from rawStatusAllowlist.ts').toEqual([])
+    expect(stale, 'These files no longer write a raw colour; remove them from rawStatusAllowlist.ts').toEqual([])
   })
 
   it('every allowlisted file gives a reason', () => {

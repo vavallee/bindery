@@ -122,7 +122,7 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
           {o.book.authorName && <span className="text-xs text-fg-muted"> · {o.book.authorName}</span>}
         </span>
         {o.folderAuthorOnly && (
-          <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-warning-subtle text-warning-strong">
+          <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-warning-chip text-warning-strong">
             {t('adoption.editor.folderAuthorOnly', 'Folder author only')}
           </span>
         )}

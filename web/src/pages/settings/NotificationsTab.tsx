@@ -206,7 +206,7 @@ function EditNotificationForm({ notification, onClose, onSaved }: { notification
   const toggleCls = (active: boolean) =>
     `px-3 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer select-none ${
       active
-        ? 'bg-success-subtle border-success-border text-success-strong'
+        ? 'bg-success-marker/20 border-success-marker/40 text-success-strong'
         : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-fg-muted'
     }`
 
@@ -307,7 +307,7 @@ function AddNotificationForm({ onClose, onAdded }: { onClose: () => void; onAdde
   const toggleCls = (active: boolean) =>
     `px-3 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer select-none ${
       active
-        ? 'bg-success-subtle border-success-border text-success-strong'
+        ? 'bg-success-marker/20 border-success-marker/40 text-success-strong'
         : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-fg-muted'
     }`
 

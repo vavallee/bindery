@@ -677,7 +677,7 @@ export default function SeriesPage() {
                     </div>
                     <div className="flex-shrink-0 flex items-center gap-2">
                       {displayMissingCount > 0 && (
-                        <span className="text-xs text-warning-strong bg-warning-subtle/50 px-2 py-0.5 rounded-full">
+                        <span className="text-xs text-warning-strong bg-warning-marker/10 px-2 py-0.5 rounded-full">
                           {missingScope === 'all'
                             ? t('series.missingBadge', { count: displayMissingCount })
                             : t(`series.missingBadgeScope.${missingScope}`, { count: displayMissingCount })}
@@ -730,8 +730,8 @@ export default function SeriesPage() {
                       disabled={linking === series.id}
                       className={`touch-target text-xs px-2.5 py-1 rounded font-medium border disabled:opacity-50 ${
                         series.hardcoverLink
-                          ? 'border-info-border bg-info-subtle/50 text-info-strong'
-                          : 'border-warning-border bg-warning-subtle/50 text-warning-strong'
+                          ? 'border-info-marker/40 bg-info-marker/10 text-info-strong'
+                          : 'border-warning-marker/40 bg-warning-marker/10 text-warning-strong'
                       }`}
                       title={series.hardcoverLink ? t('series.hardcover.linkedTo', { title: series.hardcoverLink.hardcoverTitle }) : t('series.hardcover.searchTitle')}
                     >
@@ -844,16 +844,16 @@ export default function SeriesPage() {
                           {entry.book?.status && (
                             <span className={`text-xs px-2 py-0.5 rounded ${
                               entry.book.status === 'imported'
-                                ? 'bg-success-subtle text-success-strong'
+                                ? 'bg-success-marker/20 text-success-strong'
                                 : entry.book.status === 'wanted'
-                                ? 'bg-warning-subtle text-warning-strong'
+                                ? 'bg-warning-marker/20 text-warning-strong'
                                 : 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300'
                             }`}>
                               {t(`bookStatus.${entry.book.status}`, { defaultValue: entry.book.status })}
                             </span>
                           )}
                           {entry.book?.excluded && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-warning-subtle text-warning-strong">
+                            <span className="text-xs px-2 py-0.5 rounded bg-warning-marker/20 text-warning-strong">
                               {t('series.excluded')}
                             </span>
                           )}

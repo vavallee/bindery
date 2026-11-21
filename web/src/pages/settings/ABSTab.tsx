@@ -594,7 +594,7 @@ function AudiobookshelfSection() {
                   key={lib.id}
                   className={`flex items-center gap-3 rounded border px-3 py-2 text-sm cursor-pointer transition-colors ${
                     checked
-                      ? 'border-success-border bg-success-subtle/50 text-slate-900 dark:text-zinc-100'
+                      ? 'border-success-marker/70 bg-success-marker/10 text-slate-900 dark:text-zinc-100'
                       : 'border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 text-slate-700 dark:text-zinc-300'
                   }`}
                 >

@@ -720,7 +720,7 @@ function MetadataProfileForm({ profile, onClose, onSaved }: { profile?: Metadata
                 aria-pressed={on}
                 onClick={() => toggleLang(l.code)}
                 className={`text-xs px-2.5 py-1 rounded border transition-colors ${on
-                  ? 'bg-success-subtle border-success-border text-success-strong'
+                  ? 'bg-success-marker/20 border-success-marker/40 text-success-strong'
                   : 'bg-slate-200 dark:bg-zinc-800 border-slate-300 dark:border-zinc-700 text-fg-muted hover:border-slate-400 dark:hover:border-zinc-600'}`}
               >
                 {languageLabel(l.code, l.label, i18n?.resolvedLanguage)}

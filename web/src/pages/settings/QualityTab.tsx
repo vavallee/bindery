@@ -305,7 +305,7 @@ function ProfileRow({
                         <li
                           key={item.quality}
                           className={`text-[10px] px-2 py-0.5 rounded ${item.allowed
-                            ? 'bg-success-subtle text-success-strong'
+                            ? 'bg-success-chip text-success-strong'
                             : 'bg-slate-200 dark:bg-zinc-800 text-fg-muted'}`}
                         >
                           {i + 1}. {item.quality}

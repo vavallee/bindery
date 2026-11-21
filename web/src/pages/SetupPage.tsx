@@ -97,7 +97,7 @@ export default function SetupPage() {
         <button
           type="submit"
           disabled={submitting}
-          className="w-full bg-progress-fill hover:bg-progress-fill-hover disabled:opacity-50 disabled:cursor-not-allowed text-on-fill font-medium rounded-md py-2 text-sm transition-colors"
+          className="w-full bg-link-fill hover:bg-link-fill-hover disabled:opacity-50 disabled:cursor-not-allowed text-on-fill font-medium rounded-md py-2 text-sm transition-colors"
         >
           {submitting ? t('setup.submitting') : t('setup.submit')}
         </button>

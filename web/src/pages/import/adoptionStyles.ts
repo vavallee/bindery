@@ -8,7 +8,7 @@ export const actionCellCls = 'block md:table-cell px-3 pb-3 pt-1 md:py-2.5 align
 
 export function rowCls(expanded: boolean, inGroup: boolean): string {
   const surface = expanded
-    ? 'bg-success-subtle/25'
+    ? 'bg-success-marker/5'
     : inGroup
       ? 'bg-white dark:bg-zinc-950/40 hover:bg-slate-100 dark:hover:bg-zinc-900'
       : 'bg-slate-100/50 dark:bg-zinc-900/50 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'

@@ -560,7 +560,7 @@ export default function BooksPage() {
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">{t('books.audioLabel')}</span>
                   )}
                   {book.mediaType === 'both' && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-subtle text-warning-strong">{t('common.ebook')}</span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-chip text-warning-strong">{t('common.ebook')}</span>
                   )}
                   {/* Was a bare "?" with no legend entry. It says what it means now. */}
                   {!book.language && (

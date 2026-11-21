@@ -59,7 +59,7 @@ export default function RootFoldersTab() {
     }
   }
 
-  const badgeCls = 'ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-success-subtle text-accent-text font-medium'
+  const badgeCls = 'ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-success-chip text-accent-text font-medium'
 
   return (
     <div>

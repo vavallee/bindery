@@ -141,7 +141,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
 
         <div className="p-4 flex-1 overflow-y-auto space-y-4">
           {currentLink && (
-            <div className="rounded-md border border-info-border bg-info-subtle/50 p-4">
+            <div className="rounded-md border border-info-marker/30 bg-info-marker/10 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-xs uppercase tracking-wide text-fg-muted">{t('series.hardcoverLink.current', 'Currently linked')}</p>
@@ -160,7 +160,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                     </a>
                   )}
                 </div>
-                <span className="text-xs px-2 py-1 rounded-full border border-info-border text-info flex-shrink-0">
+                <span className="text-xs px-2 py-1 rounded-full border border-info-marker/40 text-info flex-shrink-0">
                   {currentLink.linkedBy === 'auto' ? t('series.hardcoverLink.auto', 'Auto') : t('series.hardcoverLink.manual', 'Manual')} {formatConfidence(currentLink.confidence)}
                 </span>
               </div>
@@ -197,7 +197,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                   key={result.foreignId}
                   className={`rounded-md border transition-colors ${
                     selectedResult
-                      ? 'border-accent-ring bg-success-subtle/50'
+                      ? 'border-accent-ring bg-success-marker/10'
                       : 'border-slate-300 dark:border-zinc-700 bg-slate-200/50 dark:bg-zinc-800/50 hover:bg-slate-200 dark:hover:bg-zinc-800'
                   }`}
                 >

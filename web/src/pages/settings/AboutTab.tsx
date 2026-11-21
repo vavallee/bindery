@@ -26,7 +26,7 @@ function ReleaseLink({ version }: { version: string }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-sm text-progress hover:underline"
+      className="text-sm text-link hover:underline"
     >
       {isRelease(version) ? `v${version}` : version}
     </a>

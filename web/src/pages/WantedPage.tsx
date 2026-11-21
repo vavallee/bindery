@@ -442,7 +442,7 @@ export default function WantedPage() {
               <div key={book.id} className={i < pageItems.length - 1 ? 'border-b border-slate-200 dark:border-zinc-800' : ''}>
                 <div className={`${ROW_GRID} px-3 py-1.5 transition-colors ${
                   isSelected
-                    ? 'bg-success-subtle/50'
+                    ? 'bg-success-marker/10'
                     : 'hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'
                 }`}>
                   {/* selection */}
@@ -522,7 +522,7 @@ export default function WantedPage() {
                     {/* actions */}
                     <div className="flex items-center justify-end gap-1.5">
                       {book.excluded && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-subtle text-warning-strong">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-marker/20 text-warning-strong">
                           {t('wanted.excluded')}
                         </span>
                       )}

@@ -151,7 +151,7 @@ export default function AuthSettings() {
               <button
                 onClick={() => { setShowAdd(false); setEditing(p.id) }}
                 disabled={saving}
-                className="text-xs text-progress hover:underline disabled:opacity-50 shrink-0"
+                className="text-xs text-link hover:underline disabled:opacity-50 shrink-0"
               >
                 {t('common.edit')}
               </button>
@@ -180,7 +180,7 @@ export default function AuthSettings() {
         ) : (
           <button
             onClick={() => { setEditing(null); setShowAdd(true) }}
-            className="text-sm text-progress hover:underline"
+            className="text-sm text-link hover:underline"
           >
             {t('settings.oidc.addButton')}
           </button>

@@ -13,19 +13,19 @@ import RejectImportDialog from '../components/RejectImportDialog'
 import { humanizeEventType, isHeldEvent, parseEventData } from '../util/historyEvents'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
-  grabbed: 'bg-progress-subtle text-progress-strong',
-  bookImported: 'bg-success-subtle text-success-strong',
-  imported: 'bg-success-subtle text-success-strong',
-  downloadFailed: 'bg-danger-subtle text-danger-strong',
-  importFailed: 'bg-danger-subtle text-danger-strong',
-  deleted: 'bg-danger-subtle text-danger-strong',
+  grabbed: 'bg-progress-marker/20 text-progress-strong',
+  bookImported: 'bg-success-marker/20 text-success-strong',
+  imported: 'bg-success-marker/20 text-success-strong',
+  downloadFailed: 'bg-danger-marker/20 text-danger-strong',
+  importFailed: 'bg-danger-marker/20 text-danger-strong',
+  deleted: 'bg-danger-marker/20 text-danger-strong',
   renamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   ignored: 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300',
   bookFileRenamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   // Amber rather than green: the import worked, but the file turned out not to
   // be the edition the catalogue described, which is worth a second look.
-  bookLanguageCorrected: 'bg-warning-subtle text-warning-strong',
-  importRejected: 'bg-danger-subtle text-danger-strong',
+  bookLanguageCorrected: 'bg-warning-marker/20 text-warning-strong',
+  importRejected: 'bg-danger-marker/20 text-danger-strong',
 }
 
 function formatDate(s: string) {
@@ -332,7 +332,7 @@ export default function HistoryPage() {
                           {mt === 'audiobook' ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 text-[10px] font-medium">🎧 {t('common.audiobook', 'Audiobook')}</span>
                           ) : mt === 'ebook' ? (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-success-subtle text-success-strong text-[10px] font-medium">📖 {t('common.ebook', 'Ebook')}</span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-success-chip text-success-strong text-[10px] font-medium">📖 {t('common.ebook', 'Ebook')}</span>
                           ) : (
                             <span className="text-fg-muted">—</span>
                           )}
@@ -396,7 +396,7 @@ export default function HistoryPage() {
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 text-[10px] font-medium">🎧</span>
                       )}
                       {mt === 'ebook' && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-success-subtle text-success-strong text-[10px] font-medium">📖</span>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-success-chip text-success-strong text-[10px] font-medium">📖</span>
                       )}
                       {size > 0 && (
                         <span className="text-[10px] text-fg-muted font-mono">{formatBytes(size)}</span>

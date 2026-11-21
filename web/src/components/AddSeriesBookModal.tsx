@@ -139,7 +139,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
                       key={book.id}
                       className={`flex items-center gap-3 p-3 rounded-md cursor-pointer ${
                         selected
-                          ? 'bg-success-subtle/50 ring-1 ring-success-marker/40'
+                          ? 'bg-success-marker/10 ring-1 ring-success-marker/40'
                           : 'bg-slate-200/50 dark:bg-zinc-800/50 hover:bg-slate-200 dark:hover:bg-zinc-800'
                       }`}
                     >

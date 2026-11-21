@@ -360,53 +360,18 @@ describe('explicit text colours on the background in the same string', () => {
         }
       }
     }
-    // Most hued text went to the status tokens (#3994), measured by the token
-    // tests; this still sees any raw class that is left.
-    expect(checked).toBeGreaterThan(0)
+    // 40 pairs are left after the move to the status tokens (#3994), the
+    // indigo, violet and purple category colours and the
+    // allowlisted files; this is the floor just under them.
+    expect(checked).toBeGreaterThan(30)
     expect(failures, failures.join('\n')).toEqual([])
   })
 
-  // A hover or focus colour is the text's colour while it is pointed at or
-  // focused, so it has to read as well as the resting one. The cases above
-  // only see resting colours, which let hover:text-emerald-500 (2.5:1) and
-  // hover:text-rose-500 through. Measured like the case above, with the
-  // dark:hover: class on dark when the string has one, else the shared class.
-  it('stay AA on hover and focus, on the page and on cards', () => {
-    const STATE_TEXT = /^(dark:)?(?:hover|focus):text-([a-z]+-\d+)$/
-    const failures: string[] = []
-    let checked = 0
-    for (const [file, source] of Object.entries(sources)) {
-      if (/\.test\.tsx?$/.test(file)) continue
-      // Comments quote old class strings (buttons.ts does); skip them.
-      const code = source.replace(/^\s*\/\/.*$/gm, '')
-      for (const [, str] of code.matchAll(/["'`]([^"'`]*\b(?:hover|focus):text-[a-z]+-\d+[^"'`]*)["'`]/g)) {
-        const classes = str.split(/\s+/)
-        if (classes.some(c => HUE_BG.test(c.split('/')[0]))) continue
-        const states = classes.map(c => c.match(STATE_TEXT)).filter((m): m is RegExpMatchArray => m !== null)
-        const light = states.filter(m => !m[1])
-        const dark = states.some(m => m[1]) ? states.filter(m => m[1]) : light
-        for (const [theme, texts] of [['light', light], ['dark', dark]] as const) {
-          for (const text of texts) {
-            if (GREYS.test(text[2])) continue
-            const fg = TAILWIND.get(text[2])
-            if (!fg) continue
-            const grounds = theme === 'dark'
-              ? [['the page', SURFACES.darkPage], ['a card', SURFACES.darkCard]]
-              : [['the page', SURFACES.lightPage], ['a card', SURFACES.lightCard]]
-            for (const [name, bg] of grounds) {
-              checked++
-              const ratio = contrast(fg, bg)
-              if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${text[0]} on ${name} is ${ratio.toFixed(2)}:1`)
-            }
-          }
-        }
-      }
-    }
-    // Hued hover colours now go through the status tokens, which the token
-    // scan measures (#3994); only a stray raw class is left to see here.
-    expect(checked).toBeGreaterThanOrEqual(0)
-    expect(failures, failures.join('\n')).toEqual([])
-  })
+  // The old hover and focus scan for raw hued text was removed in #3994: no
+  // hued hover class is left (the raw status classes are barred by
+  // semanticColourGuard.test.ts, and the others have no hover colour), so it
+  // measured nothing. Hover is covered by the token scan below, which has its
+  // own minimum.
 })
 
 // A grey text colour with no background in its string sits on the page or on a
@@ -510,8 +475,21 @@ describe('CoverPlaceholder palette', () => {
 // muted text at 3.8:1.
 describe('DataTable selected row hover', () => {
   it('keeps muted text AA in dark mode', () => {
-    expect(dataTableSource).toContain(`dark:hover:bg-[${SELECTED_HOVER_DARK}]`)
+    // The row's colours are tokens now (#3994); the dark hover keeps its old value.
+    expect(dataTableSource).toContain('bg-row-selected hover:bg-row-selected-hover')
+    expect(tok('row-selected-hover', 'dark')).toBe(SELECTED_HOVER_DARK)
     expect(contrast(token('fg-muted', 'dark'), SELECTED_HOVER_DARK)).toBeGreaterThanOrEqual(AA_NORMAL)
+  })
+
+  it('keeps muted text AA on the selected row and its hover in both themes', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      for (const name of ['row-selected', 'row-selected-hover']) {
+        expect(contrast(token('fg-muted', theme), tok(name, theme)), `${name} ${theme}`).toBeGreaterThanOrEqual(AA_NORMAL)
+      }
+    }
+    expect(tok('row-selected', 'light')).toBe(TAILWIND.get('emerald-50'))
+    expect(tok('row-selected-hover', 'light')).toBe(TAILWIND.get('emerald-100'))
+    expect(tok('row-selected', 'dark')).toBe(TAILWIND.get('emerald-950'))
   })
 })
 
@@ -546,24 +524,24 @@ describe('Settings save toast', () => {
 // emerald, amber, red and sky classes, so each is pinned to the palette shade
 // it replaced (no visual change) and measured here, in both themes, from the
 // CSS as the build compiles it.
-const STATUSES = { danger: 'red', warning: 'amber', success: 'emerald', info: 'sky', progress: 'blue' } as const
+const STATUSES = { danger: 'red', warning: 'amber', success: 'emerald', info: 'sky', progress: 'blue', caution: 'orange' } as const
 type Status = keyof typeof STATUSES
 const STATUS_NAMES = Object.keys(STATUSES) as Status[]
 const tok = (name: string, theme: Theme) => ALL_TOKENS[theme].get(name) ?? ''
 const SURFACE_LIST = (theme: Theme): Array<[string, string]> =>
   theme === 'dark' ? [['page', SURFACES.darkPage], ['card', SURFACES.darkCard]] : [['page', SURFACES.lightPage], ['card', SURFACES.lightCard]]
-const FILL_SHADE: Record<Status, [number, number]> = { danger: [600, 700], warning: [700, 800], success: [700, 800], info: [700, 800], progress: [700, 800] }
+const FILL_SHADE: Record<Status, [number, number]> = { danger: [600, 700], warning: [700, 800], success: [700, 800], info: [700, 800], progress: [700, 800], caution: [700, 800] }
 // What each token's value was before it became a token: the palette shade of
 // the raw class it replaced, per theme. The dark tint is the old
 // dark:bg-red-900/30 mixed over the dark card, as an opaque colour.
 function expectedShade(status: Status, kind: string, theme: Theme): string {
   const h = STATUSES[status]
-  const light: Record<string, string> = { '': '700', strong: '800', subtle: '100', border: '300', fill: String(FILL_SHADE[status][0]), 'fill-hover': String(FILL_SHADE[status][1]), marker: '500' }
-  const dark: Record<string, string> = { '': '400', strong: '300', border: '900', fill: String(FILL_SHADE[status][0]), 'fill-hover': String(FILL_SHADE[status][1]), marker: '500' }
+  const light: Record<string, string> = { '': '700', strong: '800', subtle: '100', border: '300', fill: String(FILL_SHADE[status][0]), 'fill-hover': String(FILL_SHADE[status][1]), marker: '500', chip: '100' }
+  const dark: Record<string, string> = { '': '400', strong: '300', border: '900', fill: String(FILL_SHADE[status][0]), 'fill-hover': String(FILL_SHADE[status][1]), marker: '500', chip: '950' }
   if (theme === 'dark' && kind === 'subtle') return mix(TAILWIND.get(`${h}-900`)!, SURFACES.darkCard, 0.3)
   return TAILWIND.get(`${h}-${(theme === 'dark' ? dark : light)[kind]}`)!
 }
-const KINDS = ['', 'strong', 'subtle', 'border', 'fill', 'fill-hover', 'marker']
+const KINDS = ['', 'strong', 'subtle', 'border', 'fill', 'fill-hover', 'marker', 'chip']
 const nameOf = (status: Status, kind: string) => (kind ? `${status}-${kind}` : status)
 
 describe('status colour tokens (#3994)', () => {
@@ -588,7 +566,31 @@ describe('status colour tokens (#3994)', () => {
     expect(tok('accent-fill-hover', 'dark')).toBe(TAILWIND.get('emerald-800'))
     expect(tok('accent-ring', 'light')).toBe(TAILWIND.get('emerald-600'))
     expect(tok('accent-ring', 'dark')).toBe(TAILWIND.get('emerald-500'))
+    expect(tok('link', 'light')).toBe(TAILWIND.get('blue-600'))
+    expect(tok('link', 'dark')).toBe(TAILWIND.get('blue-400'))
+    expect(tok('link-fill', 'dark')).toBe(TAILWIND.get('blue-600'))
+    expect(tok('link-fill-hover', 'light')).toBe(TAILWIND.get('blue-700'))
   })
+
+  // The link blue (text links, the sign in and setup buttons) and every
+  // chip tint, measured like the rest.
+  for (const theme of ['light', 'dark'] as const) {
+    for (const [surface, bg] of SURFACE_LIST(theme)) {
+      it(`text-link ${theme} on the ${surface} >= ${AA_NORMAL}:1`, () => {
+        expect(contrast(tok('link', theme), bg)).toBeGreaterThanOrEqual(AA_NORMAL)
+      })
+    }
+    for (const fill of ['link-fill', 'link-fill-hover']) {
+      it(`on-fill ${theme} on ${fill} >= ${AA_NORMAL}:1`, () => {
+        expect(contrast(tok('on-fill', theme), tok(fill, theme))).toBeGreaterThanOrEqual(AA_NORMAL)
+      })
+    }
+    for (const status of STATUS_NAMES) {
+      it(`text-${status}-strong ${theme} on ${status}-chip >= ${AA_NORMAL}:1`, () => {
+        expect(contrast(tok(`${status}-strong`, theme), tok(`${status}-chip`, theme))).toBeGreaterThanOrEqual(AA_NORMAL)
+      })
+    }
+  }
 
   for (const theme of ['light', 'dark'] as const) {
     for (const status of STATUS_NAMES) {
@@ -644,19 +646,20 @@ describe('status colour tokens (#3994)', () => {
   // mixed over the card), resting and hovered, in each theme: the pairing the
   // checks above cannot see, such as text-danger on bg-danger-subtle.
   it('token text stays AA on the background in the same string', () => {
-    const TEXT = /^(?:hover:)?text-(?:(?:danger|warning|success|info)(?:-strong)?|on-fill)$/
+    const TEXT = /^(?:hover:)?text-(?:(?:danger|warning|success|info|progress|caution|link)(?:-strong)?|on-fill)$/
     const failures: string[] = []
     let checked = 0
+    let hoverChecked = 0
     const resolveBg = (cls: string, theme: Theme, card: string): string | undefined => {
       const [base, alpha] = cls.split('/')
-      const m = base.match(/^bg-((?:danger|warning|success|info)-(?:subtle|border|fill|fill-hover|marker)|accent-fill|accent-fill-hover)$/)
+      const m = base.match(/^bg-((?:danger|warning|success|info|progress|caution)-(?:subtle|chip|border|fill|fill-hover|marker)|link-fill|link-fill-hover|row-selected|row-selected-hover|accent-fill|accent-fill-hover)$/)
       const hex = m ? tok(m[1], theme) : TAILWIND.get(base.replace(/^bg-/, ''))
       return hex ? (alpha ? mix(hex, card, Number(alpha) / 100) : hex) : undefined
     }
     for (const [file, source] of Object.entries(sources)) {
       if (/\.test\.tsx?$/.test(file)) continue
       const code = source.replace(/^\s*\/\/.*$/gm, '')
-      for (const [, str] of code.matchAll(/["'`]([^"'`]*\b(?:hover:)?text-(?:danger|warning|success|info|on-fill)[^"'`]*)["'`]/g)) {
+      for (const [, str] of code.matchAll(/["'`]([^"'`]*\b(?:hover:)?text-(?:danger|warning|success|info|progress|caution|link|on-fill)[^"'`]*)["'`]/g)) {
         const classes = str.split(/\s+/)
         for (const theme of ['light', 'dark'] as const) {
           const card = theme === 'dark' ? SURFACES.darkCard : SURFACES.lightCard
@@ -675,13 +678,15 @@ describe('status colour tokens (#3994)', () => {
             const fg = tok(textClass.replace(/^hover:text-/, '').replace(/^text-/, ''), theme)
             if (!bg || !fg) continue
             checked++
+            if (state === 'hover' && (hover !== rest || hoverText !== restText)) hoverChecked++
             const ratio = contrast(fg, bg)
             if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${state} ${textClass} on ${bgClass} is ${ratio.toFixed(2)}:1 in "${str.trim().slice(0, 90)}"`)
           }
         }
       }
     }
-    expect(checked).toBeGreaterThan(40)
+    expect(hoverChecked).toBeGreaterThan(60)
+    expect(checked).toBeGreaterThan(700)
     expect(failures, failures.join('\n')).toEqual([])
   })
 })

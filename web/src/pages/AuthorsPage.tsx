@@ -897,7 +897,7 @@ export default function AuthorsPage() {
 function MonitoredBadge({ monitored }: { monitored: boolean }) {
   const { t } = useTranslation()
   return (
-    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium ${monitored ? 'bg-success-subtle text-success-strong' : 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-300'}`}>
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium ${monitored ? 'bg-success-marker/20 text-success-strong' : 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-300'}`}>
       <span aria-hidden="true">{monitored ? '●' : '○'}</span>
       {monitored ? t('authors.monitored') : t('authors.unmonitored')}
     </span>

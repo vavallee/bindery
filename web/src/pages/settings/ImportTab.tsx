@@ -671,8 +671,8 @@ function HardcoverListsSection({ onNavigate }: { onNavigate?: (tab: string) => v
                     <span className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">{row.name}</span>
                       <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{row.slug}</span>
-                      {(row.local?.account || (!row.local && hcAccount)) && <span className="text-[10px] px-1.5 py-0.5 bg-info-subtle text-info-strong rounded">@{row.local?.account || hcAccount}</span>}
-                      {row.stale && <span className="text-[10px] px-1.5 py-0.5 bg-warning-subtle text-warning-strong rounded">{t('settings.import.hardcoverSavedOnly', 'Saved only')}</span>}
+                      {(row.local?.account || (!row.local && hcAccount)) && <span className="text-[10px] px-1.5 py-0.5 bg-info-chip text-info-strong rounded">@{row.local?.account || hcAccount}</span>}
+                      {row.stale && <span className="text-[10px] px-1.5 py-0.5 bg-warning-chip text-warning-strong rounded">{t('settings.import.hardcoverSavedOnly', 'Saved only')}</span>}
                       {il && <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 dark:bg-zinc-800 text-fg-muted rounded">{il.apiKeyConfigured ? t('settings.import.hardcoverOverrideConfigured', 'Override token') : t('settings.import.hardcoverGlobalToken', 'Global token')}</span>}
                     </span>
                     <span className="block text-xs text-fg-muted mt-0.5">

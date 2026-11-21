@@ -133,7 +133,7 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
           <span className="truncate font-medium text-slate-800 dark:text-zinc-200">{name}</span>
           <MediaBadge type={item.format} />
           {rootLabel && (
-            <span className="shrink-0 rounded bg-warning-subtle px-1.5 py-0.5 text-[10px] font-medium text-warning-strong" title={item.rootPath}>
+            <span className="shrink-0 rounded bg-warning-chip px-1.5 py-0.5 text-[10px] font-medium text-warning-strong" title={item.rootPath}>
               {rootLabel}
             </span>
           )}
@@ -160,7 +160,7 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
           </p>
         ) : top ? (
           <p className="flex min-w-0 items-center gap-2 text-xs" title={tooltip}>
-            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${strength === 'strong' ? 'bg-success-subtle text-success-strong' : 'bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300'}`}>
+            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${strength === 'strong' ? 'bg-success-chip text-success-strong' : 'bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300'}`}>
               {strength === 'strong' ? t('adoption.match.strong', 'Strong match') : t('adoption.match.possible', 'Possible match')}
             </span>
             {strength === 'strong' ? (
