@@ -52,7 +52,7 @@ export default function MyRequestsPage() {
         </Link>
       </div>
 
-      {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 
       {!loading && items.length === 0 && !error && (
         <p className="text-sm text-fg-muted">{t('requests.mine.empty')}</p>

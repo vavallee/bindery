@@ -18,7 +18,7 @@ export function Card({
 }) {
   const toneCls =
     tone === 'danger'
-      ? 'border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/30'
+      ? 'border-danger-border bg-danger-subtle'
       : 'border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900'
   return <div className={`rounded-lg border ${toneCls} ${className}`}>{children}</div>
 }
@@ -51,7 +51,7 @@ export default function Section({
         <h3
           className={`text-base font-semibold ${
             tone === 'danger'
-              ? 'text-rose-700 dark:text-rose-400'
+              ? 'text-danger'
               : 'text-slate-800 dark:text-zinc-200'
           }`}
         >

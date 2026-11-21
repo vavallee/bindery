@@ -167,7 +167,7 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
   const lockBadge = (field: string) =>
     locked.includes(field) ? (
       <span
-        className="ml-1 text-xs text-amber-700 dark:text-amber-400"
+        className="ml-1 text-xs text-warning"
         title={t('bookDetail.edit.lockedHint', 'Manually edited — metadata refresh will not overwrite this field')}
       >
         🔒
@@ -266,7 +266,7 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
                 onKeyDown={e => { if (e.key === 'Enter' && canSave) void save() }} className={inputCls} autoFocus />
             </div>
           )}
-          {error && <p className="text-sm text-red-700 dark:text-red-400">{error}</p>}
+          {error && <p className="text-sm text-danger">{error}</p>}
         </div>
 
         <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex items-center gap-2">
@@ -275,7 +275,7 @@ export default function EditBookModal({ book, onClose, onSaved, onSeriesSaved, s
               type="button"
               onClick={unlockAll}
               disabled={saving}
-              className="text-xs px-3 py-2 text-amber-700 dark:text-amber-400 hover:underline disabled:opacity-50"
+              className="text-xs px-3 py-2 text-warning hover:underline disabled:opacity-50"
               title={t('bookDetail.edit.unlockAllHint', 'Let metadata refresh manage every field and the book\'s series again')}
             >
               {t('bookDetail.edit.unlockAll', 'Unlock all fields')}

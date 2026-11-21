@@ -492,7 +492,7 @@ export default function QueuePage() {
       {!loading && partial && (
         <div
           role="status"
-          className="mb-4 px-3 py-2 text-xs text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/40 rounded-lg"
+          className="mb-4 px-3 py-2 text-xs text-warning-strong bg-warning-subtle border border-warning-border rounded-lg"
         >
           {staleClients.length > 0
             ? t('queue.partialWarning', {
@@ -524,7 +524,7 @@ export default function QueuePage() {
                       <button
                         onClick={retryAllFailed}
                         disabled={bulkBusy}
-                        className="touch-target px-2.5 py-1 text-xs rounded bg-sky-700 hover:bg-sky-800 disabled:opacity-50 text-white font-medium"
+                        className="touch-target px-2.5 py-1 text-xs rounded bg-info-fill hover:bg-info-fill-hover disabled:opacity-50 text-on-fill font-medium"
                       >
                         {t('queue.retryAllFailed', 'Retry all failed')}
                       </button>
@@ -532,7 +532,7 @@ export default function QueuePage() {
                     <button
                       onClick={clearAllFailed}
                       disabled={bulkBusy}
-                      className="touch-target px-2.5 py-1 text-xs rounded border border-red-300 dark:border-red-900 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 font-medium"
+                      className="touch-target px-2.5 py-1 text-xs rounded border border-danger-border text-danger hover:bg-danger-subtle disabled:opacity-50 font-medium"
                     >
                       {t('queue.clearAllFailed', 'Clear all failed')}
                     </button>
@@ -559,7 +559,7 @@ export default function QueuePage() {
                 />
               </div>
               {bulkResult && (
-                <div className="px-3 py-2 text-xs text-slate-700 dark:text-zinc-300 bg-amber-100 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/40 rounded-lg">
+                <div className="px-3 py-2 text-xs text-slate-700 dark:text-zinc-300 bg-warning-subtle border border-warning-border rounded-lg">
                   {bulkResult}
                 </div>
               )}
@@ -581,7 +581,7 @@ export default function QueuePage() {
                 />
               )}
               {queuePage.map(item => (
-                <div key={item.id} className={`flex flex-wrap sm:flex-nowrap items-center justify-between p-3 border rounded-lg bg-slate-100 dark:bg-zinc-900 ${selectedIds.has(item.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800'}`}>
+                <div key={item.id} className={`flex flex-wrap sm:flex-nowrap items-center justify-between p-3 border rounded-lg bg-slate-100 dark:bg-zinc-900 ${selectedIds.has(item.id) ? 'border-accent-ring' : 'border-slate-200 dark:border-zinc-800'}`}>
                   <Checkbox
                     checked={selectedIds.has(item.id)}
                     onChange={() => toggleSelect(item.id)}
@@ -598,7 +598,7 @@ export default function QueuePage() {
                       <DownloadStatusChip status={item.status} />
                       <span className="text-fg-muted">{formatBytes(item.size)}</span>
                       {item.percentage && (
-                        <span className="text-blue-700 dark:text-blue-400">{item.percentage}%</span>
+                        <span className="text-progress">{item.percentage}%</span>
                       )}
                       {item.timeLeft && (
                         <span className="text-fg-muted">{t('queue.remaining', { time: item.timeLeft })}</span>
@@ -663,29 +663,29 @@ export default function QueuePage() {
                         already has a book was matched — survives reload so the
                         user isn't left wondering whether the match took (#1589). */}
                     {isMatchable(item.status) && item.book && (
-                      <div className="mt-1 text-xs text-accent-text bg-emerald-400/10 rounded px-2 py-1 break-words">
+                      <div className="mt-1 text-xs text-accent-text bg-success-marker/10 rounded px-2 py-1 break-words">
                         {t('queue.matchedTo', { title: item.book.title, defaultValue: `Matched to ${item.book.title} — use Retry import to import it.` })}
                       </div>
                     )}
                     {retryImportErrors[item.id] && (
-                      <div className="mt-1 text-xs text-red-700 dark:text-red-400 bg-red-400/10 rounded px-2 py-1 break-words">
+                      <div className="mt-1 text-xs text-danger-strong bg-danger-marker/10 rounded px-2 py-1 break-words">
                         {t('queue.retryImportError', { error: retryImportErrors[item.id] })}
                       </div>
                     )}
                     {scanErrors[item.id] && (
-                      <div role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400 bg-red-400/10 rounded px-2 py-1 break-words">
+                      <div role="alert" className="mt-1 text-xs text-danger-strong bg-danger-marker/10 rounded px-2 py-1 break-words">
                         {t('queue.scanError', { error: scanErrors[item.id], defaultValue: 'Scan failed: {{error}}' })}
                       </div>
                     )}
                     {matchMessages[item.id] && (
-                      <div role="status" className="mt-1 text-xs text-accent-text bg-emerald-400/10 rounded px-2 py-1 break-words">
+                      <div role="status" className="mt-1 text-xs text-accent-text bg-success-marker/10 rounded px-2 py-1 break-words">
                         {matchMessages[item.id]}
                       </div>
                     )}
                     {item.percentage && (
                       <div className="mt-2 h-1 bg-slate-200 dark:bg-zinc-800 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-blue-500 transition-all"
+                          className="h-full bg-progress-marker transition-all"
                           style={{ width: `${item.percentage}%` }}
                         />
                       </div>
@@ -714,7 +714,7 @@ export default function QueuePage() {
                         onClick={() => item.book ? handleMatch(item.id, item.book.id) : handleRetryImport(item.id)}
                         disabled={retryingImportIds.has(item.id)}
                         title={t('queue.retryImportHint')}
-                        className="px-3 py-2 text-xs bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 rounded font-medium touch-manipulation"
+                        className="px-3 py-2 text-xs bg-info-fill hover:bg-info-fill-hover text-on-fill disabled:opacity-50 rounded font-medium touch-manipulation"
                       >
                         {retryingImportIds.has(item.id) ? t('queue.retryingImport') : t('queue.retryImport')}
                       </button>
@@ -724,7 +724,7 @@ export default function QueuePage() {
                         onClick={() => handleRetryDownload(item.id)}
                         disabled={retryingImportIds.has(item.id)}
                         title={t('queue.retryDownloadHint')}
-                        className="px-3 py-2 text-xs bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 rounded font-medium touch-manipulation"
+                        className="px-3 py-2 text-xs bg-info-fill hover:bg-info-fill-hover text-on-fill disabled:opacity-50 rounded font-medium touch-manipulation"
                       >
                         {retryingImportIds.has(item.id) ? t('queue.retryingDownload') : t('queue.retryDownload')}
                       </button>
@@ -736,7 +736,7 @@ export default function QueuePage() {
                         disabled={retryingImportIds.has(item.id)}
                         aria-label={t('queue.scanLibraryFor', { title: item.title, defaultValue: 'Scan library for {{title}}' })}
                         title={t('queue.scanLibraryHint', 'Runs a library scan so the file the external tool placed is picked up.')}
-                        className="px-3 py-2 text-xs bg-sky-700 hover:bg-sky-800 text-white disabled:opacity-50 rounded font-medium touch-manipulation"
+                        className="px-3 py-2 text-xs bg-info-fill hover:bg-info-fill-hover text-on-fill disabled:opacity-50 rounded font-medium touch-manipulation"
                       >
                         {retryingImportIds.has(item.id) ? t('queue.scanningLibrary', 'Scanning…') : t('queue.scanLibrary', 'Scan library')}
                       </button>
@@ -757,17 +757,17 @@ export default function QueuePage() {
           {pending.length > 0 && (
             <div>
               <h3 className="text-sm font-semibold text-fg-muted mb-2 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+                <span className="w-2 h-2 rounded-full bg-warning-marker inline-block" />
                 {t('queue.pendingHeading', { n: pending.length, defaultValue: 'Pending Releases ({{n}})' })}
               </h3>
               <div className="space-y-2">
                 {pending.map(item => (
-                  <div key={item.id} className="flex items-center justify-between p-4 border border-amber-200 dark:border-amber-900/40 rounded-lg bg-amber-50 dark:bg-amber-950/20">
+                  <div key={item.id} className="flex items-center justify-between p-4 border border-warning-border rounded-lg bg-warning-subtle">
                     <div className="min-w-0 flex-1">
                       <h3 className="font-medium text-sm [overflow-wrap:anywhere] sm:truncate">{item.title}</h3>
                       <BookAuthorLink book={item.book} />
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
-                        <span className="text-amber-700 dark:text-amber-400">{item.reason}</span>
+                        <span className="text-warning">{item.reason}</span>
                         {item.size > 0 && (
                           <span className="text-fg-muted">{formatBytes(item.size)}</span>
                         )}
@@ -787,7 +787,7 @@ export default function QueuePage() {
                       </button>
                       <button
                         onClick={() => handleDismissPending(item.id)}
-                        className="px-3 py-1.5 text-xs text-fg-muted hover:text-red-700 dark:hover:text-red-400 rounded"
+                        className="px-3 py-1.5 text-xs text-fg-muted hover:text-danger rounded"
                       >
                         {t('common.dismiss', 'Dismiss')}
                       </button>
@@ -841,7 +841,7 @@ export default function QueuePage() {
               <button
                 onClick={confirmDelete}
                 disabled={deleting}
-                className="px-3 py-2 text-xs rounded font-medium bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+                className="px-3 py-2 text-xs rounded font-medium bg-danger-fill hover:bg-danger-fill-hover text-on-fill disabled:opacity-50"
               >
                 {t('queue.removeConfirm')}
               </button>

@@ -817,7 +817,7 @@ export default function AuthorDetailPage() {
     list.map(book => (
       <tr
         key={book.id}
-        className={`${selected.has(book.id) ? 'bg-emerald-500/10 dark:bg-emerald-500/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'} hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer`}
+        className={`${selected.has(book.id) ? 'bg-success-marker/10' : 'bg-slate-100/50 dark:bg-zinc-900/50'} hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 cursor-pointer`}
         // Client-side, matching the <Link> in this same row. The row used to do
         // a full page reload while the link inside it routed client-side, so
         // one row had two different navigation behaviours.
@@ -877,7 +877,7 @@ export default function AuthorDetailPage() {
                   {fmtPublishedYear(book.releaseDate)}
                 </span>
                 {book.excluded && (
-                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400">
+                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-marker/20 text-warning-strong">
                     {t('books.excluded', 'Excluded')}
                   </span>
                 )}
@@ -902,7 +902,7 @@ export default function AuthorDetailPage() {
             )
           })()}
           {book.excluded && (
-            <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400">
+            <span className="inline-block ml-1 px-2 py-0.5 rounded text-[10px] font-medium bg-warning-marker/20 text-warning-strong">
               {t('books.excluded', 'Excluded')}
             </span>
           )}
@@ -959,7 +959,7 @@ export default function AuthorDetailPage() {
         <div
           key={book.id}
           data-focus-card
-          className={`relative border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group transition-colors ${selected.has(book.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800 hover:border-emerald-500'}`}
+          className={`relative border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group transition-colors ${selected.has(book.id) ? 'border-accent-ring' : 'border-slate-200 dark:border-zinc-800 hover:border-accent-ring'}`}
         >
           {/* The label is the tap area: 32px round the box, 44px on a touch
               screen, where the box sits further in to make room. */}
@@ -1010,7 +1010,7 @@ export default function AuthorDetailPage() {
                   <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">🎧 {t('authorDetail.audioBadge', 'Audio')}</span>
                 )}
                 {book.excluded && (
-                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400">{t('books.excluded', 'Excluded')}</span>
+                  <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-marker/20 text-warning-strong">{t('books.excluded', 'Excluded')}</span>
                 )}
               </div>
               {/* No `book.releaseDate &&` guard: fmtPublishedYear already
@@ -1307,7 +1307,7 @@ export default function AuthorDetailPage() {
                     <button
                       type="button"
                       onClick={() => handleDeleteAlias(a)}
-                      className="ml-0.5 leading-none text-fg-muted hover:text-red-700 focus:text-red-700 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-red-500 dark:hover:text-red-400 dark:focus:text-red-400 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/alias:opacity-100 [@media(hover:hover)]:focus:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
+                      className="ml-0.5 leading-none text-fg-muted hover:text-danger focus:text-danger focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-danger-marker opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/alias:opacity-100 [@media(hover:hover)]:focus:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
                       aria-label={t('authorDetail.aliases.removeLabel', { name: a.name })}
                       title={t('authorDetail.aliases.removeLabel', { name: a.name })}
                     >
@@ -1385,7 +1385,7 @@ export default function AuthorDetailPage() {
       )}
 
       {error && (
-        <div className="mb-4 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+        <div className="mb-4 px-3 py-2 bg-danger-subtle border border-danger-border rounded text-sm text-danger-strong">
           {error}
         </div>
       )}
@@ -1558,7 +1558,7 @@ export default function AuthorDetailPage() {
                       to="/series"
                       state={{ seriesId: group.seriesId }}
                       title={t('authorDetail.openSeries', 'Open this series on the Series page')}
-                      className="hover:underline hover:text-emerald-700 dark:hover:text-emerald-400"
+                      className="hover:underline hover:text-success"
                     >
                       {group.title}
                     </Link>

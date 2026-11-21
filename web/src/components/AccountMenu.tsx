@@ -130,7 +130,7 @@ export default function AccountMenu({
           <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
         </svg>
         {updateAvailable && (
-          <span data-testid="account-update-dot" className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-500" aria-hidden="true" />
+          <span data-testid="account-update-dot" className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-warning-marker" aria-hidden="true" />
         )}
       </button>
 
@@ -159,7 +159,7 @@ export default function AccountMenu({
                 rel="noopener noreferrer"
                 onClick={() => close(false)}
                 title={updateAvailable ? t('nav.updateAvailable') : undefined}
-                className={`${itemClass} ${updateAvailable ? 'font-medium text-amber-700 dark:text-amber-400' : 'text-slate-700 dark:text-zinc-300'}`}
+                className={`${itemClass} ${updateAvailable ? 'font-medium text-warning' : 'text-slate-700 dark:text-zinc-300'}`}
               >
                 {versionLabel}
               </a>

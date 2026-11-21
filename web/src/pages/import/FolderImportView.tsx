@@ -253,14 +253,14 @@ export default function FolderImportView() {
           {folderBrowser?.path && (
             <p className="mb-2 break-all font-mono text-xs text-fg-muted">{folderBrowser.path}</p>
           )}
-          {browseError && <p className="text-sm text-red-700 dark:text-red-400">{browseError}</p>}
+          {browseError && <p className="text-sm text-danger">{browseError}</p>}
           {folderBrowser && (
             folderBrowser.directories.length === 0
               ? <p className="text-sm text-fg-muted">{t('manualImport.browseEmpty', 'No subfolders here.')}</p>
               : <ul className="space-y-1">
                 {folderBrowser.directories.map(folder => (
                   <li key={folder}>
-                    <button type="button" title={folder} onClick={() => void browse(folder)} disabled={browsing} className="text-left text-sm text-blue-700 hover:underline dark:text-blue-400">
+                    <button type="button" title={folder} onClick={() => void browse(folder)} disabled={browsing} className="text-left text-sm text-progress hover:underline">
                       {folderBrowser.path ? folderLabel(folder) : folder}
                     </button>
                   </li>
@@ -276,11 +276,11 @@ export default function FolderImportView() {
       )}
 
       {scanError && (
-        <p className="mb-4 text-sm text-red-700 dark:text-red-400">{scanError}</p>
+        <p className="mb-4 text-sm text-danger">{scanError}</p>
       )}
 
       {truncated && (
-        <p className="mb-3 text-xs text-amber-700 dark:text-amber-400">
+        <p className="mb-3 text-xs text-warning">
           {t('manualImport.truncated', 'Showing the first 1000 units; narrow the folder to see the rest.')}
         </p>
       )}
@@ -319,7 +319,7 @@ export default function FolderImportView() {
           </div>
 
           {importError && (
-            <p className="mb-4 text-sm text-red-700 dark:text-red-400">{importError}</p>
+            <p className="mb-4 text-sm text-danger">{importError}</p>
           )}
 
           {MATCH_ORDER.map(match => {

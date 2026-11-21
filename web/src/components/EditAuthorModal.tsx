@@ -350,7 +350,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                     </>
                   )}
                   {selectedWithoutHardcover.length > 0 && (
-                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+                    <p className="text-xs text-warning mt-2">
                       {t('editAuthorModal.seriesNoHardcoverWarning', 'Some selected series have no Hardcover link. Only books Bindery already knows about will be monitored — missing entries will not be auto-filled.')}
                     </p>
                   )}
@@ -413,7 +413,7 @@ export default function EditAuthorModal({ author, onClose, onSaved }: Props) {
                 )}
               </div>
               {error && (
-                <p className="text-sm text-red-700 dark:text-red-400 mt-2">{error}</p>
+                <p className="text-sm text-danger mt-2">{error}</p>
               )}
             </>
           )}

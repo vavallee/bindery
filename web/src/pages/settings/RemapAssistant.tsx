@@ -69,7 +69,7 @@ export default function RemapAssistant({ clientId, clientType, remotePath, candi
         <code className="font-mono break-all">{current.after}</code>
       </div>
       {error && (
-        <p role="alert" className="text-red-700 dark:text-red-400">{t('settings.clients.remapAssist.failed', { error })}</p>
+        <p role="alert" className="text-danger">{t('settings.clients.remapAssist.failed', { error })}</p>
       )}
       <button
         type="button"

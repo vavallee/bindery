@@ -209,10 +209,10 @@ function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) 
           <option value="">{t('common.qualityProfileNone')}</option>
           {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        {defaultErr && <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-300">{defaultErr}</p>}
+        {defaultErr && <p role="alert" className="mt-1 text-xs text-danger">{defaultErr}</p>}
       </div>
       {unsetCount > 0 && (
-        <div className="mt-4 px-3 py-3 rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 text-amber-900 dark:text-amber-200">
+        <div className="mt-4 px-3 py-3 rounded bg-warning-subtle border border-warning-border text-warning-strong">
           <p className="text-sm font-medium">{t('settings.quality.unsetNotice', { count: unsetCount })}</p>
           <p className="text-xs mt-1">{t('settings.quality.unsetHint')}</p>
           <div className="mt-2 flex flex-wrap items-end gap-2">
@@ -236,7 +236,7 @@ function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) 
               {t('settings.quality.unsetApply')}
             </button>
           </div>
-          {applyErr && <p role="alert" className="mt-2 text-xs text-red-700 dark:text-red-300">{applyErr}</p>}
+          {applyErr && <p role="alert" className="mt-2 text-xs text-danger">{applyErr}</p>}
         </div>
       )}
       {applyMsg && <p role="status" className="mt-3 text-xs text-fg-muted">{applyMsg}</p>}
@@ -284,7 +284,7 @@ function ProfileRow({
         <div className="min-w-0">
           <h4 className="font-medium text-sm">{profile.name}</h4>
           {profile.upgradeAllowed && profile.cutoff && (
-            <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-400">
+            <p className="mt-1 text-[11px] text-success">
               {t(profile.removeReplaced ? 'settings.quality.upgradesBadgeRemove' : 'settings.quality.upgradesBadgeKeep', { cutoff: profile.cutoff })}
             </p>
           )}
@@ -305,7 +305,7 @@ function ProfileRow({
                         <li
                           key={item.quality}
                           className={`text-[10px] px-2 py-0.5 rounded ${item.allowed
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            ? 'bg-success-chip text-success-strong'
                             : 'bg-slate-200 dark:bg-zinc-800 text-fg-muted'}`}
                         >
                           {i + 1}. {item.quality}
@@ -336,7 +336,7 @@ function ProfileRow({
           </button>
         </div>
       </div>
-      {err && <p className="mt-2 text-xs text-rose-700 dark:text-rose-400">{err}</p>}
+      {err && <p className="mt-2 text-xs text-danger">{err}</p>}
     </div>
   )
 }
@@ -483,7 +483,7 @@ function QualityProfileForm({
             type="checkbox"
             checked={upgradeAllowed}
             onChange={e => setUpgradeAllowed(e.target.checked)}
-            className="rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+            className="rounded border-slate-300 dark:border-zinc-700 text-success focus:ring-accent-ring"
           />
           <span>{t('settings.quality.formUpgradeAllowed')}</span>
         </label>
@@ -514,7 +514,7 @@ function QualityProfileForm({
                   type="checkbox"
                   checked={removeReplaced}
                   onChange={e => setRemoveReplaced(e.target.checked)}
-                  className="rounded border-slate-300 dark:border-zinc-700 text-emerald-600 focus:ring-emerald-500"
+                  className="rounded border-slate-300 dark:border-zinc-700 text-success focus:ring-accent-ring"
                 />
                 <span>{t('settings.quality.formRemoveReplaced')}</span>
               </label>
@@ -524,7 +524,7 @@ function QualityProfileForm({
         )}
       </div>
 
-      {err && <p className="text-xs text-rose-700 dark:text-rose-400">{err}</p>}
+      {err && <p className="text-xs text-danger">{err}</p>}
 
       <div className="flex justify-end gap-2">
         <button

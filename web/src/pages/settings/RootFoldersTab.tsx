@@ -59,7 +59,7 @@ export default function RootFoldersTab() {
     }
   }
 
-  const badgeCls = 'ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-accent-text font-medium'
+  const badgeCls = 'ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-success-chip text-accent-text font-medium'
 
   return (
     <div>
@@ -107,7 +107,7 @@ export default function RootFoldersTab() {
                       await setAudiobookDefault('')
                     }
                   }}
-                  className="ml-4 px-3 py-1 text-xs text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded border border-red-200 dark:border-red-800 flex-shrink-0"
+                  className="ml-4 px-3 py-1 text-xs text-danger hover:bg-danger-subtle rounded border border-danger-border flex-shrink-0"
                 >
                   {t('common.remove')}
                 </button>
@@ -182,7 +182,7 @@ export default function RootFoldersTab() {
             placeholder={t('settings.rootfolders.addPlaceholder')}
             className={inputCls}
           />
-          {folderError && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{folderError}</p>}
+          {folderError && <p className="text-xs text-danger mt-1">{folderError}</p>}
         </div>
         <button
           type="submit"

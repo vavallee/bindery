@@ -67,7 +67,7 @@ export default function SeriesNameModal({ title, initialName = '', submitLabel, 
               className="w-full bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
               autoFocus
             />
-            {error && <p className="text-sm text-red-700 dark:text-red-400">{error}</p>}
+            {error && <p className="text-sm text-danger">{error}</p>}
           </div>
           <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">
             <button

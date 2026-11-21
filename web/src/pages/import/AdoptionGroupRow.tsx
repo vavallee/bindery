@@ -36,7 +36,7 @@ const AdoptionGroupRow = forwardRef<HTMLTableRowElement, Props>(function Adoptio
             <path fillRule="evenodd" d="M7.2 14.8a.75.75 0 0 1 0-1.06L10.94 10 7.2 6.26a.75.75 0 1 1 1.06-1.06l4.27 4.27a.75.75 0 0 1 0 1.06L8.26 14.8a.75.75 0 0 1-1.06 0Z" clipRule="evenodd" />
           </svg>
           <span className="min-w-0">
-            <span className="block truncate font-medium text-slate-800 dark:text-zinc-200 group-hover:text-emerald-700 dark:group-hover:text-emerald-400">{group.author}</span>
+            <span className="block truncate font-medium text-slate-800 dark:text-zinc-200 group-hover:text-success">{group.author}</span>
             <span className="block truncate text-xs text-fg-muted tabular-nums">
               {t('adoption.group.counts', { count: group.items.length, files: group.files, defaultValue: '{{count}} books, {{files}} files' })}
               <span className="font-mono"> · {group.folder}/</span>
@@ -45,7 +45,7 @@ const AdoptionGroupRow = forwardRef<HTMLTableRowElement, Props>(function Adoptio
         </button>
       </td>
       <td className={`${cellCls} md:w-[36%]`}>
-        <p className="truncate text-xs text-amber-700 dark:text-amber-400"
+        <p className="truncate text-xs text-warning"
           title={t('adoption.hint.authorMissing', { author: group.author, defaultValue: '{{author}} is not in your library yet. Add the author, then scan again.' })}>
           {t('adoption.group.sentence', 'Author not in your library yet')}
         </p>

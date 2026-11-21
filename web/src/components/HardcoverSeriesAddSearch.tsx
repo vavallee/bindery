@@ -107,7 +107,7 @@ export default function HardcoverSeriesAddSearch({ onCreated, onExisting }: Prop
         </button>
       </div>
 
-      {error && <p role="alert" className="text-sm text-red-700 dark:text-red-400">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 
       {results && results.length === 0 && !error && (
         <p className="text-sm text-fg-muted">{t('series.addFromHardcover.noResults')}</p>
@@ -140,7 +140,7 @@ export default function HardcoverSeriesAddSearch({ onCreated, onExisting }: Prop
                         href={sourceUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs text-sky-700 dark:text-sky-300 hover:underline mt-1 inline-block"
+                        className="text-xs text-info hover:underline mt-1 inline-block"
                       >
                         {t('series.addFromHardcover.viewOnHardcover')}
                       </a>
@@ -151,7 +151,7 @@ export default function HardcoverSeriesAddSearch({ onCreated, onExisting }: Prop
                     onClick={() => void add(result)}
                     disabled={addingId !== null}
                     aria-label={t('series.addFromHardcover.addResult', { title: result.title })}
-                    className="px-3 py-1.5 text-sm rounded-md border border-emerald-600 text-accent-text hover:bg-emerald-500/10 disabled:opacity-50 flex-shrink-0"
+                    className="px-3 py-1.5 text-sm rounded-md border border-accent-ring text-accent-text hover:bg-success-subtle/50 disabled:opacity-50 flex-shrink-0"
                   >
                     {addingId === result.foreignId ? t('series.addFromHardcover.adding') : t('series.addFromHardcover.add')}
                   </button>

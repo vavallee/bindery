@@ -139,7 +139,7 @@ export default function DeleteUserDialog({ user, counts, users, busy, onCancel, 
             disabled={busy}
             className={`${btnCls} ${
               mode === 'purge'
-                ? 'bg-red-600 hover:bg-red-700 text-white'
+                ? 'bg-danger-fill hover:bg-danger-fill-hover text-on-fill'
                 : 'bg-slate-800 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-slate-700 dark:hover:bg-zinc-200'
             } disabled:opacity-50`}
           >
