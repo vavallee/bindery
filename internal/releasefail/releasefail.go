@@ -56,6 +56,10 @@ const (
 	// would blocklist every release in turn. It is recorded in history and
 	// never counted.
 	ClassClientError Class = "clientError"
+	// ClassClientRemoved is a download the client had listed and later no
+	// longer had: a person cancelled it in the client, the client dropped it,
+	// or it was wiped. It says nothing about the release and is never counted.
+	ClassClientRemoved Class = "clientRemoved"
 	// ClassIndexerWide is a failure that was not counted because it is not
 	// evidence about this release: the indexer has no id, other releases from
 	// it failed too, or it served nothing else.

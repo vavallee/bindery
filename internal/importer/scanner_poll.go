@@ -326,6 +326,7 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
+		s.noteClientSeen(ctx, &dl)
 
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
@@ -607,6 +608,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
+		s.noteClientSeen(ctx, &dl)
 
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
@@ -800,6 +802,7 @@ func (s *Scanner) checkDelugeDownloads(ctx context.Context, client *models.Downl
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
+		s.noteClientSeen(ctx, &dl)
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
@@ -936,6 +939,7 @@ func (s *Scanner) checkRtorrentDownloads(ctx context.Context, client *models.Dow
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
+		s.noteClientSeen(ctx, &dl)
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}

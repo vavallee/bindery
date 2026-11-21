@@ -803,15 +803,63 @@ func (s *Scanner) failDownloadThatNeverArrived(
 	if since.IsZero() || time.Since(since) < neverArrivedGrace {
 		return
 	}
-	const reason = "never reached the download client — the client has no record of it, so nothing was downloaded. Check the indexer and the client are both reachable, then grab it again"
-	slog.Warn("failing a download the client never received",
-		"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
 	if dl.Protocol != "torrent" {
 		// Usenet keeps the plain failure; #3049's rules apply to it.
-		s.markDownloadFailed(ctx, dl, reason)
+		slog.Warn("failing a download the client never received",
+			"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
+		s.markDownloadFailed(ctx, dl, neverArrivedReason)
 		return
 	}
-	s.markDownloadFailedCounted(ctx, dl, reason, releasefail.ClassNeverArrived, "never reached the download client")
+	// A client that listed the torrent at some point and no longer does had
+	// it removed (cancelled, dropped, wiped): that says nothing about the
+	// release and is never counted. Only a torrent no poll ever found is
+	// "never arrived". A read error is treated as seen, the side that cannot
+	// blocklist.
+	seen, err := s.downloads.ClientSeen(ctx, dl.ID)
+	if err != nil {
+		slog.Warn("could not read whether the client ever listed a download", "download_id", dl.ID, "error", err)
+		seen = true
+	}
+	if seen {
+		slog.Warn("failing a download the client no longer has",
+			"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
+		s.markDownloadFailedClass(ctx, dl, clientRemovedReason, string(releasefail.ClassClientRemoved))
+		return
+	}
+	slog.Warn("failing a download the client never received",
+		"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
+	s.markDownloadFailedCounted(ctx, dl, neverArrivedReason, releasefail.ClassNeverArrived, "never reached the download client")
+}
+
+const (
+	neverArrivedReason = "never reached the download client — the client has no record of it, so nothing was downloaded. Check the indexer and the client are both reachable, then grab it again"
+	// clientRemovedReason is for a download the client did have: it was
+	// removed there, by a person or by the client.
+	clientRemovedReason = "removed from the download client — the client listed it earlier and no longer has it. If you did not remove it, check the client's settings for automatic removal; it will be grabbed again"
+)
+
+// noteClientSeen records the first time a poll finds dl's source in its
+// client (#4111), which is what lets failDownloadThatNeverArrived tell a
+// torrent the client never received from one it later lost. The write happens
+// once per attempt: the attempt is remembered by the row's added_at, which a
+// re-grab resets, and the repo's UPDATE matches only a row still unset.
+func (s *Scanner) noteClientSeen(ctx context.Context, dl *models.Download) {
+	s.clientSeenMu.Lock()
+	if at, ok := s.clientSeen[dl.ID]; ok && at.Equal(dl.AddedAt) {
+		s.clientSeenMu.Unlock()
+		return
+	}
+	s.clientSeenMu.Unlock()
+	if _, err := s.downloads.MarkClientSeen(ctx, dl.ID); err != nil {
+		slog.Warn("could not record that the client lists a download", "download_id", dl.ID, "error", err)
+		return
+	}
+	s.clientSeenMu.Lock()
+	if s.clientSeen == nil {
+		s.clientSeen = map[int64]time.Time{}
+	}
+	s.clientSeen[dl.ID] = dl.AddedAt
+	s.clientSeenMu.Unlock()
 }
 
 // alreadyImportedFormat reports whether book already has a tracked, on-disk

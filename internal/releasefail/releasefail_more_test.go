@@ -32,7 +32,7 @@ func TestClassifySend_IssueErrors(t *testing.T) {
 func TestClassCounts(t *testing.T) {
 	for c, want := range map[Class]bool{
 		ClassIndexer: false, ClassRelease: true, ClassNeverArrived: true,
-		ClassClientError: false, ClassLocal: false, ClassIndexerWide: false,
+		ClassClientError: false, ClassClientRemoved: false, ClassLocal: false, ClassIndexerWide: false,
 	} {
 		if c.Counts() != want {
 			t.Errorf("%q.Counts() = %v, want %v", c, c.Counts(), want)
