@@ -51,7 +51,7 @@ vi.mock('../../api/client', async importOriginal => {
   }
 })
 
-import GeneralTab from './GeneralTab'
+import GeneralTab from '../../test/allGeneralSections'
 import { api } from '../../api/client'
 
 const m = vi.mocked(api)

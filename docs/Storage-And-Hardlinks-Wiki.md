@@ -14,7 +14,7 @@ This is the standard *arr layout. It matters because **hardlinks only work withi
 
 ## Import modes
 
-Set the import mode in **Settings → General → File Naming**.
+Set the import mode in **Settings → File Naming**.
 
 | Mode | Extra disk | Seeding | Notes |
 |---|---|---|---|
@@ -43,7 +43,7 @@ If you pick **hardlink** on a setup that cannot hardlink — separate Docker vol
 
 Some audiobook releases arrive as nested disc folders with repeated track names, for example `Disc 1/Track 01.mp3`, `Disc 1/Track 02.mp3`, `Disc 2/Track 01.mp3`. Audiobook players that sort each disc folder independently (or treat repeated `Track 01` names as duplicates) play these in the wrong order.
 
-Enable **Settings → General → File Naming → Flatten multi-disc audiobooks** to import such a download into a single flat folder. The toggle only appears when the mode audiobooks use (the Audiobook import mode, or Import Mode when that is Same as ebooks) is Copy or Hardlink; on Auto, switch the mode to see it, then switch back, because the stored setting is kept either way. Tracks are renamed to `Part 001.ext`, `Part 002.ext`, … in disc-then-track order. Disc numbers are detected from folder names like `Disc 1`, `Disk 02`, `CD 3`, `Part 4`, `Del 2`, also after the title (`Fjellvinden CD1`, `Fjellvinden_Cd 01`); track numbers from file names like `Track 01.mp3`, `Chapter 02.mp3`, or a leading `01 - Title.mp3`. Root-level sidecars (cover art, cue sheets) are carried across.
+Enable **Settings → File Naming → Flatten multi-disc audiobooks** to import such a download into a single flat folder. The toggle only appears when the mode audiobooks use (the Audiobook import mode, or Import Mode when that is Same as ebooks) is Copy or Hardlink; on Auto, switch the mode to see it, then switch back, because the stored setting is kept either way. Tracks are renamed to `Part 001.ext`, `Part 002.ext`, … in disc-then-track order. Disc numbers are detected from folder names like `Disc 1`, `Disk 02`, `CD 3`, `Part 4`, `Del 2`, also after the title (`Fjellvinden CD1`, `Fjellvinden_Cd 01`); track numbers from file names like `Track 01.mp3`, `Chapter 02.mp3`, or a leading `01 - Title.mp3`. Root-level sidecars (cover art, cue sheets) are carried across.
 
 Guarantees:
 

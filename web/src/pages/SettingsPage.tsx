@@ -27,6 +27,9 @@ import { BELOW_MD, useMediaQuery } from '../components/useMediaQuery'
 // Each tab is a default export, so the import resolves directly. lazyWithReload
 // reloads once if a tab chunk is gone after an upgrade, keyed by its path.
 const GeneralTab = lazyWithReload(() => import('./settings/GeneralTab'), './settings/GeneralTab')
+const NamingTab = lazyWithReload(() => import('./settings/NamingTab'), './settings/NamingTab')
+const StorageTab = lazyWithReload(() => import('./settings/StorageTab'), './settings/StorageTab')
+const SchedulesTab = lazyWithReload(() => import('./settings/SchedulesTab'), './settings/SchedulesTab')
 const IndexersTab = lazyWithReload(() => import('./settings/IndexersTab'), './settings/IndexersTab')
 const ClientsTab = lazyWithReload(() => import('./settings/ClientsTab'), './settings/ClientsTab')
 const NotificationsTab = lazyWithReload(() => import('./settings/NotificationsTab'), './settings/NotificationsTab')
@@ -44,13 +47,13 @@ const LogsTab = lazyWithReload(() => import('./settings/LogsTab'), './settings/L
 const AdvancedTab = lazyWithReload(() => import('./settings/AdvancedTab'), './settings/AdvancedTab')
 const AboutTab = lazyWithReload(() => import('./settings/AboutTab'), './settings/AboutTab')
 
-type Tab = 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'bookorbit' | 'grimmory' | 'api-keys' | 'advanced' | 'about'
+type Tab = 'naming' | 'storage' | 'schedules' | 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'bookorbit' | 'grimmory' | 'api-keys' | 'advanced' | 'about'
 
 // Classes added to a field for a moment after search or a deep link lands on it.
 const HIGHLIGHT_CLASSES = ['ring-2', 'ring-emerald-500', 'ring-offset-2', 'dark:ring-offset-zinc-950', 'rounded-md']
 const FOCUSABLE = 'input:not([type=hidden]):not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)'
 
-const ADMIN_TABS: Tab[] = ['indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'bookorbit', 'grimmory', 'api-keys', 'advanced']
+const ADMIN_TABS: Tab[] = ['naming', 'storage', 'schedules', 'indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'bookorbit', 'grimmory', 'api-keys', 'advanced']
 
 // 'general' and 'about' are visible to every authenticated user — About is where
 // the in-app update message and bug_report.yml ("check Settings → About") point
@@ -69,7 +72,7 @@ function tabFromParam(param: string | null): Tab {
 type TabGroup = { key: 'sources' | 'library' | 'integrations' | 'system'; tabs: Tab[] }
 const ADMIN_GROUPS: TabGroup[] = [
   { key: 'sources', tabs: ['indexers', 'clients'] },
-  { key: 'library', tabs: ['quality', 'metadata', 'rootfolders'] },
+  { key: 'library', tabs: ['quality', 'metadata', 'naming', 'rootfolders', 'storage'] },
   // Notifications used to sit under Sources next to Indexers and Download
   // Clients, which it is not: nothing comes in from it. A webhook, Discord or
   // Apprise target is an outbound connection to another service, so it
@@ -77,7 +80,7 @@ const ADMIN_GROUPS: TabGroup[] = [
   { key: 'integrations', tabs: ['notifications', 'calibre', 'abs', 'bookorbit', 'grimmory', 'api-keys'] },
   // Advanced is last on purpose: it is the escape hatch for the rare keys,
   // not a place to start (#2311).
-  { key: 'system', tabs: ['import', 'blocklist', 'logs', 'advanced'] },
+  { key: 'system', tabs: ['schedules', 'import', 'blocklist', 'logs', 'advanced'] },
 ]
 
 // Tabs still marked as a preview carry a chip in the sidebar and a suffix in
@@ -88,6 +91,7 @@ function SettingsNavLink({ tab, active, onSelect, label, badge }: { tab: Tab; ac
   return (
     <button
       onClick={() => onSelect(tab)}
+      aria-current={active === tab ? 'page' : undefined}
       className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors ${badge ? 'flex items-center gap-2 ' : ''}${
         active === tab
           ? 'bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white font-medium'
@@ -332,6 +336,9 @@ export default function SettingsPage() {
   const renderTab = () => {
     switch (shownTab) {
       case 'general': return <GeneralTab onNavigate={navigateToTab} />
+      case 'naming': return <NamingTab onNavigate={navigateToTab} />
+      case 'storage': return <StorageTab onNavigate={navigateToTab} />
+      case 'schedules': return <SchedulesTab onNavigate={navigateToTab} />
       case 'indexers': return (
         <>
           <ProtocolMismatchWarning indexers={indexers} clients={clients} onNavigate={navigateToTab} />

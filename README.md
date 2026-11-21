@@ -144,7 +144,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 <summary><strong>Following authors and finding books</strong></summary>
 
 - Author monitoring with per install and per author modes (all, future, latest, none, or only the series you pick), per book monitor toggles, and a wanted to imported workflow with live download progress.
-- Unattended release discovery: monitored authors are checked for new books daily, weekly or monthly. It ships off; turn it on in **Settings, General, New release discovery**.
+- Unattended release discovery: monitored authors are checked for new books daily, weekly or monthly. It ships off; turn it on in **Settings, Schedules, New release discovery**.
 - Series pages with positions, gap detection against Hardcover, Fill gaps, and adding a whole Hardcover series in one step.
 - Hardcover list sync on an interval, Goodreads CSV import, and a Discover page with recommendations from your library: next in series, new from monitored authors, genre similarity and your Hardcover wishlist.
 - A release calendar of upcoming books.

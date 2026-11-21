@@ -20,7 +20,7 @@ button. Releases dropped as not a book (video, a movie or console category, a
 raw usenet posting) are listed in the search details panel only.
 
 Releases dropped because their title contains one of your own rejected words
-(Settings, General, Downloads, `search.rejectWords`) are listed there too, with
+(Settings, Schedules, Downloads, `search.rejectWords`) are listed there too, with
 the word that matched. Clear the setting to stop rejecting anything.
 
 ### A release names the next book in the series
@@ -893,7 +893,7 @@ The skip counts are also in the log (`Settings → Logs`): the `author books syn
 ## Ebooks lost their file extension after Rename files
 
 A template without a dot before `{ext}`, such as `{Title}{ext}`, renames
-`Title.epub` to `Titleepub`. Fix the ebook template (Settings → General → File
+`Title.epub` to `Titleepub`. Fix the ebook template (Settings → File
 Naming) to `{Title}.{ext}`, then run Rename files again. Bindery gets the
 extension back from the file's rename history or its contents and moves the
 file to the corrected name. A file where neither answers is listed as Error and

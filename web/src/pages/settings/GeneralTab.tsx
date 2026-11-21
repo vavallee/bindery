@@ -20,12 +20,19 @@ import DatabaseCheckSection from './DatabaseCheckSection'
 import { useSaveResult } from './useSaveResult'
 import { btn, slateFill, primaryFill } from '../../components/buttons'
 import { errorText } from '../../util/errorText'
+import type { GeneralSection } from './generalSections'
 
 // Tab identifiers used by onNavigate for soft (no-reload) cross-tab links.
 // Kept loose (string) so GeneralTab doesn't need to import SettingsPage's Tab
 // union; SettingsPage validates the value.
 export interface GeneralTabProps {
   onNavigate?: (tab: string) => void
+}
+
+// Shared by the General, File Naming, Storage and Schedules tabs (#3990); see
+// generalSections.ts for which sections each one shows.
+export interface GeneralSettingsProps extends GeneralTabProps {
+  sections: GeneralSection[]
 }
 
 // Preset values offered by the Hardcover sync-interval picker. Anything else in
@@ -46,6 +53,12 @@ const DISCOVERY_INTERVAL_PRESETS = ['off', '24h', '168h', '720h']
 const AUTH_CONFIG_WAIT_MS = 2500
 
 export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
+  return <GeneralSettings sections={['general']} onNavigate={onNavigate} />
+}
+
+export function GeneralSettings({ sections, onNavigate }: GeneralSettingsProps) {
+  const has = (s: GeneralSection) => sections.includes(s)
+  const showGeneral = has('general')
   const fid = useId()
   const { t } = useTranslation()
   const autoSave = useAutoSave()
@@ -154,7 +167,8 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
         setSettings(map)
       })
       .catch(console.error)
-    const authCfgLoaded = api.authConfig().then(setAuthCfg).catch(console.error)
+    // Only the General tab renders Security, so only it asks for the config.
+    const authCfgLoaded = showGeneral ? api.authConfig().then(setAuthCfg).catch(console.error) : Promise.resolve()
     const authCfgCapped = Promise.race([
       authCfgLoaded,
       new Promise<void>(resolve => { timer = setTimeout(resolve, AUTH_CONFIG_WAIT_MS) }),
@@ -164,25 +178,28 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       setLoading(false)
     })
     return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // GET /system/storage is admin only, and both places that read it (the
   // hardlink warning and the Storage section) sit inside the isAdmin block
   // below, so a non admin never asks. Keyed on isAdmin like the scan status.
+  const needsStorage = has('naming') || has('storage')
   useEffect(() => {
-    if (!isAdmin) return
+    if (!isAdmin || !needsStorage) return
     api.getStorage().then(setStorage).catch(console.error)
-  }, [isAdmin])
+  }, [isAdmin, needsStorage])
 
   // The last scan summary names the library roots and the absolute path of
   // every unmatched file, so the endpoint is admin only (#2361) and the panel
   // that renders it sits inside the isAdmin block below. A non admin never
   // asks. Keyed on isAdmin so an admin whose auth status resolves after mount
   // still loads it.
+  const needsScanStatus = has('storage')
   useEffect(() => {
-    if (!isAdmin) return
+    if (!isAdmin || !needsScanStatus) return
     api.libraryScanStatus().then(setLastScan).catch(() => {/* no prior scan yet: 404 */})
-  }, [isAdmin])
+  }, [isAdmin, needsScanStatus])
 
   // Rethrows: the caller wraps this in useSaveResult, which needs a rejected
   // promise to show "Error" instead of a false "Saved ✓" (#1668).
@@ -358,10 +375,21 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
   const audiobookMode = audiobookModeSetting || importMode
   const anyExternal = importMode === 'external' || audiobookMode === 'external'
 
+  // Every tab but General renders one section, so the first one names the page.
+  // A caller that mounts several (the tests do) gets the General line.
+  const pageDescription = sections.length > 1 || has('general')
+    ? t('settings.general.desc.general')
+    : has('naming') ? t('settings.general.desc.naming')
+    : has('storage') ? t('settings.general.desc.storage')
+    : t('settings.general.desc.schedules')
+
   if (loading) return <div className="text-fg-muted">{t('common.loading')}</div>
 
   return (
     <div className="space-y-8">
+      {/* One line saying what this page is for (#3990). */}
+      <p data-testid="settings-page-desc" className="text-sm text-fg-muted">{pageDescription}</p>
+      {showGeneral && (<>
       {/* Appearance */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.appearance')}</h3>
@@ -388,8 +416,10 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
       {/* Mounted with its config, so a config that arrives after the cap
           still shows the section rather than an empty one. */}
       {authCfg && <SecuritySection initialCfg={authCfg} />}
+      </>)}
 
       {isAdmin && (<>
+      {has('naming') && (<>
       {/* Naming */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.fileNaming')}</h3>
@@ -713,56 +743,9 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           </div>
         </div>
       </section>
+      </>)}
 
-      {/* Downloads */}
-      <section>
-        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.downloads')}</h3>
-        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
-          <div id="search.preferredLanguage">
-            <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('settings.general.preferredLanguage')}</label>
-            <p className="text-xs text-fg-muted mb-2">{t('settings.general.preferredLanguageHint')}</p>
-            <div className="flex flex-wrap gap-2">
-              <select id={`${fid}-5`}
-                value={settings['search.preferredLanguage'] ?? 'en'}
-                onChange={e => setSettings(s => ({ ...s, 'search.preferredLanguage': e.target.value }))}
-                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
-              >
-                <option value="any">{t('settings.general.preferredLanguageAny')}</option>
-                <option value="en">{t('settings.general.preferredLanguageEn')}</option>
-              </select>
-              <SaveButton
-                result={langSaveResult}
-                saving={saving === 'search.preferredLanguage'}
-                onClick={() => langSave(savePreferredLanguage)}
-              />
-            </div>
-            {langErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{langErr}</p>}
-          </div>
-          {isAdmin && (
-            <div id="search.rejectWords">
-              <label htmlFor={`${fid}-rejectwords`} className="block text-xs text-fg-muted mb-1">{t('settings.general.rejectWords')}</label>
-              <p className="text-xs text-fg-muted mb-2">{t('settings.general.rejectWordsHint')}</p>
-              <div className="flex flex-wrap gap-2">
-                <textarea id={`${fid}-rejectwords`}
-                  rows={2}
-                  value={settings['search.rejectWords'] ?? ''}
-                  onChange={e => setSettings(s => ({ ...s, 'search.rejectWords': e.target.value }))}
-                  placeholder={t('settings.general.rejectWordsPlaceholder')}
-                  className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
-                />
-                <SaveButton
-                  result={rejectSaveResult}
-                  saving={saving === 'search.rejectWords'}
-                  onClick={() => rejectSave(saveRejectWords)}
-                  testId="search-reject-words-save"
-                />
-              </div>
-              {rejectErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{rejectErr}</p>}
-            </div>
-          )}
-        </div>
-      </section>
-
+      {has('storage') && (<>
       {/* Storage */}
       <section>
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.storage')}</h3>
@@ -940,6 +923,73 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
             onClose={() => setShowReorganize(false)}
           />
         )}
+      </section>
+
+      {/* Default library location */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.defaultLibraryLocation')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
+          <p className="text-xs text-fg-muted mb-3">
+            {t('settings.general.defaultLibraryLocationHint')}
+          </p>
+          <button
+            onClick={() => onNavigate ? onNavigate('rootfolders') : window.location.assign('/settings?tab=rootfolders')}
+            className="text-sm text-accent-text hover:underline"
+          >
+            {t('settings.general.defaultLibraryLocationLink')}
+          </button>
+        </div>
+      </section>
+      </>)}
+
+      {has('schedules') && (<>
+      {/* Downloads */}
+      <section>
+        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.downloads')}</h3>
+        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-3">
+          <div id="search.preferredLanguage">
+            <label htmlFor={`${fid}-5`} className="block text-xs text-fg-muted mb-1">{t('settings.general.preferredLanguage')}</label>
+            <p className="text-xs text-fg-muted mb-2">{t('settings.general.preferredLanguageHint')}</p>
+            <div className="flex flex-wrap gap-2">
+              <select id={`${fid}-5`}
+                value={settings['search.preferredLanguage'] ?? 'en'}
+                onChange={e => setSettings(s => ({ ...s, 'search.preferredLanguage': e.target.value }))}
+                className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
+              >
+                <option value="any">{t('settings.general.preferredLanguageAny')}</option>
+                <option value="en">{t('settings.general.preferredLanguageEn')}</option>
+              </select>
+              <SaveButton
+                result={langSaveResult}
+                saving={saving === 'search.preferredLanguage'}
+                onClick={() => langSave(savePreferredLanguage)}
+              />
+            </div>
+            {langErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{langErr}</p>}
+          </div>
+          {isAdmin && (
+            <div id="search.rejectWords">
+              <label htmlFor={`${fid}-rejectwords`} className="block text-xs text-fg-muted mb-1">{t('settings.general.rejectWords')}</label>
+              <p className="text-xs text-fg-muted mb-2">{t('settings.general.rejectWordsHint')}</p>
+              <div className="flex flex-wrap gap-2">
+                <textarea id={`${fid}-rejectwords`}
+                  rows={2}
+                  value={settings['search.rejectWords'] ?? ''}
+                  onChange={e => setSettings(s => ({ ...s, 'search.rejectWords': e.target.value }))}
+                  placeholder={t('settings.general.rejectWordsPlaceholder')}
+                  className="grow basis-48 min-w-0 bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-3 py-2 text-sm"
+                />
+                <SaveButton
+                  result={rejectSaveResult}
+                  saving={saving === 'search.rejectWords'}
+                  onClick={() => rejectSave(saveRejectWords)}
+                  testId="search-reject-words-save"
+                />
+              </div>
+              {rejectErr && <p className="text-xs text-red-700 dark:text-red-400 mt-1">{rejectErr}</p>}
+            </div>
+          )}
+        </div>
       </section>
 
       {/* Wanted search interval */}
@@ -1139,22 +1189,7 @@ export default function GeneralTab({ onNavigate }: GeneralTabProps = {}) {
           </div>
         </div>
       </section>
-
-      {/* Default library location */}
-      <section>
-        <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">{t('settings.general.defaultLibraryLocation')}</h3>
-        <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900">
-          <p className="text-xs text-fg-muted mb-3">
-            {t('settings.general.defaultLibraryLocationHint')}
-          </p>
-          <button
-            onClick={() => onNavigate ? onNavigate('rootfolders') : window.location.assign('/settings?tab=rootfolders')}
-            className="text-sm text-accent-text hover:underline"
-          >
-            {t('settings.general.defaultLibraryLocationLink')}
-          </button>
-        </div>
-      </section>
+      </>)}
 
       </>)}
     </div>
