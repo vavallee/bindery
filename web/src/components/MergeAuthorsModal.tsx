@@ -171,7 +171,7 @@ export default function MergeAuthorsModal({ authors, initialTargetId, onClose, o
           )}
 
           {error && (
-            <div className="text-xs text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded px-3 py-2">
+            <div className="text-xs text-danger-strong bg-danger-subtle border border-danger-border rounded px-3 py-2">
               {error}
             </div>
           )}

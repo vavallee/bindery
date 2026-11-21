@@ -82,9 +82,9 @@ describe('SetupChecklist root folder step', () => {
     expect(screen.getByText('2/6')).toBeInTheDocument()
     const segments = screen.getByRole('img').children
     expect(segments).toHaveLength(6)
-    expect(segments[0].className).not.toContain('bg-emerald-600')
-    expect(segments[1].className).toContain('bg-emerald-600')
-    expect(segments[2].className).toContain('bg-emerald-600')
+    expect(segments[0].className).not.toContain('bg-success-fill')
+    expect(segments[1].className).toContain('bg-success-fill')
+    expect(segments[2].className).toContain('bg-success-fill')
   })
 
   it('counts the step done when the server says there is a library folder', async () => {

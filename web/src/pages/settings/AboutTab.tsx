@@ -26,7 +26,7 @@ function ReleaseLink({ version }: { version: string }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+      className="text-sm text-link hover:underline"
     >
       {isRelease(version) ? `v${version}` : version}
     </a>
@@ -80,7 +80,7 @@ export default function AboutTab() {
                     href={`https://github.com/vavallee/bindery/releases/tag/v${status.latestVersion.replace(/^v/, '')}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm font-medium text-amber-700 dark:text-amber-400 hover:underline"
+                    className="text-sm font-medium text-warning hover:underline"
                   >
                     {t('settings.about.updateAvailable', 'v{{version}} available', {
                       version: status.latestVersion.replace(/^v/, ''),

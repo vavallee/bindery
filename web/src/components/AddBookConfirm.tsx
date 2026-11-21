@@ -138,7 +138,7 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
             fallback={<CoverPlaceholder id={book.id || `ol-${book.foreignBookId}`} title={book.title} size="sm" show="initials" className="w-28 aspect-[2/3] rounded-md flex-shrink-0" />}
           />
           <div className="min-w-0 flex-1">
-            <h4 ref={headingRef} tabIndex={-1} className="rounded-sm font-semibold leading-snug break-words focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500">{book.title}</h4>
+            <h4 ref={headingRef} tabIndex={-1} className="rounded-sm font-semibold leading-snug break-words focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent-ring">{book.title}</h4>
             {book.author?.authorName && <p className="mt-1 text-sm text-fg-muted">{book.author.authorName}</p>}
             <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
               {book.releaseDate && <>
@@ -231,7 +231,7 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
         </div>
 
         {addError && (
-          <div role="alert" className="mt-3 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+          <div role="alert" className="mt-3 px-3 py-2 bg-danger-subtle border border-danger-border rounded text-sm text-danger-strong">
             <div>{addError}</div>
             {addConflict?.existingBookId && (
               <div className="mt-2 text-xs font-medium">

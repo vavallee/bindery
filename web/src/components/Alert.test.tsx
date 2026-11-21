@@ -20,19 +20,17 @@ describe('Alert', () => {
     expect(el.className).not.toContain('red')
   })
 
-  it('renders the warning tier in amber, with a dark variant', () => {
+  it('renders the warning tier with the warning tokens, which flip with the theme', () => {
     render(<Alert tier="warning" title="Half configured" testId="a" />)
     const el = screen.getByTestId('a')
-    expect(el.className).toContain('bg-amber-50')
-    expect(el.className).toContain('dark:bg-amber-950/40')
-    expect(el.className).toContain('dark:text-amber-200')
+    expect(el.className).toContain('bg-warning-subtle')
+    expect(el.className).toContain('text-warning-strong')
   })
 
-  it('renders the error tier in red and announces it assertively', () => {
+  it('renders the error tier with the danger tokens and announces it assertively', () => {
     render(<Alert tier="error" title="Save failed" testId="a" />)
     const el = screen.getByTestId('a')
-    expect(el.className).toContain('bg-red-50')
-    expect(el.className).toContain('dark:bg-red-950/40')
+    expect(el.className).toContain('bg-danger-subtle')
     expect(el).toHaveAttribute('role', 'alert')
   })
 

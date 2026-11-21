@@ -5,16 +5,16 @@ import { useClipboardCopy } from '../../components/useClipboardCopy'
 import { buildDiagnoseReport } from './helpers'
 
 const dotCls: Record<DiagnoseStatus, string> = {
-  pass: 'bg-emerald-500',
-  warn: 'bg-amber-500',
-  fail: 'bg-red-500',
+  pass: 'bg-success-marker',
+  warn: 'bg-warning-marker',
+  fail: 'bg-danger-marker',
   skipped: 'bg-slate-400 dark:bg-zinc-600',
   unknown: 'bg-slate-400 dark:bg-zinc-500',
 }
 
 const fixCls = (status: DiagnoseStatus | undefined) => status === 'fail'
-  ? 'bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-300 border-red-300 dark:border-red-900'
-  : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 border-amber-300 dark:border-amber-900'
+  ? 'bg-danger-subtle text-danger-strong border-danger-border'
+  : 'bg-warning-subtle text-warning-strong border-warning-border'
 
 interface Props {
   result: DiagnoseResult
@@ -61,7 +61,7 @@ export default function ClientDiagnosePanel({ result, onClose }: Props) {
           <span className="font-medium">{t('settings.clients.diagnose.primaryFix')}</span> {result.primaryFix}
         </div>
       ) : (
-        <div role="status" className="px-3 py-2 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+        <div role="status" className="px-3 py-2 rounded bg-success-subtle text-success-strong">
           {t('settings.clients.diagnose.allClear')}
         </div>
       )}

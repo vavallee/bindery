@@ -137,7 +137,7 @@ export default function SettingsSearch({ tabs, isAdmin, settingKeys, onPick, onA
               onClick={() => pick(r)}
               className={`cursor-pointer min-h-11 flex flex-wrap items-center gap-x-2 px-3 py-2 text-sm border-l-4 forced-colors:outline-2 -outline-offset-2 ${
                 i === current
-                  ? 'border-emerald-600 dark:border-emerald-500 bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white forced-colors:outline'
+                  ? 'border-accent-ring bg-slate-200 dark:bg-zinc-800 text-slate-900 dark:text-white forced-colors:outline'
                   : 'border-transparent text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800/50'
               }`}
             >

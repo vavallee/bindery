@@ -194,7 +194,7 @@ export default function SetupChecklist() {
         {stepList.map(step => (
           <span
             key={step.key}
-            className={`h-1.5 w-6 rounded-full ${progress[step.key] ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
+            className={`h-1.5 w-6 rounded-full ${progress[step.key] ? 'bg-success-fill' : 'bg-slate-300 dark:bg-zinc-700'}`}
           />
         ))}
       </span>

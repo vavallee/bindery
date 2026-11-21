@@ -300,7 +300,7 @@ export default function BookOrbitTab() {
             ))}
           </ul>
         )}
-        {librariesError && <p className="mt-2 text-red-700 dark:text-red-400 text-xs">{librariesError}</p>}
+        {librariesError && <p className="mt-2 text-danger text-xs">{librariesError}</p>}
       </div>
 
       <div className="flex gap-2 flex-wrap">
@@ -317,8 +317,8 @@ export default function BookOrbitTab() {
       {!urlSaved && draft.baseUrl.trim() !== '' && (
         <p className="text-[11px] text-fg-muted">{t('settings.bookorbit.saveUrlFirst')}</p>
       )}
-      {saveError && <p className="text-red-700 dark:text-red-400 text-xs">{saveError}</p>}
-      {testError && <p className="text-red-700 dark:text-red-400 text-xs">{testError}</p>}
+      {saveError && <p className="text-danger text-xs">{saveError}</p>}
+      {testError && <p className="text-danger text-xs">{testError}</p>}
       {testResult && (
         <p className="text-xs text-accent-text">
           {t('settings.bookorbit.testOk', { username: testResult.username, count: testResult.libraryCount })}
@@ -339,11 +339,11 @@ export default function BookOrbitTab() {
           </button>
         </div>
         {!ready && !running && (
-          <p className="text-[11px] text-amber-700 dark:text-amber-300">
+          <p className="text-[11px] text-warning">
             {unsaved ? t('settings.bookorbit.import.saveFirst') : t('settings.bookorbit.import.configureFirst')}
           </p>
         )}
-        {importError && <p className="text-red-700 dark:text-red-400 text-xs">{importError}</p>}
+        {importError && <p className="text-danger text-xs">{importError}</p>}
 
         {progress && (progress.running || progress.stats || progress.error) && (
           <div className="rounded border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 px-3 py-2 space-y-2">
@@ -354,7 +354,7 @@ export default function BookOrbitTab() {
               </div>
             )}
             {!progress.running && progress.error && (
-              <p className="text-xs text-red-700 dark:text-red-400">
+              <p className="text-xs text-danger">
                 {progress.dryRun ? t('settings.bookorbit.import.dryRunFailed', { error: progress.error }) : t('settings.bookorbit.import.failed', { error: progress.error })}
               </p>
             )}
@@ -403,7 +403,7 @@ export default function BookOrbitTab() {
                   <span className="text-fg-muted">{new Date(run.startedAt).toLocaleString()} · {run.status}</span>
                 </div>
                 {run.summary?.error
-                  ? <p className="mt-1 text-red-700 dark:text-red-400 break-words">{run.summary.error}</p>
+                  ? <p className="mt-1 text-danger break-words">{run.summary.error}</p>
                   : run.summary?.stats && <StatList stats={run.summary.stats} dryRun={run.dryRun} />}
               </li>
             ))}

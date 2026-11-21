@@ -36,7 +36,7 @@ describe('SaveButton', () => {
 
     fireEvent.click(screen.getByTestId('save'))
     await waitFor(() => expect(screen.getByTestId('save')).toHaveTextContent('Error'))
-    expect(screen.getByTestId('save').className).toContain('bg-red-600')
+    expect(screen.getByTestId('save').className).toContain('bg-danger-fill')
   })
 
   it('shows the in-flight label and blocks re-entry while saving', () => {

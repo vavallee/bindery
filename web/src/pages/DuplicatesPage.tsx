@@ -75,12 +75,12 @@ export default function DuplicatesPage() {
       {loading && !result ? (
         <p className="text-sm text-fg-muted">{t('duplicateCandidates.loading', 'Scanning the catalogue…')}</p>
       ) : error && !result ? (
-        <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+        <p className="text-sm text-danger">{error}</p>
       ) : result && result.total === 0 ? (
         <p className="text-sm text-fg-muted">{t('duplicateCandidates.empty', 'No duplicate titles found.')}</p>
       ) : result ? (
         <>
-          {error && <p className="mb-3 text-sm text-red-700 dark:text-red-400">{error}</p>}
+          {error && <p className="mb-3 text-sm text-danger">{error}</p>}
           <div className="rounded border border-slate-200 dark:border-zinc-800">
             {result.groups.map(group => (
               <DuplicateGroupCard

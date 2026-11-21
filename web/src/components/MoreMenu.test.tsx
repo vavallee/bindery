@@ -157,10 +157,10 @@ describe('MoreMenu near the screen edge', () => {
     expect(screen.getByRole('menu').className).toContain('right-0')
   })
 
-  it('renders caution items in amber', () => {
+  it('renders caution items with the warning colour', () => {
     render(<MoreMenu label="More" items={[{ label: 'Set both', onSelect: vi.fn(), caution: true }]} />)
     fireEvent.click(screen.getByRole('button', { name: /More/ }))
-    expect(screen.getByRole('menuitem', { name: 'Set both' }).className).toContain('text-amber-700')
+    expect(screen.getByRole('menuitem', { name: 'Set both' }).className).toContain('text-warning')
   })
 })
 

@@ -333,7 +333,7 @@ export default function LibrarySearch({ className = '', onNavigate, autoFocus }:
           <li role="presentation" className="px-3 py-2 text-sm text-fg-muted">{t('librarySearch.searching')}</li>
         )}
         {open && error && (
-          <li role="presentation" className="px-3 py-2 text-sm text-red-700 dark:text-red-300">{error}</li>
+          <li role="presentation" className="px-3 py-2 text-sm text-danger">{error}</li>
         )}
         {open && results && !hasMatches && (
           <li role="presentation" className="px-3 py-2 text-sm text-fg-muted">{t('librarySearch.noMatches')}</li>

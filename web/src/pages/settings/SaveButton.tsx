@@ -42,7 +42,7 @@ export default function SaveButton({
   // Saved keeps the primary fill, so the button doesn't jump to a lighter
   // green with the page's text colour on it (#3265); the label carries the
   // confirmation.
-  const colour = result === 'error' ? 'bg-red-600' : primaryFill
+  const colour = result === 'error' ? 'bg-danger-fill' : primaryFill
 
   // The saved/error states outrank "Saving…" so a fast round trip still shows
   // the confirmation rather than flashing straight back to "Save".

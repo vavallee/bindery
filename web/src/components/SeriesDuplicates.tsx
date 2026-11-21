@@ -117,7 +117,7 @@ export default function SeriesDuplicates({ series, onMerged }: Props) {
   if (!groups || (groups.length === 0 && !result)) return null
 
   return (
-    <div className="mb-4 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3" data-testid="series-duplicates">
+    <div className="mb-4 border border-warning-border bg-warning-subtle rounded-lg p-3" data-testid="series-duplicates">
       {confirmDialog}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
@@ -136,7 +136,7 @@ export default function SeriesDuplicates({ series, onMerged }: Props) {
       {result && (
         <div className="mt-2 text-xs" role="status">
           <p>{result}</p>
-          {failures.map((f, i) => <p key={i} className="text-red-700 dark:text-red-400">{f}</p>)}
+          {failures.map((f, i) => <p key={i} className="text-danger">{f}</p>)}
         </div>
       )}
 
@@ -173,13 +173,13 @@ export default function SeriesDuplicates({ series, onMerged }: Props) {
                             <span className="font-medium [overflow-wrap:anywhere]">{s.title}</span>
                             <span className="text-xs text-fg-muted">{t('series.merge.bookCount', { count: s.bookCount })}</span>
                             {s.authors.length > 0 && <span className="text-xs text-fg-muted">{s.authors.join(', ')}</span>}
-                            {s.hardcoverLinked && <span className="text-xs px-1.5 rounded bg-sky-100 dark:bg-sky-900/40">{t('series.duplicates.hardcoverLinked')}</span>}
-                            {s.id === g.suggestedKeepId && <span className="text-xs px-1.5 rounded bg-emerald-100 dark:bg-emerald-900/40">{t('series.duplicates.suggested')}</span>}
+                            {s.hardcoverLinked && <span className="text-xs px-1.5 rounded bg-info-subtle">{t('series.duplicates.hardcoverLinked')}</span>}
+                            {s.id === g.suggestedKeepId && <span className="text-xs px-1.5 rounded bg-success-subtle">{t('series.duplicates.suggested')}</span>}
                           </label>
                         ))}
                       </fieldset>
                       {!g.sameAuthors && (
-                        <p className="text-xs text-amber-700 dark:text-amber-300">{t('series.duplicates.differentAuthors')}</p>
+                        <p className="text-xs text-warning">{t('series.duplicates.differentAuthors')}</p>
                       )}
                     </div>
                     <button type="button" onClick={() => mergeOne(g)} disabled={busy} className={`${btn.secondary} ${btnSize.sm}`}>

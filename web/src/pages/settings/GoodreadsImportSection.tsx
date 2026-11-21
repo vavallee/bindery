@@ -164,7 +164,7 @@ export default function GoodreadsImportSection() {
         />
       </label>
 
-      {error && <p className="mt-2 text-xs text-rose-700 dark:text-rose-400">{error}</p>}
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
 
       {preview && (
         <div className="mt-4 p-3 border border-slate-200 dark:border-zinc-800 rounded bg-slate-100 dark:bg-zinc-900 space-y-3">
@@ -183,7 +183,7 @@ export default function GoodreadsImportSection() {
 
           {unresolvedRows.length > 0 && (
             <details className="text-xs">
-              <summary className="cursor-pointer text-amber-700 dark:text-amber-400">
+              <summary className="cursor-pointer text-warning">
                 {t('settings.import.goodreadsShowUnresolved', { count: unresolvedRows.length })}
               </summary>
               <ul className="mt-2 space-y-0.5 font-mono">
@@ -235,8 +235,8 @@ export default function GoodreadsImportSection() {
       )}
 
       {commitResult && (
-        <div className="mt-4 p-3 border border-emerald-300 dark:border-emerald-900 rounded bg-emerald-50 dark:bg-emerald-950/30 space-y-1">
-          <div className="text-sm text-emerald-700 dark:text-emerald-300">
+        <div className="mt-4 p-3 border border-success-border rounded bg-success-subtle space-y-1">
+          <div className="text-sm text-success">
             {t('settings.import.goodreadsCommitResult', {
               added: commitResult.added,
               skipped: commitResult.skipped,

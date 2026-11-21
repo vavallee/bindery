@@ -152,7 +152,7 @@ export default function DiscoverPage() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 bg-emerald-700 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in">
+        <div className="fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 bg-success-fill text-on-fill rounded-lg shadow-lg text-sm font-medium animate-fade-in">
           {toast}
         </div>
       )}

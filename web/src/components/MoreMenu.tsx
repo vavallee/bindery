@@ -220,9 +220,9 @@ export default function MoreMenu({
               onClick={() => select(item)}
               className={`block w-full px-3 py-1.5 pointer-coarse:py-2.5 text-left text-sm disabled:opacity-40 disabled:cursor-not-allowed rounded focus-visible:-outline-offset-2 focus:bg-slate-200 dark:focus:bg-zinc-800 ${
                 item.danger
-                  ? 'text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40'
+                  ? 'text-danger hover:bg-danger-subtle'
                   : item.caution
-                    ? 'text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40'
+                    ? 'text-warning hover:bg-warning-subtle'
                     : 'text-slate-700 dark:text-zinc-300 hover:bg-slate-200 dark:hover:bg-zinc-800'
               }`}
             >
