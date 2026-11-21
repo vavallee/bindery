@@ -1,2 +1,0 @@
-### Fixed
-- **Telemetry stats no longer log an error when a visitor leaves early.** If someone closes the getbindery.dev/stats page, or a request to `/api/stats` times out, before the numbers are ready, the telemetry server now notes it at debug level instead of logging an error and writing a 500 nobody receives. Real database failures still log an error. `/api/stats` now logs those failures too, where it used to return a 500 silently.

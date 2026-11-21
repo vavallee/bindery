@@ -1,2 +1,0 @@
-### Changed
-- **Queue chips for held, handed off and needs attention rows** (#3992). A download held for pair gating or handed off to an external import tool counted as Active even though nothing was happening to it, and a blocked import looked like any other failure. The Queue now has Downloading, Importing, Held, Handed off and Needs attention chips next to All, Active and Failed, each with a count, and a chip with nothing in it stays hidden. The older `?view=active` and `?view=failed` links still work.
