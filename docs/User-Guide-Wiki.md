@@ -744,6 +744,17 @@ are never refused. There is no separate setting for this; it follows the
 allowed languages on the metadata profile, and a profile that allows any
 language checks nothing.
 
+**Deleting a metadata profile.** A profile that authors still use cannot be
+deleted: Settings → Metadata Profiles tells you how many authors use it. Move
+those authors to another profile first (the API can do both in one step with
+`moveAuthorsTo`). **Settings → Metadata Profiles → Default metadata profile for
+new authors** picks the profile every new author gets, including authors added
+through Add Book, imports and list syncs; empty means the first profile that
+exists. If an author's profile is missing anyway, for example after an older
+version deleted it, search, import, catalogue sync and reconcile all use that
+default instead of each doing something different, the author page says so, and
+upgrading repoints such authors at the default once.
+
 **The file's own title and author are checked at import (ebooks).** The release
 name can say one book while the EPUB inside is another, and without a check that
 file imports under the wrong book and the book is never searched for again. When

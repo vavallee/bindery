@@ -36,13 +36,16 @@ export interface AuthorAddDefaults {
   // server: the default on a new author, and the author's own profile when
   // the add relinks one already in the library (#3831).
   qualityProfileId: number | null
+  // The metadata profile the picker shows first: the install default when it
+  // names an existing profile, otherwise the first profile (#4132).
+  metadataProfileId: number | null
 }
 
 // loadAuthorAddDefaults gathers what the author confirm step needs before an
 // add can be posted. Every lookup degrades to its default on failure, so the
 // step is usable on an install with nothing configured.
 export async function loadAuthorAddDefaults(): Promise<AuthorAddDefaults> {
-  const [profiles, rootFolders, defaultRootSetting, defaultAudiobookRootSetting, mediaTypeSetting, monitorModeSetting, latestCountSetting, monitorNewItemsSetting, qualityProfiles, defaultQualitySetting] = await Promise.all([
+  const [profiles, rootFolders, defaultRootSetting, defaultAudiobookRootSetting, mediaTypeSetting, monitorModeSetting, latestCountSetting, monitorNewItemsSetting, qualityProfiles, defaultQualitySetting, defaultMetadataSetting] = await Promise.all([
     api.listMetadataProfiles().catch((err: unknown) => { console.error(err); return [] as MetadataProfile[] }),
     api.listRootFolders().catch((err: unknown) => { console.error(err); return [] as RootFolder[] }),
     api.getSetting('library.defaultRootFolderId').catch(() => null),
@@ -57,6 +60,7 @@ export async function loadAuthorAddDefaults(): Promise<AuthorAddDefaults> {
     // requester is refused the profile list by design.
     Promise.resolve().then(() => api.listQualityProfiles()).then(list => list ?? [], () => [] as QualityProfile[]),
     Promise.resolve().then(() => api.getSetting('author.default_quality_profile_id')).catch(() => null),
+    Promise.resolve().then(() => api.getSetting('author.default_metadata_profile_id')).catch(() => null),
   ])
   // Seed the root-folder picker from the install default rather than from
   // list position (#2166). The value here is posted as an explicit
@@ -90,5 +94,7 @@ export async function loadAuthorAddDefaults(): Promise<AuthorAddDefaults> {
   // says None rather than showing a profile that would not be applied.
   const defaultQualityId = Number(defaultQualitySetting?.value)
   const qualityProfileId = qualityProfiles.find(p => p.id === defaultQualityId)?.id ?? null
-  return { profiles, rootFolders, rootFolderId, audiobookRootFolderId, mediaType, monitorMode, monitorLatestCount, monitorNewItems, qualityProfiles, qualityProfileId }
+  const defaultMetadataId = Number(defaultMetadataSetting?.value)
+  const metadataProfileId = profiles.find(p => p.id === defaultMetadataId)?.id ?? (profiles.length > 0 ? profiles[0].id : null)
+  return { profiles, rootFolders, rootFolderId, audiobookRootFolderId, mediaType, monitorMode, monitorLatestCount, monitorNewItems, qualityProfiles, qualityProfileId, metadataProfileId }
 }

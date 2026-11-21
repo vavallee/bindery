@@ -68,6 +68,8 @@ export const FIELDS: FieldEntry[] = [
   { key: 'metadata.audnex_region', tab: 'metadata', label: G + 'audnexRegionLabel', help: G + 'audnexRegionHint' },
   { key: 'metadata.enrichers_disabled', tab: 'metadata', label: G + 'enrichersHeading' },
 
+  { key: 'author.default_metadata_profile_id', tab: 'metadata', label: 'settings.metadata.defaultProfileLabel', help: 'settings.metadata.defaultProfileHint' },
+
   // Quality
   { key: 'author.default_quality_profile_id', tab: 'quality', label: 'settings.quality.defaultProfileLabel', help: 'settings.quality.defaultProfileHint' },
 

@@ -935,10 +935,8 @@ func (s *ListSyncer) ensureAuthor(ctx context.Context, book *models.Book, nameIn
 	// Mirror applyAuthorCreateOptions' fallback (internal/api/authors.go) so a
 	// list-sync-created author gets the same default metadata profile every
 	// other creation path stamps, instead of staying unset (#1736).
-	if author.MetadataProfileID == nil {
-		def := models.DefaultMetadataProfileID
-		author.MetadataProfileID = &def
-	}
+	// Left unset when nil: AuthorRepo.Create stamps the install default
+	// metadata profile (#4132), which skips a deleted profile 1.
 	// Carry the list's own quality profile onto the author so the format filter
 	// the user configured on the list is actually enforced for its books
 	// (#1781). Copied by value: the same pointer is reused for every author in

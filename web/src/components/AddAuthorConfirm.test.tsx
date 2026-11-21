@@ -87,6 +87,7 @@ const bareDefaults: AuthorAddDefaults = {
   monitorNewItems: 'all',
   qualityProfiles: [],
   qualityProfileId: null,
+  metadataProfileId: null,
 }
 
 function renderConfirm(a: Author, props: Partial<React.ComponentProps<typeof AddAuthorConfirm>> = {}) {
@@ -459,7 +460,7 @@ describe('AddAuthorConfirm', () => {
       vi.mocked(api.getSetting).mockRejectedValue(new Error('HTTP 404'))
       vi.mocked(api.listMetadataProfiles).mockRejectedValue(new Error('HTTP 500'))
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, audiobookRootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1, monitorNewItems: 'all', qualityProfiles: [], qualityProfileId: null })
+      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, audiobookRootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1, monitorNewItems: 'all', qualityProfiles: [], qualityProfileId: null, metadataProfileId: null })
       consoleError.mockRestore()
     })
   })

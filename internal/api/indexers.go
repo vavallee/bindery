@@ -1126,15 +1126,11 @@ func (h *IndexerHandler) resolveAllowedLanguages(ctx context.Context, author *mo
 	if h.profiles == nil {
 		return []string{}
 	}
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := h.profiles.GetByID(ctx, id)
-	if err != nil || p == nil {
+	res, err := db.ResolveMetadataProfile(ctx, h.profiles, author)
+	if err != nil {
 		return []string{}
 	}
-	return models.ParseAllowedLanguages(p.AllowedLanguages)
+	return models.ParseAllowedLanguages(res.Profile.AllowedLanguages)
 }
 
 // SearchQuery performs a freeform search across all indexers.

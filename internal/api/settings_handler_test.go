@@ -1259,6 +1259,7 @@ var nonAdminUIKeys = map[string]string{
 	SettingAuthorDefaultMonitorLatestCount: "2",
 	SettingAuthorDefaultMonitorNewItems:    "none",
 	SettingAuthorDefaultQualityProfileID:   "5",
+	SettingAuthorDefaultMetadataProfileID:  "2",
 }
 
 // operatorDetailKeys are settings no non admin screen reads. The first five

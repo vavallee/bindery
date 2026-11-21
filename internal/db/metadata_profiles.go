@@ -125,8 +125,18 @@ func (r *MetadataProfileRepo) Update(ctx context.Context, p *models.MetadataProf
 	return nil
 }
 
+// Delete removes a profile, refusing with *ErrMetadataProfileInUse while
+// authors still reference it (#4132). The column has no foreign key, so
+// without this guard the authors kept an id that names nothing.
 func (r *MetadataProfileRepo) Delete(ctx context.Context, id int64) error {
-	_, err := r.db.ExecContext(ctx, "DELETE FROM metadata_profiles WHERE id=?", id)
+	count, err := r.CountAuthorsUsing(ctx, id)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return &ErrMetadataProfileInUse{ProfileID: id, AuthorCount: count}
+	}
+	_, err = r.db.ExecContext(ctx, "DELETE FROM metadata_profiles WHERE id=?", id)
 	if err != nil {
 		return fmt.Errorf("delete metadata profile %d: %w", id, err)
 	}

@@ -100,6 +100,7 @@ function formatLanguageList(csv: string, any: string, lng?: string): string {
   }).join(', ')
 }
 
+const DEFAULT_PROFILE_KEY = 'author.default_metadata_profile_id'
 const LATEST_COUNT_KEY = 'author.default_monitor_latest_count'
 
 export default function MetadataTab() {
@@ -134,6 +135,24 @@ export default function MetadataTab() {
   const [editing, setEditing] = useState<MetadataProfile | null>(null)
   const [creating, setCreating] = useState(false)
   const [settings, setSettings] = useState<Record<string, string>>({})
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [defaultError, setDefaultError] = useState<string | null>(null)
+  // A default naming a deleted profile reads as the first profile, which is
+  // what the server falls back to (#4132).
+  const storedDefaultId = Number(settings[DEFAULT_PROFILE_KEY])
+  const effectiveDefaultId = profiles.find(p => p.id === storedDefaultId)?.id ?? profiles[0]?.id ?? ''
+  const saveDefaultProfile = async (value: string) => {
+    const previous = settings[DEFAULT_PROFILE_KEY] ?? ''
+    setDefaultError(null)
+    setSettings(s => ({ ...s, [DEFAULT_PROFILE_KEY]: value }))
+    try {
+      await autoSave(DEFAULT_PROFILE_KEY, () => api.setSetting(DEFAULT_PROFILE_KEY, value), { rethrow: true })
+    } catch (err) {
+      if (!mounted.current) return
+      setSettings(s => ({ ...s, [DEFAULT_PROFILE_KEY]: previous }))
+      setDefaultError(err instanceof Error ? err.message : t('settings.metadata.defaultProfileSaveFail', 'Could not save the default metadata profile'))
+    }
+  }
   // Hardcover authenticates every GraphQL query, so it can only be the primary
   // provider once a token is stored. The token itself is a secret setting and
   // never comes back from listSettings — /system/status reports whether one
@@ -577,6 +596,26 @@ export default function MetadataTab() {
         <p className="text-xs text-fg-muted mb-4">
           {t('settings.metadata.description')}
         </p>
+        {profiles.length > 0 && (
+          <div id="author.default_metadata_profile_id" className="mb-4">
+            <label htmlFor="default-metadata-profile" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
+              {t('settings.metadata.defaultProfileLabel', 'Default metadata profile for new authors')}
+            </label>
+            <p className="text-xs text-fg-muted mb-2">
+              {t('settings.metadata.defaultProfileHint', 'Given to every author added without a choice, and used for any author whose own profile was deleted. Search, import and catalogue sync all use it, so they agree.')}
+            </p>
+            <select
+              id="default-metadata-profile"
+              value={effectiveDefaultId}
+              onChange={e => { void saveDefaultProfile(e.target.value) }}
+              className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
+            >
+              {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            {defaultError && <p role="alert" className="mt-1 text-xs text-danger">{defaultError}</p>}
+          </div>
+        )}
+        {deleteError && <p role="alert" className="mb-3 text-xs text-danger">{deleteError}</p>}
         {creating && (
           <MetadataProfileForm
             onClose={() => setCreating(false)}
@@ -620,7 +659,14 @@ export default function MetadataTab() {
                             body: t('settings.metadata.deleteConfirm'),
                             confirmLabel: t('common.delete'),
                           })) return
-                          await api.deleteMetadataProfile(p.id)
+                          setDeleteError(null)
+                          try {
+                            await api.deleteMetadataProfile(p.id)
+                          } catch (err) {
+                            // 409 while authors still use the profile (#4132).
+                            setDeleteError(err instanceof Error ? err.message : t('settings.metadata.deleteFail', 'Could not delete the metadata profile'))
+                            return
+                          }
                           reload()
                         }}
                         className={`text-xs ${dangerLink}`}
