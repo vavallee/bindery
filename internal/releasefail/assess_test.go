@@ -145,6 +145,25 @@ func TestAssess_GuardsAgainstIndexerWideFaults(t *testing.T) {
 	})
 }
 
+// The indexer must have served something since THIS release last failed, not
+// merely at some point in the last day: a grab from before the previous
+// failure says nothing about the indexer between then and now.
+func TestAssess_ServedBeforeTheLastFailureDoesNotCount(t *testing.T) {
+	f := newAssessFixture(t)
+	f.fail(ClassRelease, 14*time.Hour)
+	f.serve(13 * time.Hour) // after the first failure, before the second
+	f.fail(ClassRelease, 7*time.Hour)
+	// Nothing served since the second failure: this one is not evidence.
+	if v := f.assess(ClassRelease); v.Class != ClassIndexerWide || v.Block || v.Count != 2 {
+		t.Fatalf("verdict = %+v, want indexer wide, count 2, no block", v)
+	}
+	// The same run with a grab after the second failure does block.
+	f.serve(3 * time.Hour)
+	if v := f.assess(ClassRelease); v.Count != 3 || !v.Block {
+		t.Fatalf("verdict = %+v, want 3 and a block once the indexer served again", v)
+	}
+}
+
 // Three failures a retry apart on a serving indexer block; the verdict says so.
 func TestAssess_ThirdSpacedFailureBlocks(t *testing.T) {
 	f := newAssessFixture(t)

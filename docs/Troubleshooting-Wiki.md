@@ -549,7 +549,7 @@ What counts, and what does not:
 | Failure | Effect |
 |---|---|
 | The indexer answered the download link with 404 or 410 (the link is gone) | Counts, but only while the indexer is otherwise serving (see below). |
-| The grab was sent but the client has no record of the torrent | Counts under the same conditions. A single occurrence is usually a client restart and is retried as before. |
+| The grab was sent but the client has no record of the torrent | Counts under the same conditions. A single occurrence is usually a client restart and is retried as before. Bindery cannot tell why the client has no record: a Bindery side fault (an unsigned indexer URL, a dropped add), a client that was wiped or restarted, a torrent your client removed by itself, and a torrent you removed in the client's own screen all look the same. |
 | The indexer answered the link with HTTP 429, a 5xx or a "disabled till" notice | Never counts. A daily quota and a dead link look the same from here. The indexer is paused instead: until the time it gave (capped at 24 hours, at least 5 minutes), otherwise one hour. Its releases are skipped, the search tries the next one, and the search outcome reads `indexer backing off until ...`. The pause is held in memory, so a restart forgets it. |
 | qBittorrent or Deluge reports the torrent as errored | Recorded in History, never counts. qBittorrent's error state is usually a full disk or an unwritable save path, which would otherwise blocklist every release in turn. The Queue message says so. |
 | The client is unreachable, a timeout, a rejected credential, or an HTTP error from the client itself | Never counts. Retried after the six hour wait. |
@@ -560,6 +560,9 @@ What this does not do, so you are not surprised:
 
 - An indexer that fails every release (a 500 on all of them, or a banned account) is only paused, never held against a release, and a release that fails every cycle on an indexer that serves nothing else never reaches three. A release that is dead for good on a quiet indexer, and two dead releases of one book on the same indexer, can therefore be retried every six hours for ever.
 - A once a day quota that rejects the last release of an otherwise healthy indexer is treated as the indexer's problem and is never blocklisted.
+- **Cancelling in the client can count.** If you remove the same release from your torrent client's own screen three times, with at least an hour between and its indexer serving other releases, it is blocklisted for every user, because Bindery sees only that the client no longer has it. Remove releases from the Queue page instead, which does not count, or take the entry off the Blocklist page if it happens.
+- **A fault on Bindery's side can leave failures behind.** If an earlier Bindery version or setting problem (an unsigned indexer URL, a dropped add) made a release never arrive once or twice, those failures stay in the seven day window and the next one can be the third. Fix the cause and remove the Blocklist entry if a good release is caught; Bindery does not reset the count when it is upgraded.
+- **A release that fails alone keeps its neighbours from counting.** Failures that were not counted still count as "other releases failed" for the indexer, so a dead release alone on a quiet indexer, retried every six hours, stops a second release on that indexer from counting for 24 hours after each attempt.
 - The Grab button is not paused and does not count: a manual grab always goes through.
 
 For those cases, blocklist the release by hand. On the History page, the `downloadFailed` entry for the release has a Blocklist action. The release then stays out of every future search until you remove its entry on the Blocklist page.
