@@ -20,6 +20,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/transmission"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
+	"github.com/vavallee/bindery/internal/releasefail"
 )
 
 // checkSABnzbdDownloads polls SABnzbd for status changes.
@@ -329,6 +330,10 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
+		// Only a row that can still reach failDownloadThatNeverArrived needs the
+		// sighting; after a restart this keeps the first poll from writing one
+		// UPDATE per historical torrent still listed in the client.
+		s.noteClientSeen(ctx, &dl)
 
 		isComplete, isStopped := transmissionCompletion(torrent.Status, torrent.PercentDone)
 		stopError := strings.TrimSpace(torrent.ErrorString)
@@ -610,6 +615,10 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
+		// Only a row that can still reach failDownloadThatNeverArrived needs the
+		// sighting; after a restart this keeps the first poll from writing one
+		// UPDATE per historical torrent still listed in the client.
+		s.noteClientSeen(ctx, &dl)
 
 		isComplete, isFailed := qbitCompletion(torrent)
 
@@ -748,7 +757,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			s.tryImportQbittorrent(withTorrentOwnFolder(ctx, qbitHasOwnFolder(torrent)), qb, client, &dl, downloadPath, bookFiles)
 		} else if isFailed && dl.Status != models.StateFailed {
 			slog.Warn("download failed", "title", dl.Title, "state", torrent.State)
-			s.markDownloadFailed(ctx, &dl, "Torrent failed in qBittorrent")
+			s.markDownloadFailedClass(ctx, &dl, "Torrent failed in qBittorrent. This is usually a disk or permissions problem where the client runs (a full disk, an unwritable save path), so the release was not blocklisted", string(releasefail.ClassClientError))
 		}
 	}
 
@@ -802,6 +811,10 @@ func (s *Scanner) checkDelugeDownloads(ctx context.Context, client *models.Downl
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
+		// Only a row that can still reach failDownloadThatNeverArrived needs the
+		// sighting; after a restart this keeps the first poll from writing one
+		// UPDATE per historical torrent still listed in the client.
+		s.noteClientSeen(ctx, &dl)
 
 		// Deluge reports a finished torrent as "Seeding" (or "Paused" when
 		// seeding is disabled / ratio met) with progress 100. Treat any
@@ -830,7 +843,7 @@ func (s *Scanner) checkDelugeDownloads(ctx context.Context, client *models.Downl
 			s.tryImportDeluge(ctx, &dl, downloadPath, bookFiles)
 		case isFailed && dl.Status != models.StateFailed:
 			slog.Warn("download failed", "title", dl.Title, "state", t.State)
-			s.markDownloadFailed(ctx, &dl, "Torrent failed in Deluge")
+			s.markDownloadFailedClass(ctx, &dl, "Torrent failed in Deluge. This is usually a disk or permissions problem where the client runs, so the release was not blocklisted", string(releasefail.ClassClientError))
 		}
 	}
 
@@ -938,6 +951,10 @@ func (s *Scanner) checkRtorrentDownloads(ctx context.Context, client *models.Dow
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
+		// Only a row that can still reach failDownloadThatNeverArrived needs the
+		// sighting; after a restart this keeps the first poll from writing one
+		// UPDATE per historical torrent still listed in the client.
+		s.noteClientSeen(ctx, &dl)
 
 		// d.message is rTorrent's per-torrent error slot. It also carries benign
 		// tracker chatter on a healthy torrent, so it only counts as a failure
