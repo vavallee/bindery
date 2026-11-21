@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import MetadataTab from './MetadataTab'
 import { api, MetadataProfile } from '../../api/client'
+import { acceptConfirm } from '../../test-utils'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -77,10 +78,7 @@ describe('Default metadata profile', () => {
     vi.mocked(api.deleteMetadataProfile).mockRejectedValue(new Error('in use by 3 authors: A, B, C'))
     render(<MetadataTab />)
     fireEvent.click((await screen.findAllByRole('button', { name: 'common.delete' }))[0])
-    // The confirm dialog adds a second Delete button, the last one in the DOM.
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'common.delete' }).length).toBeGreaterThan(2))
-    const buttons = screen.getAllByRole('button', { name: 'common.delete' })
-    fireEvent.click(buttons[buttons.length - 1])
+    await acceptConfirm()
     expect(await screen.findByText('in use by 3 authors: A, B, C')).toBeInTheDocument()
   })
 })

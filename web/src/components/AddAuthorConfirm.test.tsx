@@ -58,7 +58,7 @@ vi.mock('../api/client', () => ({
 }))
 
 import { api } from '../api/client'
-import type { Author } from '../api/client'
+import type { Author, MetadataProfile } from '../api/client'
 
 function author(overrides: Partial<Author>): Author {
   return {
@@ -367,6 +367,23 @@ describe('AddAuthorConfirm', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Add author' }))
       await waitFor(() => expect(api.addAuthor).toHaveBeenCalledTimes(1))
       expect('qualityProfileId' in vi.mocked(api.addAuthor).mock.calls[0][0]).toBe(false)
+    })
+
+    // #4132: the picker starts on the install default metadata profile, else
+    // the first profile, matching what the server stamps.
+    it('preselects the default metadata profile, else the first one', async () => {
+      const profiles = [{ id: 2, name: 'Deutsch' }, { id: 3, name: 'Both' }] as MetadataProfile[]
+      vi.mocked(api.listMetadataProfiles).mockResolvedValue(profiles)
+      const withDefault = (value: string | null) => async (key: string) => {
+        if (key === 'author.default_metadata_profile_id' && value !== null) return { key, value }
+        throw new Error('HTTP 404')
+      }
+      vi.mocked(api.getSetting).mockImplementation(withDefault('3'))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ metadataProfileId: 3 }))
+      vi.mocked(api.getSetting).mockImplementation(withDefault(null))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ metadataProfileId: 2 }))
+      vi.mocked(api.getSetting).mockImplementation(withDefault('1'))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ metadataProfileId: 2 }))
     })
 
     it('loads the install default, and None when it is unset or deleted', async () => {

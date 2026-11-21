@@ -596,7 +596,7 @@ export default function MetadataTab() {
         <p className="text-xs text-fg-muted mb-4">
           {t('settings.metadata.description')}
         </p>
-        {profiles.length > 0 && (
+        {profiles.length > 1 && (
           <div id="author.default_metadata_profile_id" className="mb-4">
             <label htmlFor="default-metadata-profile" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
               {t('settings.metadata.defaultProfileLabel', 'Default metadata profile for new authors')}
