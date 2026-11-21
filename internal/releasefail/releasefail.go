@@ -40,11 +40,12 @@ const (
 	// credential. It says nothing about the release and is never counted.
 	ClassLocal Class = "local"
 	// ClassIndexer is the indexer refusing or failing the fetch of the
-	// release's link: HTTP 429, a 5xx, or a "disabled till" ban. It is
-	// transient for one attempt, so it only blocklists after repeating, and it
+	// release's link: HTTP 429, a 5xx, or a "disabled till" ban. A quota 429
+	// and a dead link look the same from here, so it is never counted: it only
 	// makes Bindery leave that indexer alone for a while.
 	ClassIndexer Class = "indexer"
 	// ClassRelease is the link being gone: the indexer answered 404 or 410.
+	// It counts only while the indexer is otherwise serving (see Assess).
 	ClassRelease Class = "release"
 	// ClassNeverArrived is a grab reported as sent that the client has no
 	// record of, repeatedly.
@@ -55,16 +56,16 @@ const (
 	// would blocklist every release in turn. It is recorded in history and
 	// never counted.
 	ClassClientError Class = "clientError"
-	// ClassIndexerWide is an indexer failure that was not counted because it
-	// is not evidence about this release: the indexer was already backing off,
-	// or other releases from it failed the same way.
+	// ClassIndexerWide is a failure that was not counted because it is not
+	// evidence about this release: the indexer has no id, other releases from
+	// it failed too, or it served nothing else.
 	ClassIndexerWide Class = "indexerWide"
 )
 
 // Counts reports whether failures of this class count towards a blocklist.
 func (c Class) Counts() bool {
 	switch c {
-	case ClassIndexer, ClassRelease, ClassNeverArrived:
+	case ClassRelease, ClassNeverArrived:
 		return true
 	}
 	return false
@@ -72,7 +73,14 @@ func (c Class) Counts() bool {
 
 // CountedClasses is every class that counts, for the history query.
 var CountedClasses = []string{
-	string(ClassIndexer), string(ClassRelease), string(ClassNeverArrived),
+	string(ClassRelease), string(ClassNeverArrived),
+}
+
+// failureClasses are the classes whose events on an indexer say the indexer
+// had a bad moment, which is what makes another release's failure there
+// indexer wide evidence.
+var failureClasses = []string{
+	string(ClassIndexer), string(ClassIndexerWide), string(ClassRelease), string(ClassNeverArrived),
 }
 
 const (
@@ -197,82 +205,75 @@ type Verdict struct {
 	// Class is the class to store on the history event: the one asked for,
 	// or ClassIndexerWide when the failure is not evidence about the release.
 	Class Class
+	// OtherReleasesFailing is true when other releases from the same indexer
+	// failed in the last IndexerWideWindow: the burst the caller answers by
+	// pausing the indexer.
+	OtherReleasesFailing bool
 }
 
 // Assess decides what the failure about to be recorded for dl means. Call it
 // before writing the history event, store Verdict.Class on it, and say on it
 // whether the release was blocklisted.
 //
-// A failure counts only when it is evidence about the release:
-//   - an indexer failure is not counted while the indexer is already backing
-//     off (indexerBackedOff), or when another release from it failed the same
-//     way in the last IndexerWideWindow, because that is an indexer wide fault;
-//   - a never-arrived failure is not counted when the indexer failed releases
-//     in that window, for the same reason;
-//   - a repeated indexer failure is counted only if the indexer sent another
-//     release to a client since this release last failed, so a long outage
-//     cannot add up across retries;
+// Only a 404 or 410 and a torrent that never reached the client can count, and
+// only as evidence about the release. When in doubt it does not count, because
+// a blocklist entry has no expiry and applies to every owner:
+//   - a download with no indexer id never counts;
+//   - it does not count when another release from the same indexer failed in
+//     the last IndexerWideWindow (the indexer is misrouted, moved or down);
+//   - it does not count unless the indexer sent another release to a client
+//     since this release last failed (or in the last IndexerWideWindow for the
+//     first failure): an indexer that serves nothing else proves nothing;
 //   - one inside MinSpacing of the last counted failure is recorded but adds
 //     nothing (see HistoryRepo.ReleaseFailureStreak).
 //
-// A history error counts as no prior failures: it fails towards a retry.
-func Assess(ctx context.Context, history *db.HistoryRepo, dl *models.Download, class Class, now time.Time, indexerBackedOff bool) Verdict {
+// A history error counts as no failure: it fails towards a retry.
+func Assess(ctx context.Context, history *db.HistoryRepo, dl *models.Download, class Class, now time.Time) Verdict {
 	v := Verdict{Class: class}
 	if !class.Counts() || history == nil || strings.TrimSpace(dl.GUID) == "" {
 		return v
 	}
-	if class == ClassIndexer && indexerBackedOff {
-		v.Class = ClassIndexerWide
-		return v
+	wide := Verdict{Class: ClassIndexerWide}
+	if dl.IndexerID == nil || *dl.IndexerID == 0 {
+		return wide
 	}
-	if (class == ClassIndexer || class == ClassNeverArrived) && dl.IndexerID != nil {
-		n, err := history.IndexerFailuresElsewhere(ctx, *dl.IndexerID, otherGUID(class, dl.GUID), string(ClassIndexer), now.Add(-IndexerWideWindow))
-		if err != nil {
-			slog.Warn("could not look for indexer wide failures", "guid", dl.GUID, "error", err)
-		}
-		if n > 0 {
-			v.Class = ClassIndexerWide
-			return v
-		}
+	n, err := history.IndexerFailuresElsewhere(ctx, *dl.IndexerID, dl.GUID, failureClasses, now.Add(-IndexerWideWindow))
+	if err != nil {
+		slog.Warn("could not look for indexer wide failures", "guid", dl.GUID, "error", err)
+		return wide
+	}
+	if n > 0 {
+		wide.OtherReleasesFailing = true
+		return wide
 	}
 	prior, last, pending, err := history.ReleaseFailureStreak(ctx, dl.GUID, dl.Title, dl.BookID, now.Add(-Window),
 		CountedClasses, string(ClassNeverArrived), MinSpacing)
 	if err != nil {
 		slog.Warn("could not count prior failures of a release", "guid", dl.GUID, "error", err)
+		return wide
 	}
 	if pending && class != ClassNeverArrived {
 		prior, last = 0, time.Time{}
+	}
+	servedSince := now.Add(-IndexerWideWindow)
+	if !last.IsZero() {
+		servedSince = last
+	}
+	served, err := history.IndexerServedElsewhere(ctx, *dl.IndexerID, dl.GUID, servedSince)
+	if err != nil {
+		slog.Warn("could not check that the indexer is serving", "guid", dl.GUID, "error", err)
+	}
+	if !served {
+		v.Class = ClassIndexerWide
+		v.Count = prior
+		return v
 	}
 	v.Count = prior
 	if last.IsZero() || now.Sub(last) >= MinSpacing {
 		v.Count = prior + 1
 	}
-	// A repeated indexer failure counts only if the indexer served another
-	// release since this one last failed: otherwise every retry of a release
-	// through an outage would add up, and an outage is not the release.
-	if class == ClassIndexer && prior > 0 && !last.IsZero() && dl.IndexerID != nil {
-		served, err := history.IndexerServedElsewhere(ctx, *dl.IndexerID, dl.GUID, last)
-		if err != nil {
-			slog.Warn("could not check that the indexer is serving", "guid", dl.GUID, "error", err)
-		}
-		if !served {
-			v.Class = ClassIndexerWide
-			v.Count = prior
-			return v
-		}
-	}
 	v.Block = v.Count >= EscalateAfter
 	return v
-}
-
-// otherGUID is the guid to exclude when looking for the indexer's other
-// failures: an indexer failure of this release is not "elsewhere", a
-// never-arrived one has no indexer failure of its own to exclude.
-func otherGUID(class Class, guid string) string {
-	if class == ClassIndexer {
-		return guid
-	}
-	return ""
 }
 
 // Reason is the blocklist reason for a verdict. It names the class and the

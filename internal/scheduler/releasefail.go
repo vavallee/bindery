@@ -13,33 +13,42 @@ import (
 
 // recordSendFailure acts on a grab the download client could not take (#4111).
 //
-// The failure is written to history with its class, so the count the next
-// failure sees includes it. A failure that is the indexer's (429, 5xx, a
-// "disabled till" ban) also makes the scheduler pass that indexer's releases
-// over until it is due, so Bindery stops feeding an indexer that is banning
-// itself. A release that has failed releasefail.EscalateAfter times in a row
-// is blocklisted. A failure that is Bindery's own (client unreachable, a
-// timeout) is recorded and neither counted nor blocklisted: it says nothing
-// about the release, and the cooldown retries it.
+// It acts on torrent grabs only. The failure is written to history with its
+// class, so the count the next failure sees includes it. A failure that is the
+// indexer's (429, 5xx, a "disabled till" ban) makes the scheduler pass that
+// indexer's releases over until it is due, so Bindery stops feeding an indexer
+// that is banning itself; it is never counted towards a blocklist, because a
+// quota 429 and a dead link cannot be told apart. A 404 or 410 and a torrent
+// that never arrived can count (releasefail.Assess); a release that has
+// failed releasefail.EscalateAfter times in a row is blocklisted. A failure
+// that is Bindery's own (client unreachable, a timeout) is recorded and
+// neither counted nor blocklisted.
 //
 // Nothing here copies the error text into history or the blocklist: it can
 // carry a URL with an API key, or the client's address, which a non admin
 // reads in the History tab.
 func (s *Scheduler) recordSendFailure(ctx context.Context, dl *models.Download, sendErr error) {
+	// Usenet is not touched: its failures are judged by the client's own
+	// verdict at poll time (#3049), and an NZB fetch error here says nothing
+	// that rule does not already cover.
+	if dl.Protocol != "torrent" {
+		return
+	}
 	now := time.Now().UTC()
 	f := releasefail.ClassifySend(sendErr.Error(), now)
-	// Read the pause before this failure sets it: a failure that happens while
-	// the indexer is already backing off is not evidence about the release.
-	alreadyBackedOff := false
-	if dl.IndexerID != nil {
-		_, alreadyBackedOff = s.indexerBackedOff(*dl.IndexerID, now)
-	}
 	if until := releasefail.IndexerBackoffUntil(f, now); !until.IsZero() && dl.IndexerID != nil {
 		s.backOffIndexer(*dl.IndexerID, until)
 		slog.Warn("backing off an indexer after a failed grab",
 			"indexer_id", *dl.IndexerID, "until", until, "detail", f.Detail)
 	}
-	verdict := releasefail.Assess(ctx, s.history, dl, f.Class, now, alreadyBackedOff)
+	verdict := releasefail.Assess(ctx, s.history, dl, f.Class, now)
+	// Several releases of one indexer answering 404 or 410 is the indexer's
+	// problem (a misrouted proxy, a moved base path): pause it too.
+	if f.Class == releasefail.ClassRelease && verdict.OtherReleasesFailing && dl.IndexerID != nil {
+		s.backOffIndexer(*dl.IndexerID, now.Add(releasefail.DefaultIndexerBackoff))
+		slog.Warn("backing off an indexer whose links are failing across releases",
+			"indexer_id", *dl.IndexerID, "detail", f.Detail)
+	}
 	message := f.Detail
 	if verdict.Block {
 		message += ". Blocklisted after " + strconv.Itoa(verdict.Count) + " failures in a row"

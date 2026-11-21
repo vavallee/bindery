@@ -19,10 +19,14 @@ import (
 	"github.com/vavallee/bindery/internal/releasefail"
 )
 
-const indexer429 = "fetch torrent content: fetch torrent: indexer returned HTTP 429: https://idx.example/dl?apikey=SECRET123"
+const (
+	indexer429 = "fetch torrent content: fetch torrent: indexer returned HTTP 429: https://idx.example/dl?apikey=SECRET123"
+	indexer404 = "fetch torrent content: fetch torrent: indexer returned HTTP 404: https://idx.example/dl?apikey=SECRET123"
+)
 
-// failureFixture is the regrab fixture with history wired and a download row
-// for the release, which is what a grab leaves behind when the send fails.
+// failureFixture is the regrab fixture with history wired and a torrent
+// download row for the release, which is what a grab leaves behind when the
+// send fails.
 func failureFixture(t *testing.T) (*regrabFixture, *models.Download) {
 	t.Helper()
 	f := newRegrabFixture(t)
@@ -40,6 +44,19 @@ func failureFixture(t *testing.T) (*regrabFixture, *models.Download) {
 		t.Fatal(err)
 	}
 	return f, dl
+}
+
+// secondRelease is another torrent on the same indexer.
+func secondRelease(t *testing.T, f *regrabFixture, dl *models.Download, guid string) *models.Download {
+	t.Helper()
+	other := &models.Download{
+		GUID: guid, Title: guid + ".epub", Status: models.StateGrabbed,
+		Protocol: "torrent", BookID: &f.book.ID, OwnerUserID: f.bob, IndexerID: dl.IndexerID,
+	}
+	if err := f.downloads.Create(context.Background(), other); err != nil {
+		t.Fatal(err)
+	}
+	return other
 }
 
 // ageHistory moves every history row into the past, which is what the time
@@ -80,11 +97,17 @@ func blocklistEntries(t *testing.T, f *regrabFixture) []models.BlocklistEntry {
 	return entries
 }
 
+func clearPause(f *regrabFixture) {
+	f.s.indexerBackoffMu.Lock()
+	f.s.indexerBackoff = nil
+	f.s.indexerBackoffMu.Unlock()
+}
+
 // serveOther records that the indexer sent a different release to the client,
 // which is what an indexer that is otherwise serving looks like.
-func serveOther(t *testing.T, f *regrabFixture, dl *models.Download) {
+func serveOther(t *testing.T, f *regrabFixture, indexerID int64) {
 	t.Helper()
-	data := `{"guid":"g-served","indexerId":` + strconv.FormatInt(*dl.IndexerID, 10) + `}`
+	data := `{"guid":"g-served","indexerId":` + strconv.FormatInt(indexerID, 10) + `}`
 	if err := f.s.history.Create(context.Background(), &models.HistoryEvent{
 		EventType: models.HistoryEventGrabbed, SourceTitle: "Served Elsewhere", Data: data,
 	}); err != nil {
@@ -102,85 +125,107 @@ func failSpaced(t *testing.T, f *regrabFixture, dl *models.Download, msg string,
 func failSpacedServed(t *testing.T, f *regrabFixture, dl *models.Download, msg string, n int, served bool) {
 	t.Helper()
 	for i := 0; i < n; i++ {
+		if served {
+			serveOther(t, f, *dl.IndexerID) // the indexer is serving when it fails
+		}
 		f.s.recordSendFailure(context.Background(), dl, errors.New(msg))
 		if served {
-			serveOther(t, f, dl)
+			serveOther(t, f, *dl.IndexerID)
 		}
-		f.s.indexerBackoffMu.Lock()
-		f.s.indexerBackoff = nil // the pause has lapsed by the next retry
-		f.s.indexerBackoffMu.Unlock()
+		clearPause(f) // the pause has lapsed by the next retry
 		ageHistory(t, f, 7*time.Hour)
 	}
 }
 
-// A single indexer 429 is a blip: no blocklist row. The same failure
-// EscalateAfter times in a row, a retry apart, is the release, and blocklists it.
-func TestRecordSendFailure_RepeatedIndexerErrorEscalates(t *testing.T) {
+// A 429 or a 5xx is never counted: a quota and a dead link look the same, so
+// the indexer is paused and the release is left alone, however often it
+// repeats and however well the indexer serves otherwise.
+func TestRecordSendFailure_IndexerErrorNeverBlocklists(t *testing.T) {
 	f, dl := failureFixture(t)
 	ctx := context.Background()
-
-	failSpaced(t, f, dl, indexer429, 1)
-	if n := len(blocklistEntries(t, f)); n != 0 {
-		t.Fatalf("a single 429 blocklisted the release (%d entries)", n)
+	f.s.recordSendFailure(ctx, dl, errors.New(indexer429))
+	if _, backed := f.s.indexerBackedOff(*dl.IndexerID, time.Now()); !backed {
+		t.Error("a 429 did not pause the indexer")
 	}
-	failSpaced(t, f, dl, indexer429, releasefail.EscalateAfter-2)
+	clearPause(f)
+	ageHistory(t, f, 7*time.Hour)
+	failSpaced(t, f, dl, indexer429, 3*releasefail.EscalateAfter)
+	if n := len(blocklistEntries(t, f)); n != 0 {
+		t.Fatalf("repeated indexer errors blocklisted the release (%d entries)", n)
+	}
+	events, err := f.s.history.ListByBook(ctx, f.book.ID)
+	if err != nil || len(events) != 1+3*releasefail.EscalateAfter {
+		t.Fatalf("history: %v, %d events; each failure must be recorded", err, len(events))
+	}
+	for _, ev := range events {
+		if !strings.Contains(ev.Data, `"class":"indexer"`) {
+			t.Errorf("event %s is not recorded as an indexer failure", ev.Data)
+		}
+		if strings.Contains(ev.Data, "SECRET123") || strings.Contains(ev.Data, "idx.example") {
+			t.Errorf("history event leaks the error text: %s", ev.Data)
+		}
+	}
+}
+
+// A single dead link is a blip; the same release answering 404 or 410
+// EscalateAfter times in a row, a retry apart, while its indexer serves other
+// releases, is the release.
+func TestRecordSendFailure_RepeatedNotFoundEscalates(t *testing.T) {
+	f, dl := failureFixture(t)
+
+	failSpaced(t, f, dl, indexer404, 1)
+	if n := len(blocklistEntries(t, f)); n != 0 {
+		t.Fatalf("a single 404 blocklisted the release (%d entries)", n)
+	}
+	failSpaced(t, f, dl, indexer404, releasefail.EscalateAfter-2)
 	if n := len(blocklistEntries(t, f)); n != 0 {
 		t.Fatalf("blocklisted before %d failures (%d entries)", releasefail.EscalateAfter, n)
 	}
-	failSpaced(t, f, dl, indexer429, 1)
+	failSpaced(t, f, dl, indexer404, 1)
 
 	entries := blocklistEntries(t, f)
 	if len(entries) != 1 {
-		t.Fatalf("blocklist has %d entries after %d 429s, want 1", len(entries), releasefail.EscalateAfter)
+		t.Fatalf("blocklist has %d entries after %d 404s, want 1", len(entries), releasefail.EscalateAfter)
 	}
 	e := entries[0]
 	if e.GUID != regrabGUID || e.Scope != models.BlocklistScopeRelease {
 		t.Errorf("entry = %+v, want release scope for %s", e, regrabGUID)
 	}
-	if !strings.Contains(e.Reason, "indexer HTTP 429") || !strings.Contains(e.Reason, "3 times") {
-		t.Errorf("reason %q does not name the class and count", e.Reason)
+	if !strings.Contains(e.Reason, "HTTP 404") || !strings.Contains(e.Reason, "3 times") {
+		t.Errorf("reason %q does not name the failure and count", e.Reason)
 	}
-	// The blocklist the sweep builds must now reject the release.
+	if strings.Contains(e.Reason, "SECRET123") {
+		t.Errorf("blocklist reason leaks the error text: %s", e.Reason)
+	}
 	spec := decision.NewBlocklistedSpec(entries)
 	if ok, _ := spec.IsSatisfiedBy(decision.Release{GUID: regrabGUID}, f.book); ok {
 		t.Error("the sweep's blocklist spec still accepts the blocklisted release")
 	}
-
-	// No secret, URL or client address reaches history or the blocklist.
-	events, err := f.s.history.ListByBook(ctx, f.book.ID)
+	events, err := f.s.history.ListByBook(context.Background(), f.book.ID)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(events) != releasefail.EscalateAfter {
-		t.Fatalf("history has %d events, want one per failure (%d)", len(events), releasefail.EscalateAfter)
 	}
 	for _, ev := range events {
 		if strings.Contains(ev.Data, "SECRET123") || strings.Contains(ev.Data, "idx.example") {
 			t.Errorf("history event leaks the error text: %s", ev.Data)
 		}
 	}
-	if strings.Contains(e.Reason, "SECRET123") {
-		t.Errorf("blocklist reason leaks the error text: %s", e.Reason)
-	}
 }
 
-// Failures close together are one bad moment, not three: however many land
-// inside the spacing, the release is not blocklisted.
+// Failures close together are one bad moment, not three.
 func TestRecordSendFailure_BackToBackFailuresDoNotEscalate(t *testing.T) {
 	f, dl := failureFixture(t)
+	serveOther(t, f, *dl.IndexerID)
 	for i := 0; i < 3*releasefail.EscalateAfter; i++ {
-		f.s.recordSendFailure(context.Background(), dl, errors.New(indexer429))
-		f.s.indexerBackoffMu.Lock()
-		f.s.indexerBackoff = nil
-		f.s.indexerBackoffMu.Unlock()
+		f.s.recordSendFailure(context.Background(), dl, errors.New(indexer404))
+		serveOther(t, f, *dl.IndexerID)
 	}
 	if n := len(blocklistEntries(t, f)); n != 0 {
-		t.Fatalf("%d failures inside the spacing blocklisted the release (%d entries)", 3*releasefail.EscalateAfter, n)
+		t.Fatalf("a burst of failures blocklisted the release (%d entries)", n)
 	}
 }
 
-// A fault on Bindery's side of the wire says nothing about the release, however
-// often it repeats.
+// A fault on Bindery's side of the wire says nothing about the release.
 func TestRecordSendFailure_LocalFaultNeverBlocklists(t *testing.T) {
 	f, dl := failureFixture(t)
 	failSpaced(t, f, dl, "add torrent: dial tcp 10.0.0.5:8080: connect: connection refused", 3*releasefail.EscalateAfter)
@@ -195,16 +240,15 @@ func TestRecordSendFailure_LocalFaultNeverBlocklists(t *testing.T) {
 // An import in between starts the count again.
 func TestRecordSendFailure_ImportResetsTheCount(t *testing.T) {
 	f, dl := failureFixture(t)
-	ctx := context.Background()
-	failSpaced(t, f, dl, indexer429, releasefail.EscalateAfter-1)
-	if err := f.s.history.Create(ctx, &models.HistoryEvent{
+	failSpaced(t, f, dl, indexer404, releasefail.EscalateAfter-1)
+	if err := f.s.history.Create(context.Background(), &models.HistoryEvent{
 		BookID: &f.book.ID, EventType: models.HistoryEventBookImported, SourceTitle: dl.Title,
 		Data: `{"guid":"` + regrabGUID + `"}`,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	ageHistory(t, f, 7*time.Hour)
-	failSpaced(t, f, dl, indexer429, 1)
+	failSpaced(t, f, dl, indexer404, 1)
 	if n := len(blocklistEntries(t, f)); n != 0 {
 		t.Fatalf("the count survived an import: %d entries", n)
 	}
@@ -215,7 +259,7 @@ func TestRecordSendFailure_ImportResetsTheCount(t *testing.T) {
 func TestRecordSendFailure_SuccessfulSendResetsTheCount(t *testing.T) {
 	f, dl := failureFixture(t)
 	ctx := context.Background()
-	failSpaced(t, f, dl, indexer429, releasefail.EscalateAfter-1)
+	failSpaced(t, f, dl, indexer404, releasefail.EscalateAfter-1)
 	for i := 0; i < 2; i++ {
 		if err := f.s.history.Create(ctx, &models.HistoryEvent{
 			BookID: &f.book.ID, EventType: models.HistoryEventGrabbed, SourceTitle: dl.Title,
@@ -225,65 +269,82 @@ func TestRecordSendFailure_SuccessfulSendResetsTheCount(t *testing.T) {
 		}
 		ageHistory(t, f, time.Hour)
 	}
-	failSpaced(t, f, dl, indexer429, 1)
+	failSpaced(t, f, dl, indexer404, 1)
 	if n := len(blocklistEntries(t, f)); n != 0 {
 		t.Fatalf("the count survived a successful send: %d entries", n)
 	}
 }
 
-// An indexer wide outage is not the release's fault: when other releases from
-// the same indexer fail the same way, this one's failures are not counted.
-func TestRecordSendFailure_IndexerWideFaultIsNotCounted(t *testing.T) {
-	f, dl := failureFixture(t)
+// A whole indexer answering 404 (a misrouted proxy, a moved base path, a
+// removed indexer) must not blocklist the good releases on it: two releases,
+// each failing every cycle, add up to nothing, and the indexer is paused.
+func TestRecordSendFailure_WholeIndexerNotFoundBlocklistsNothing(t *testing.T) {
+	f, a := failureFixture(t)
+	b := secondRelease(t, f, a, "g-second")
 	ctx := context.Background()
-	other := &models.Download{
-		GUID: "g-other", Title: "Other Book.epub", Status: models.StateGrabbed,
-		Protocol: "torrent", BookID: &f.book.ID, OwnerUserID: f.bob, IndexerID: dl.IndexerID,
+	for i := 0; i < 2*releasefail.EscalateAfter; i++ {
+		f.s.recordSendFailure(ctx, a, errors.New(indexer404))
+		f.s.recordSendFailure(ctx, b, errors.New(indexer404))
+		serveOther(t, f, *a.IndexerID)
+		if i == 0 {
+			if _, backed := f.s.indexerBackedOff(*a.IndexerID, time.Now()); !backed {
+				t.Error("a burst of 404s across releases did not pause the indexer")
+			}
+		}
+		clearPause(f)
+		ageHistory(t, f, 7*time.Hour)
 	}
-	if err := f.downloads.Create(ctx, other); err != nil {
-		t.Fatal(err)
-	}
-	f.s.recordSendFailure(ctx, other, errors.New(indexer429))
-	f.s.indexerBackoffMu.Lock()
-	f.s.indexerBackoff = nil
-	f.s.indexerBackoffMu.Unlock()
-
-	failSpaced(t, f, dl, indexer429, 2*releasefail.EscalateAfter)
 	if n := len(blocklistEntries(t, f)); n != 0 {
-		t.Fatalf("an indexer wide outage blocklisted a release (%d entries)", n)
+		t.Fatalf("a whole indexer's 404s blocklisted %d good releases", n)
 	}
 }
 
-// An outage is not the release: retries of one release through an indexer that
-// serves nothing in between never add up to a blocklist entry, however long it
-// lasts.
+// An outage is not the release: a lone release retried through an indexer that
+// serves nothing in between never adds up, however long it lasts.
 func TestRecordSendFailure_OutageDoesNotEscalate(t *testing.T) {
 	f, dl := failureFixture(t)
-	failSpacedServed(t, f, dl, indexer429, 4*releasefail.EscalateAfter, false)
+	failSpacedServed(t, f, dl, indexer404, 4*releasefail.EscalateAfter, false)
 	if n := len(blocklistEntries(t, f)); n != 0 {
 		t.Fatalf("retries through an outage blocklisted the release (%d entries)", n)
 	}
 }
 
-// A failure while the indexer is already backing off is not evidence about the
-// release either; it is recorded as indexer wide.
-func TestRecordSendFailure_FailureDuringBackoffIsNotCounted(t *testing.T) {
+// A download with no indexer id never counts, whatever the indexer served.
+func TestRecordSendFailure_NoIndexerNeverCounts(t *testing.T) {
 	f, dl := failureFixture(t)
-	ctx := context.Background()
-	f.s.recordSendFailure(ctx, dl, errors.New(indexer429)) // sets the pause
-	f.s.recordSendFailure(ctx, dl, errors.New(indexer429)) // inside it
-	events, err := f.s.history.ListByBook(ctx, f.book.ID)
-	if err != nil || len(events) != 2 {
-		t.Fatalf("events: %v %d", err, len(events))
+	idx := *dl.IndexerID
+	dl.IndexerID = nil
+	for i := 0; i < 3*releasefail.EscalateAfter; i++ {
+		f.s.recordSendFailure(context.Background(), dl, errors.New(indexer404))
+		serveOther(t, f, idx)
+		ageHistory(t, f, 7*time.Hour)
 	}
-	wide := 0
-	for _, ev := range events {
-		if strings.Contains(ev.Data, `"class":"indexerWide"`) {
-			wide++
+	if n := len(blocklistEntries(t, f)); n != 0 {
+		t.Fatalf("a download with no indexer was blocklisted (%d entries)", n)
+	}
+}
+
+// Usenet is left to #3049: nothing is recorded, counted or paused for it.
+func TestRecordSendFailure_UsenetIsUntouched(t *testing.T) {
+	f, dl := failureFixture(t)
+	dl.Protocol = "usenet"
+	serveOther(t, f, *dl.IndexerID)
+	for _, msg := range []string{indexer404, indexer429, "fetch nzb: indexer returned HTTP 500: boom"} {
+		for i := 0; i < 2*releasefail.EscalateAfter; i++ {
+			f.s.recordSendFailure(context.Background(), dl, errors.New(msg))
+			serveOther(t, f, *dl.IndexerID)
+			ageHistory(t, f, 7*time.Hour)
 		}
 	}
-	if wide != 1 {
-		t.Fatalf("%d events recorded as indexerWide, want 1 (the one inside the pause)", wide)
+	if n := len(blocklistEntries(t, f)); n != 0 {
+		t.Fatalf("a usenet release was blocklisted (%d entries)", n)
+	}
+	if _, backed := f.s.indexerBackedOff(*dl.IndexerID, time.Now()); backed {
+		t.Error("a usenet failure paused the indexer")
+	}
+	events, _ := f.s.history.ListByBook(context.Background(), f.book.ID)
+	if len(events) != 0 {
+		t.Errorf("a usenet failure wrote %d history events", len(events))
 	}
 }
 
@@ -304,7 +365,7 @@ func TestRecordSendFailure_IndexerBackoffHonoursTheTimestamp(t *testing.T) {
 		t.Fatalf("backoff = %v (%v), want until the indexer's own %v", got, backed, until)
 	}
 
-	// The grab path skips the release while the indexer backs off, and says why.
+	// The grab path skips the release while the indexer backs off.
 	if err := f.downloads.Delete(ctx, dl.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -361,16 +422,16 @@ func TestBlocklist_Idempotent(t *testing.T) {
 }
 
 // torrentFixture routes the fixture's grab through the real caller path: a
-// qBittorrent stub that accepts the login, a torznab release whose link the
-// "indexer" answers with the HTTP 500 #4111 quotes.
-func torrentFixture(t *testing.T) *regrabFixture {
+// qBittorrent stub that accepts the login, and a torznab release whose link
+// the "indexer" answers with the given status.
+func torrentFixture(t *testing.T, status int) *regrabFixture {
 	t.Helper()
 	f := newRegrabFixture(t)
 	f.s.history = db.NewHistoryRepo(f.database)
 	ctx := context.Background()
 
 	indexerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "Download failed", http.StatusInternalServerError)
+		http.Error(w, "Download failed", status)
 	}))
 	t.Cleanup(indexerSrv.Close)
 	qb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -407,27 +468,35 @@ func torrentFixture(t *testing.T) *regrabFixture {
 	return f
 }
 
-// retryAfterCooldown makes the failed row due for the scheduler again and
-// lets the indexer pause lapse, as six hours do.
+// retryAfterCooldown makes the failed row due for the scheduler again, lets
+// the indexer pause lapse, and has the indexer serve another release, as six
+// hours do.
 func retryAfterCooldown(t *testing.T, f *regrabFixture) {
 	t.Helper()
-	idx, _ := f.s.indexers.List(context.Background())
-	serveOther(t, f, &models.Download{IndexerID: &idx[0].ID})
 	row, err := f.downloads.GetByGUID(context.Background(), regrabGUID)
 	if err != nil || row == nil {
 		t.Fatalf("row: %v", err)
 	}
 	f.backdate(t, row.ID, "dead_at", time.Now().Add(-7*time.Hour))
-	f.s.indexerBackoffMu.Lock()
-	f.s.indexerBackoff = nil
-	f.s.indexerBackoffMu.Unlock()
+	idx, _ := f.s.indexers.List(context.Background())
+	serveOther(t, f, idx[0].ID)
+	clearPause(f)
+}
+
+// serveFirst has the indexer serve something before the first sweep, as an
+// indexer that works does.
+func serveFirst(t *testing.T, f *regrabFixture) {
+	t.Helper()
+	idx, _ := f.s.indexers.List(context.Background())
+	serveOther(t, f, idx[0].ID)
 }
 
 // The whole path: three sweeps a cooldown apart, each failing on the indexer's
-// 500, blocklist the release; the search then leaves it alone.
-func TestSearchAndGrab_RealPathSpacedFailuresBlocklist(t *testing.T) {
-	f := torrentFixture(t)
+// 404, blocklist the release; the search then leaves it alone.
+func TestSearchAndGrab_RealPathSpacedNotFoundBlocklists(t *testing.T) {
+	f := torrentFixture(t, http.StatusNotFound)
 	ctx := context.Background()
+	serveFirst(t, f)
 	for i := 1; i <= releasefail.EscalateAfter; i++ {
 		f.s.searchAndGrabFormat(ctx, f.book, models.MediaTypeEbook, nil)
 		want := 0
@@ -450,8 +519,9 @@ func TestSearchAndGrab_RealPathSpacedFailuresBlocklist(t *testing.T) {
 // The same path with the failures close together (a person pressing search):
 // the retries reach the client but add up to nothing.
 func TestSearchAndGrab_RealPathBackToBackFailuresDoNotBlocklist(t *testing.T) {
-	f := torrentFixture(t)
+	f := torrentFixture(t, http.StatusNotFound)
 	ctx := context.Background()
+	serveFirst(t, f)
 	for i := 0; i < 3*releasefail.EscalateAfter; i++ {
 		f.s.searchAndGrabFormat(ctx, f.book, models.MediaTypeEbook, nil)
 		retryAfterCooldown(t, f) // the row is due again, the history is not aged
@@ -462,5 +532,31 @@ func TestSearchAndGrab_RealPathBackToBackFailuresDoNotBlocklist(t *testing.T) {
 	}
 	if n := len(blocklistEntries(t, f)); n != 0 {
 		t.Fatalf("back to back failures blocklisted the release (%d entries)", n)
+	}
+}
+
+// #4111's own error, the indexer's HTTP 500 "Download failed", through the
+// real path: it pauses the indexer and is recorded, but is never held against
+// the release, because a quota and a dead link cannot be told apart.
+func TestSearchAndGrab_RealPathIndexer500NeverBlocklists(t *testing.T) {
+	f := torrentFixture(t, http.StatusInternalServerError)
+	ctx := context.Background()
+	for i := 0; i < 2*releasefail.EscalateAfter; i++ {
+		f.s.searchAndGrabFormat(ctx, f.book, models.MediaTypeEbook, nil)
+		if i == 0 {
+			idx, _ := f.s.indexers.List(ctx)
+			if _, backed := f.s.indexerBackedOff(idx[0].ID, time.Now()); !backed {
+				t.Error("the 500 did not pause the indexer")
+			}
+		}
+		retryAfterCooldown(t, f)
+		ageHistory(t, f, 7*time.Hour)
+	}
+	if n := len(blocklistEntries(t, f)); n != 0 {
+		t.Fatalf("an indexer 500 blocklisted the release (%d entries)", n)
+	}
+	events, _ := f.s.history.ListByBook(ctx, f.book.ID)
+	if len(events) != 2*releasefail.EscalateAfter {
+		t.Errorf("%d failure events, want one per sweep", len(events))
 	}
 }

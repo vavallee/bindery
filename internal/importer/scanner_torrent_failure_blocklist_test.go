@@ -2,10 +2,12 @@ package importer
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/releasefail"
 )
@@ -24,7 +26,21 @@ func torrentFailureDownload(t *testing.T, ctx context.Context, f contentFailureF
 		t.Fatal(err)
 	}
 	dl.AddedAt = time.Now().Add(-time.Hour)
+	// A real indexer row, because the blocklist entry points at it.
+	idx := &models.Indexer{Name: "idx-" + guid, Type: "torznab", URL: "http://idx.invalid", Enabled: true}
+	if err := db.NewIndexerRepo(f.database).Create(ctx, idx); err != nil {
+		t.Fatal(err)
+	}
+	dl.IndexerID = &idx.ID
+	serveOther(f, dl)
 	return dl
+}
+
+// serveOther records that the download's indexer sent a different release to
+// a client, which is what an indexer that is otherwise serving looks like.
+func serveOther(f contentFailureFixture, dl *models.Download) {
+	f.scanner.createHistoryEvent(context.Background(), models.HistoryEventGrabbed, "Served Elsewhere", nil, 0,
+		map[string]string{"guid": "g-served", "indexerId": strconv.FormatInt(*dl.IndexerID, 10)})
 }
 
 // ageHistory moves every history row into the past, as the time between two
@@ -57,6 +73,7 @@ func ageHistory(t *testing.T, f contentFailureFixture, d time.Duration) {
 
 func neverArrived(ctx context.Context, f contentFailureFixture, dl *models.Download) {
 	f.scanner.failDownloadThatNeverArrived(ctx, dl, map[int64]bool{}, true)
+	serveOther(f, dl)
 }
 
 // TestNeverArrived_BlocklistsAfterRepeatedFailures is #4111 path 2: a release
@@ -130,12 +147,8 @@ func TestNeverArrived_IndexerWideFaultIsNotCounted(t *testing.T) {
 	ctx := context.Background()
 	f := newContentFailureFixture(t)
 	dl := torrentFailureDownload(t, ctx, f, "guid-wide")
-	idx := int64(7)
-	dl.IndexerID = &idx
-	// The id is not stored on the row (no such indexer), only carried on the
-	// struct and the events, which is all the counter reads.
 	f.scanner.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, "Other", nil, 0,
-		map[string]string{"guid": "someone-else", "class": "indexer", "indexerId": "7"})
+		map[string]string{"guid": "someone-else", "class": "indexer", "indexerId": strconv.FormatInt(*dl.IndexerID, 10)})
 	for i := 0; i < 2*releasefail.EscalateAfter; i++ {
 		neverArrived(ctx, f, dl)
 		ageHistory(t, f, time.Hour)
@@ -182,5 +195,54 @@ func TestUnclassifiedFailureIsNeverCounted(t *testing.T) {
 	}
 	if n := len(f.entries(t, ctx)); n != 0 {
 		t.Fatalf("an unclassified failure blocklisted the release (%d entries)", n)
+	}
+}
+
+// A download with no indexer id never counts.
+func TestNeverArrived_NoIndexerNeverCounts(t *testing.T) {
+	ctx := context.Background()
+	f := newContentFailureFixture(t)
+	dl := torrentFailureDownload(t, ctx, f, "guid-noidx")
+	served := *dl.IndexerID
+	dl.IndexerID = nil
+	for i := 0; i < 3*releasefail.EscalateAfter; i++ {
+		f.scanner.failDownloadThatNeverArrived(ctx, dl, map[int64]bool{}, true)
+		f.scanner.createHistoryEvent(ctx, models.HistoryEventGrabbed, "Served Elsewhere", nil, 0,
+			map[string]string{"guid": "g-served", "indexerId": strconv.FormatInt(served, 10)})
+		ageHistory(t, f, 7*time.Hour)
+	}
+	if n := len(f.entries(t, ctx)); n != 0 {
+		t.Fatalf("a download with no indexer was blocklisted (%d entries)", n)
+	}
+}
+
+// A lone release that never arrives while its indexer serves nothing else is
+// not evidence either.
+func TestNeverArrived_IndexerServingNothingIsNotCounted(t *testing.T) {
+	ctx := context.Background()
+	f := newContentFailureFixture(t)
+	dl := torrentFailureDownload(t, ctx, f, "guid-alone")
+	ageHistory(t, f, 3*24*time.Hour) // the one grab it was served with is long past
+	for i := 0; i < 3*releasefail.EscalateAfter; i++ {
+		f.scanner.failDownloadThatNeverArrived(ctx, dl, map[int64]bool{}, true)
+		ageHistory(t, f, 7*time.Hour)
+	}
+	if n := len(f.entries(t, ctx)); n != 0 {
+		t.Fatalf("a release was blocklisted while its indexer served nothing (%d entries)", n)
+	}
+}
+
+// A usenet download is failed plainly, as before: #3049's rules govern it.
+func TestNeverArrived_UsenetIsNotCounted(t *testing.T) {
+	ctx := context.Background()
+	f := newContentFailureFixture(t)
+	dl := torrentFailureDownload(t, ctx, f, "guid-usenet")
+	dl.Protocol = "usenet"
+	for i := 0; i < 3*releasefail.EscalateAfter; i++ {
+		neverArrived(ctx, f, dl)
+		ageHistory(t, f, 7*time.Hour)
+	}
+	if n := len(f.entries(t, ctx)); n != 0 {
+		t.Fatalf("a usenet download was blocklisted (%d entries)", n)
 	}
 }

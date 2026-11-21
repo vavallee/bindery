@@ -158,10 +158,10 @@ func TestIndexerFailuresElsewhere(t *testing.T) {
 	f.add(models.HistoryEventDownloadFailed, "C", 30*time.Hour, map[string]string{"guid": "c", "class": "indexer", "indexerId": "7"})
 	f.add(models.HistoryEventDownloadFailed, "D", time.Hour, map[string]string{"guid": "d", "class": "local", "indexerId": "7"})
 	since := f.now.Add(-24 * time.Hour)
-	if n, err := f.repo.IndexerFailuresElsewhere(ctx, 7, "g", "indexer", since); err != nil || n != 1 {
+	if n, err := f.repo.IndexerFailuresElsewhere(ctx, 7, "g", []string{"indexer"}, since); err != nil || n != 1 {
 		t.Fatalf("elsewhere(7, g) = %d (%v), want 1", n, err)
 	}
-	if n, _ := f.repo.IndexerFailuresElsewhere(ctx, 7, "a", "indexer", since); n != 0 {
+	if n, _ := f.repo.IndexerFailuresElsewhere(ctx, 7, "a", []string{"indexer"}, since); n != 0 {
 		t.Fatalf("a release's own failure counted as elsewhere: %d", n)
 	}
 }

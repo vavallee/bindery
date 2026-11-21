@@ -623,7 +623,7 @@ func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, m
 // is permanent. detail names the failure in the blocklist reason and holds
 // nothing taken from the client.
 func (s *Scanner) markDownloadFailedCounted(ctx context.Context, dl *models.Download, message string, class releasefail.Class, detail string) {
-	verdict := releasefail.Assess(ctx, s.history, dl, class, time.Now().UTC(), false)
+	verdict := releasefail.Assess(ctx, s.history, dl, class, time.Now().UTC())
 	if verdict.Block {
 		message += fmt.Sprintf(". Blocklisted after %d failures in a row.", verdict.Count)
 	}
@@ -806,6 +806,11 @@ func (s *Scanner) failDownloadThatNeverArrived(
 	const reason = "never reached the download client — the client has no record of it, so nothing was downloaded. Check the indexer and the client are both reachable, then grab it again"
 	slog.Warn("failing a download the client never received",
 		"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
+	if dl.Protocol != "torrent" {
+		// Usenet keeps the plain failure; #3049's rules apply to it.
+		s.markDownloadFailed(ctx, dl, reason)
+		return
+	}
 	s.markDownloadFailedCounted(ctx, dl, reason, releasefail.ClassNeverArrived, "never reached the download client")
 }
 

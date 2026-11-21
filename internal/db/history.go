@@ -349,19 +349,27 @@ func (r *HistoryRepo) ReleaseFailureStreak(ctx context.Context, guid, title stri
 	return count, lastCounted, pendingGrab, nil
 }
 
-// IndexerFailuresElsewhere counts the downloadFailed events of the given class
-// since `since` that name this indexer ("indexerId" on the event) on a release
-// other than excludeGUID. It is the evidence that a failure is the indexer's
-// and not the release's: when other releases from the same indexer fail the
-// same way, the fault is indexer wide.
-func (r *HistoryRepo) IndexerFailuresElsewhere(ctx context.Context, indexerID int64, excludeGUID, class string, since time.Time) (int, error) {
+// IndexerFailuresElsewhere counts the downloadFailed events of the given
+// classes since `since` that name this indexer ("indexerId" on the event) on a
+// release other than excludeGUID. It is the evidence that a failure is the
+// indexer's and not the release's: when other releases from the same indexer
+// fail too, the fault is indexer wide.
+func (r *HistoryRepo) IndexerFailuresElsewhere(ctx context.Context, indexerID int64, excludeGUID string, classes []string, since time.Time) (int, error) {
+	if len(classes) == 0 {
+		return 0, nil
+	}
+	marks := make([]string, len(classes))
+	args := []any{models.HistoryEventDownloadFailed, since, fmt.Sprint(indexerID), excludeGUID}
+	for i, c := range classes {
+		marks[i] = "?"
+		args = append(args, c)
+	}
 	var n int
 	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM history
 		WHERE event_type = ? AND created_at > ?
-		AND json_extract(data, '$.class') = ?
 		AND CAST(json_extract(data, '$.indexerId') AS TEXT) = ?
-		AND COALESCE(json_extract(data, '$.guid'), '') != ?`,
-		models.HistoryEventDownloadFailed, since, class, fmt.Sprint(indexerID), excludeGUID).Scan(&n)
+		AND COALESCE(json_extract(data, '$.guid'), '') != ?
+		AND json_extract(data, '$.class') IN (`+strings.Join(marks, ",")+`)`, args...).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("indexer failures elsewhere: %w", err)
 	}
