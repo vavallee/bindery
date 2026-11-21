@@ -33,8 +33,8 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
   const accepted = result?.accepted
 
   const badgeCls: Record<ScanItem['match'], string> = {
-    confident: 'bg-emerald-100 dark:bg-emerald-950 text-accent-text',
-    ambiguous: 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400',
+    confident: 'bg-success-subtle text-accent-text',
+    ambiguous: 'bg-warning-subtle text-warning-strong',
     none: 'bg-slate-200 dark:bg-zinc-800 text-fg-muted',
   }
 
@@ -59,7 +59,7 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
               {item.detectedFormat}
             </span>
             {item.alreadyImported && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-400">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-info-subtle text-info-strong">
                 {item.handedOff
                   ? t('manualImport.handedOff', 'already handed off to your import tool')
                   : t('manualImport.alreadyImported', 'already imported')}
@@ -170,7 +170,7 @@ export default function FolderImportRow({ item, row, result, importing, onPick, 
       </div>
 
       {result && (
-        <p className={`mt-2 text-xs ${accepted ? 'text-accent-text' : 'text-red-700 dark:text-red-400'}`}>
+        <p className={`mt-2 text-xs ${accepted ? 'text-accent-text' : 'text-danger'}`}>
           {accepted
             ? t('manualImport.queued', 'Queued — importing in the background; watch the Queue for progress.')
             : t('manualImport.failed', { error: result.error || 'failed', defaultValue: `Failed: ${result.error || 'failed'}` })}

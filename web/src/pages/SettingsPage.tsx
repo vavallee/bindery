@@ -50,7 +50,7 @@ const AboutTab = lazyWithReload(() => import('./settings/AboutTab'), './settings
 type Tab = 'naming' | 'storage' | 'schedules' | 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'bookorbit' | 'grimmory' | 'api-keys' | 'advanced' | 'about'
 
 // Classes added to a field for a moment after search or a deep link lands on it.
-const HIGHLIGHT_CLASSES = ['ring-2', 'ring-emerald-500', 'ring-offset-2', 'dark:ring-offset-zinc-950', 'rounded-md']
+const HIGHLIGHT_CLASSES = ['ring-2', 'ring-accent-ring', 'ring-offset-2', 'dark:ring-offset-zinc-950', 'rounded-md']
 const FOCUSABLE = 'input:not([type=hidden]):not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)'
 
 const ADMIN_TABS: Tab[] = ['naming', 'storage', 'schedules', 'indexers', 'clients', 'notifications', 'quality', 'metadata', 'import', 'rootfolders', 'logs', 'blocklist', 'calibre', 'abs', 'bookorbit', 'grimmory', 'api-keys', 'advanced']
@@ -101,7 +101,7 @@ function SettingsNavLink({ tab, active, onSelect, label, badge }: { tab: Tab; ac
       {badge ? (
         <>
           <span>{label}</span>
-          <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400 font-medium leading-none">
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning-subtle text-warning-strong font-medium leading-none">
             {badge}
           </span>
         </>

@@ -420,7 +420,7 @@ export default function AuthorsPage() {
               </div>
             }
           />
-          <span className="text-slate-800 dark:text-zinc-200 truncate hover:text-emerald-700 dark:hover:text-emerald-500">{author.authorName}</span>
+          <span className="text-slate-800 dark:text-zinc-200 truncate hover:text-success">{author.authorName}</span>
         </Link>
       ),
     },
@@ -511,19 +511,19 @@ export default function AuthorsPage() {
       {/* Refresh-all metadata progress banner (#863). Amber while running,
           success/failure summary on completion. Mirrors the Library Scan banner. */}
       {refreshStatus?.status === 'running' && (
-        <div className="mb-4 px-3 py-2 rounded-md text-sm bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+        <div className="mb-4 px-3 py-2 rounded-md text-sm bg-warning-subtle text-warning-strong border border-warning-border">
           {t('authors.refreshAllProgress', { done: refreshStatus.done, total: refreshStatus.total })}
         </div>
       )}
       {refreshStatus?.status === 'completed' && (
-        <div className="mb-4 px-3 py-2 rounded-md text-sm bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+        <div className="mb-4 px-3 py-2 rounded-md text-sm bg-success-subtle text-success-strong border border-success-border">
           {refreshStatus.failed > 0
             ? t('authors.refreshAllDoneWithFailures', { done: refreshStatus.done, failed: refreshStatus.failed })
             : t('authors.refreshAllDone', { done: refreshStatus.done })}
         </div>
       )}
       {refreshStatus?.status === 'failed' && (
-        <div className="mb-4 px-3 py-2 rounded-md text-sm bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 border border-red-300 dark:border-red-800">
+        <div className="mb-4 px-3 py-2 rounded-md text-sm bg-danger-subtle text-danger-strong border border-danger-border">
           {t('authors.refreshAllFailed', { message: refreshStatus.message || t('authors.refreshAllError') })}
         </div>
       )}
@@ -621,7 +621,7 @@ export default function AuthorsPage() {
             <div
               key={author.id}
               data-testid="author-card"
-              className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden hover:border-emerald-500 transition-colors ${selectedIds.has(author.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800'}`}
+              className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden hover:border-accent-ring transition-colors ${selectedIds.has(author.id) ? 'border-accent-ring' : 'border-slate-200 dark:border-zinc-800'}`}
             >
               <div className="relative">
                 <label
@@ -841,7 +841,7 @@ export default function AuthorsPage() {
                 </span>
               </label>
               {bulkMonitorModeError && (
-                <p role="alert" className="text-sm text-red-700 dark:text-red-300 bg-red-100 dark:bg-red-950/40 border border-red-300 dark:border-red-900 rounded-md px-3 py-2">
+                <p role="alert" className="text-sm text-danger-strong bg-danger-subtle border border-danger-border rounded-md px-3 py-2">
                   {bulkMonitorModeError}
                 </p>
               )}
@@ -897,7 +897,7 @@ export default function AuthorsPage() {
 function MonitoredBadge({ monitored }: { monitored: boolean }) {
   const { t } = useTranslation()
   return (
-    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium ${monitored ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400' : 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-300'}`}>
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium ${monitored ? 'bg-success-subtle text-success-strong' : 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-300'}`}>
       <span aria-hidden="true">{monitored ? '●' : '○'}</span>
       {monitored ? t('authors.monitored') : t('authors.unmonitored')}
     </span>

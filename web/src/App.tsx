@@ -169,7 +169,7 @@ function Shell() {
       {t(`nav.${item.key}`)}
       {item.key === 'import' && unmatched > 0 && (
         <span
-          className="ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-amber-100 px-1.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+          className="ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-warning-subtle px-1.5 text-[11px] font-semibold text-warning-strong"
         >
           <span aria-hidden="true">{unmatched > 999 ? '999+' : unmatched}</span>
           <span className="sr-only">{t('nav.importUnmatched', { count: unmatched, defaultValue: '{{count}} books need a decision' })}</span>
@@ -180,14 +180,14 @@ function Shell() {
           urgent thing the nav can report. */}
       {(item.key === 'queue' || item.key === 'activity') && failedDownloads > 0 && (
         <span
-          className="ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-red-100 px-1.5 text-[11px] font-semibold text-red-800 dark:bg-red-950 dark:text-red-300"
+          className="ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-danger-subtle px-1.5 text-[11px] font-semibold text-danger-strong"
         >
           <span aria-hidden="true">{failedDownloads > 999 ? '999+' : failedDownloads}</span>
           <span className="sr-only">{t('nav.queueFailed', { count: failedDownloads, defaultValue: '{{count}} failed downloads' })}</span>
         </span>
       )}
       {(item.key === 'requests' || item.key === 'activity') && pendingRequests > 0 && (
-        <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-700 text-white text-[10px] font-semibold">
+        <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-warning-fill text-on-fill text-[10px] font-semibold">
           <span aria-hidden="true">{pendingRequests}</span>
           <span className="sr-only">{t('nav.requestsPending', { count: pendingRequests })}</span>
         </span>

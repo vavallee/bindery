@@ -677,7 +677,7 @@ export default function SeriesPage() {
                     </div>
                     <div className="flex-shrink-0 flex items-center gap-2">
                       {displayMissingCount > 0 && (
-                        <span className="text-xs text-amber-800 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
+                        <span className="text-xs text-warning-strong bg-warning-subtle/50 px-2 py-0.5 rounded-full">
                           {missingScope === 'all'
                             ? t('series.missingBadge', { count: displayMissingCount })
                             : t(`series.missingBadgeScope.${missingScope}`, { count: displayMissingCount })}
@@ -730,8 +730,8 @@ export default function SeriesPage() {
                       disabled={linking === series.id}
                       className={`touch-target text-xs px-2.5 py-1 rounded font-medium border disabled:opacity-50 ${
                         series.hardcoverLink
-                          ? 'border-sky-500/40 bg-sky-500/10 text-sky-800 dark:text-sky-300'
-                          : 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300'
+                          ? 'border-info-border bg-info-subtle/50 text-info-strong'
+                          : 'border-warning-border bg-warning-subtle/50 text-warning-strong'
                       }`}
                       title={series.hardcoverLink ? t('series.hardcover.linkedTo', { title: series.hardcoverLink.hardcoverTitle }) : t('series.hardcover.searchTitle')}
                     >
@@ -844,16 +844,16 @@ export default function SeriesPage() {
                           {entry.book?.status && (
                             <span className={`text-xs px-2 py-0.5 rounded ${
                               entry.book.status === 'imported'
-                                ? 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400'
+                                ? 'bg-success-subtle text-success-strong'
                                 : entry.book.status === 'wanted'
-                                ? 'bg-amber-500/20 text-amber-800 dark:text-amber-400'
+                                ? 'bg-warning-subtle text-warning-strong'
                                 : 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300'
                             }`}>
                               {t(`bookStatus.${entry.book.status}`, { defaultValue: entry.book.status })}
                             </span>
                           )}
                           {entry.book?.excluded && (
-                            <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-400">
+                            <span className="text-xs px-2 py-0.5 rounded bg-warning-subtle text-warning-strong">
                               {t('series.excluded')}
                             </span>
                           )}
@@ -895,7 +895,7 @@ export default function SeriesPage() {
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={e => e.stopPropagation()}
-                            className="text-xs text-sky-700 dark:text-sky-300 hover:underline mt-0.5 inline-block"
+                            className="text-xs text-info hover:underline mt-0.5 inline-block"
                           >
                             {t('common.viewOnSource', { source: 'Hardcover' })}
                           </a>
@@ -929,7 +929,7 @@ export default function SeriesPage() {
                       <div className="px-4 pb-3 text-sm text-fg-muted">{t('series.hardcover.loadingBooks')}</div>
                     )}
                     {diffErrors[series.id] && (
-                      <div className="px-4 pb-3 text-sm text-rose-700 dark:text-rose-400">{diffErrors[series.id]}</div>
+                      <div className="px-4 pb-3 text-sm text-danger">{diffErrors[series.id]}</div>
                     )}
                     {diff && diff.missing.length > 0 && (
                       <div className="px-4 pb-4 space-y-2">

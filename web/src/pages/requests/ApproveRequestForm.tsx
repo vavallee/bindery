@@ -131,7 +131,7 @@ export default function ApproveRequestForm({ request, onApproved, onCancel }: Pr
         <input type="checkbox" checked={searchOnAdd} onChange={e => setSearchOnAdd(e.target.checked)} />
         {t('requests.admin.searchOnAdd')}
       </label>
-      {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel')}</button>
         <button type="submit" disabled={sending || (isAuthor && !defaults)} className={`px-3 py-1.5 ${primaryFill} disabled:opacity-50 rounded text-sm font-medium`}>

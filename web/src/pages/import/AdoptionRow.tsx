@@ -133,7 +133,7 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
           <span className="truncate font-medium text-slate-800 dark:text-zinc-200">{name}</span>
           <MediaBadge type={item.format} />
           {rootLabel && (
-            <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-300" title={item.rootPath}>
+            <span className="shrink-0 rounded bg-warning-subtle px-1.5 py-0.5 text-[10px] font-medium text-warning-strong" title={item.rootPath}>
               {rootLabel}
             </span>
           )}
@@ -156,17 +156,17 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
         ) : item.state === 'adopted' && item.book ? (
           <p className="truncate text-xs text-fg-muted">
             {t('adoption.row.adoptedAs', 'Adopted as')}{' '}
-            <Link to={`/book/${item.book.id}`} className="font-medium text-slate-800 dark:text-zinc-200 hover:text-emerald-700 dark:hover:text-emerald-400">{item.book.title}</Link>
+            <Link to={`/book/${item.book.id}`} className="font-medium text-slate-800 dark:text-zinc-200 hover:text-success">{item.book.title}</Link>
           </p>
         ) : top ? (
           <p className="flex min-w-0 items-center gap-2 text-xs" title={tooltip}>
-            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${strength === 'strong' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300'}`}>
+            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${strength === 'strong' ? 'bg-success-subtle text-success-strong' : 'bg-slate-200 text-slate-700 dark:bg-zinc-800 dark:text-zinc-300'}`}>
               {strength === 'strong' ? t('adoption.match.strong', 'Strong match') : t('adoption.match.possible', 'Possible match')}
             </span>
             {strength === 'strong' ? (
               <span className="truncate text-slate-700 dark:text-zinc-300">{top.book.title}</span>
             ) : (
-              <button type="button" onClick={() => onOpen(false)} className="truncate text-slate-700 dark:text-zinc-300 underline decoration-dotted underline-offset-2 hover:text-emerald-700 dark:hover:text-emerald-400">
+              <button type="button" onClick={() => onOpen(false)} className="truncate text-slate-700 dark:text-zinc-300 underline decoration-dotted underline-offset-2 hover:text-success">
                 {top.book.title}
               </button>
             )}
@@ -204,7 +204,7 @@ const AdoptionRow = forwardRef<HTMLTableRowElement, Props>(function AdoptionRow(
             {t('adoption.outcome.keptBook', 'Files removed. The book stayed because it is now in use.')}
           </p>
         )}
-        {error && <p role="alert" className="mt-0.5 break-words text-xs text-red-700 dark:text-red-400">{error}</p>}
+        {error && <p role="alert" className="mt-0.5 break-words text-xs text-danger">{error}</p>}
       </td>
       <td className={actionCellCls}>
         <div className="flex items-center gap-1.5 md:justify-end">

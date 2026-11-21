@@ -360,7 +360,9 @@ describe('explicit text colours on the background in the same string', () => {
         }
       }
     }
-    expect(checked).toBeGreaterThan(100)
+    // Most hued text went to the status tokens (#3994), measured by the token
+    // tests; this still sees any raw class that is left.
+    expect(checked).toBeGreaterThan(0)
     expect(failures, failures.join('\n')).toEqual([])
   })
 
@@ -400,7 +402,9 @@ describe('explicit text colours on the background in the same string', () => {
         }
       }
     }
-    expect(checked).toBeGreaterThan(10)
+    // Hued hover colours now go through the status tokens, which the token
+    // scan measures (#3994); only a stray raw class is left to see here.
+    expect(checked).toBeGreaterThanOrEqual(0)
     expect(failures, failures.join('\n')).toEqual([])
   })
 })
@@ -677,7 +681,7 @@ describe('status colour tokens (#3994)', () => {
         }
       }
     }
-    expect(checked).toBeGreaterThanOrEqual(0)
+    expect(checked).toBeGreaterThan(40)
     expect(failures, failures.join('\n')).toEqual([])
   })
 })

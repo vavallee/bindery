@@ -38,8 +38,8 @@ export default function AdoptionSummary({ summary, scan, onScan, nudgeScan }: Pr
           {running ? (
             <span className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
               <span aria-hidden="true" className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success-marker opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-success-marker" />
               </span>
               {t('adoption.summary.scanning', 'Scanning your library…')}
             </span>
@@ -68,17 +68,17 @@ export default function AdoptionSummary({ summary, scan, onScan, nudgeScan }: Pr
         </div>
       </div>
       {scan?.error && (
-        <p role="alert" className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+        <p role="alert" className="mt-2 text-xs text-warning">
           {t('adoption.summary.scanError', { error: scan.error, defaultValue: 'The last scan did not finish: {{error}}' })}
         </p>
       )}
       {!scan?.error && scan?.ran && scan.noFilesFound && (
-        <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+        <p className="mt-2 text-xs text-warning">
           {t('adoption.summary.noFiles', 'The last scan found no book files. Check that the library folder is mounted, then scan again. Your decisions were kept.')}
         </p>
       )}
       {scan?.truncated && (
-        <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+        <p className="mt-2 text-xs text-warning">
           {t('adoption.summary.truncated', 'This library is larger than one scan lists. Adopt or ignore some books and scan again to see the rest.')}
         </p>
       )}

@@ -92,12 +92,12 @@ export default function SetupPage() {
           />
         </label>
         {error && (
-          <div className="text-sm text-red-700 dark:text-red-400 py-1">{error}</div>
+          <div className="text-sm text-danger py-1">{error}</div>
         )}
         <button
           type="submit"
           disabled={submitting}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-md py-2 text-sm transition-colors"
+          className="w-full bg-progress-fill hover:bg-progress-fill-hover disabled:opacity-50 disabled:cursor-not-allowed text-on-fill font-medium rounded-md py-2 text-sm transition-colors"
         >
           {submitting ? t('setup.submitting') : t('setup.submit')}
         </button>

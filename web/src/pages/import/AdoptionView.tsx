@@ -83,7 +83,7 @@ export default function AdoptionView() {
           <p>{t('adoption.confirmStrong.body', 'Each book is adopted as its suggestion, the same as pressing Confirm on every row. Every one can be undone from its row or the Adopted list.')}</p>
           {/* tabIndex: a scroll box with no focusable content cannot be
               scrolled from the keyboard otherwise. */}
-          <ul tabIndex={0} className="mt-3 max-h-64 overflow-y-auto space-y-1 text-xs rounded focus-visible:outline-2 focus-visible:outline-emerald-500" aria-label={t('adoption.confirmStrong.listLabel', 'Files and the books they go to')}>
+          <ul tabIndex={0} className="mt-3 max-h-64 overflow-y-auto space-y-1 text-xs rounded focus-visible:outline-2 focus-visible:outline-accent-ring" aria-label={t('adoption.confirmStrong.listLabel', 'Files and the books they go to')}>
             {batch.map(({ item, book }) => (
               <li key={item.id} className="min-w-0 [overflow-wrap:anywhere]">
                 <span className="font-mono text-fg-muted">{item.relPath}</span>
@@ -195,8 +195,8 @@ export default function AdoptionView() {
             <p role="status" data-testid="strong-result" className="mb-3 text-sm text-slate-700 dark:text-zinc-300">{strongResult}</p>
           )}
           {strongItems.length > 1 && (
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-300/60 dark:border-emerald-900/60 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-sm">
-              <span className="text-emerald-900 dark:text-emerald-200">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-success-border bg-success-subtle px-3 py-2 text-sm">
+              <span className="text-success-strong">
                 {t('adoption.confirmStrong.summary', { count: strongItems.length, defaultValue: '{{count}} books on this page have a strong match.' })}
               </span>
               <button type="button" onClick={() => void confirmStrong()} disabled={confirmingStrong} className={`${btn.primary} ${btnSize.sm}`}>
@@ -206,7 +206,7 @@ export default function AdoptionView() {
           )}
 
           {state.loadError && (
-            <p role="alert" className="mb-3 text-sm text-red-700 dark:text-red-400">{state.loadError}</p>
+            <p role="alert" className="mb-3 text-sm text-danger">{state.loadError}</p>
           )}
           {!state.loaded ? (
             <div className="py-10 text-center text-sm text-fg-muted">{t('common.loading', 'Loading…')}</div>

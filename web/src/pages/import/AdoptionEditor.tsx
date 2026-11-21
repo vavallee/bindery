@@ -122,7 +122,7 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
           {o.book.authorName && <span className="text-xs text-fg-muted"> · {o.book.authorName}</span>}
         </span>
         {o.folderAuthorOnly && (
-          <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+          <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium bg-warning-subtle text-warning-strong">
             {t('adoption.editor.folderAuthorOnly', 'Folder author only')}
           </span>
         )}
@@ -130,7 +130,7 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
         {pct !== null ? (
           <span className="flex items-center gap-2" aria-label={t('adoption.editor.score', { percent: pct, defaultValue: '{{percent}}% title match' })}>
             <span aria-hidden="true" className="hidden sm:block h-1.5 w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-zinc-800">
-              <span className={`block h-full rounded-full ${pct >= 80 && !o.folderAuthorOnly ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }} />
+              <span className={`block h-full rounded-full ${pct >= 80 && !o.folderAuthorOnly ? 'bg-success-marker' : 'bg-warning-marker'}`} style={{ width: `${pct}%` }} />
             </span>
             <span className="w-9 text-right text-xs tabular-nums text-fg-muted">{pct}%</span>
           </span>
@@ -147,7 +147,7 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
         {t('adoption.editor.heading', { name, defaultValue: 'Which book is {{name}}?' })}
       </h4>
       {conflict && (
-        <p role="note" aria-label={t('adoption.editor.conflictLabel', 'Author conflict')} className="-mt-2 text-xs text-amber-800 dark:text-amber-400">
+        <p role="note" aria-label={t('adoption.editor.conflictLabel', 'Author conflict')} className="-mt-2 text-xs text-warning-strong">
           {t('adoption.editor.conflict', {
             files: conflict.files, folder: conflict.folder,
             defaultValue: 'The files say {{files}}, but the folder says {{folder}}. A book by {{folder}} is only a look alike, so none is chosen for you.',
@@ -181,7 +181,7 @@ export default function AdoptionEditor({ item, onAdopt, onCancel, showFiles = fa
         </fieldset>
       )}
       {chosen?.status === 'imported' && (
-        <p role="note" className="-mt-2 text-xs text-amber-800 dark:text-amber-400">
+        <p role="note" className="-mt-2 text-xs text-warning-strong">
           {t('adoption.editor.alreadyImported', 'This book already has its files. Adopting adds these alongside them, and nothing is replaced or deleted.')}
         </p>
       )}

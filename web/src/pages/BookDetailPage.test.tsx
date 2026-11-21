@@ -1844,7 +1844,7 @@ describe('BookDetailPage — header', () => {
 
     fireEvent.click(within(screen.getByTestId('file-section-actions')).getByRole('button', { name: 'More' }))
     const deleteBook = await screen.findByRole('menuitem', { name: 'Delete book + files…' })
-    expect(deleteBook.className).toContain('text-red-700')
+    expect(deleteBook.className).toContain('text-danger')
     expect(deleteBook.className).not.toContain('bg-red-600')
   })
 
