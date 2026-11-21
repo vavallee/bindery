@@ -24,8 +24,15 @@
      --<role>-marker:     dots, bars and rings, and a translucent wash
                           (bg-<role>-marker/20); never text
    Roles: danger (red), warning (amber), success (emerald), info (sky),
-   progress (blue, an in-flight download or import) and caution (orange, an
-   import that failed but can be retried).
+   progress (blue, an in-flight download or import) and caution (orange, the
+   Queue's import failed chip: a download that arrived but could not be
+   imported, so it can be retried).
+   Two notes on the word caution. The `caution` variant of MoreMenu and
+   BulkActionBar items is amber and uses the warning role; it is an older use
+   of the word and a different colour. And History shows its import failed
+   event in red (danger) where the Queue chip is orange: that difference was
+   there before the tokens (the Queue's orange dates from #2377, History never
+   had it) and was kept, not decided here.
    Also: accent-fill, accent-fill-hover and accent-ring, the brand green for
    primary buttons, selected pills and focus rings; link, link-fill and
    link-fill-hover, the blue of text links and the sign in and setup buttons

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import { COVER_COLORS, COVER_FG, coverColorFor } from '../components/coverPalette'
 import { SELECTED_HOVER_DARK } from '../components/DataTable'
 import { TOAST_FILL } from '../pages/settings/toastBus'
+import { bookStatusBadge } from '../components/bookStatus'
 import dataTableSource from '../components/DataTable.tsx?raw'
 import postcss from 'postcss'
 import tailwindcss from '@tailwindcss/postcss'
@@ -642,27 +643,72 @@ describe('status colour tokens (#3994)', () => {
   })
 
   // The class strings in the source. A token text colour is measured against
-  // the token or palette background in the same string (a translucent one
-  // mixed over the card), resting and hovered, in each theme: the pairing the
-  // checks above cannot see, such as text-danger on bg-danger-subtle.
-  it('token text stays AA on the background in the same string', () => {
-    const TEXT = /^(?:hover:)?text-(?:(?:danger|warning|success|info|progress|caution|link)(?:-strong)?|on-fill)$/
+  // the background in the same string (a token or a palette grey, a
+  // translucent one mixed over the card), resting and hovered, in each theme:
+  // the pairing the checks above cannot see, such as text-danger on
+  // bg-danger-subtle. A string with no background of its own is measured on the
+  // page and on the card, where nearly all of it lands.
+  //
+  // The scan could lose coverage without failing, by a regex that stops
+  // matching a family. So the family names come from one list, every token
+  // class in the source has to be recognised, each family has to be measured at
+  // least this many times, and so does the total. The floors sit just under the
+  // counts today (1760 pairs, 148 hover, 76 with a hover text colour); they rise when a family gains users and
+  // never need to fall.
+  const TEXT_FAMILIES = ['danger', 'warning', 'success', 'info', 'progress', 'caution', 'link'] as const
+  const FAMILY_FLOOR: Record<string, number> = {
+    danger: 725, warning: 510, success: 210, info: 70, progress: 19, caution: 3, link: 11, 'on-fill': 185,
+  }
+  const TOTAL_FLOOR = 1750
+  const HOVER_FLOOR = 145
+  const HOVER_TEXT_FLOOR = 74
+  const TEXT_RE = new RegExp(`^(?:hover:)?text-(?:(?:${TEXT_FAMILIES.join('|')})(?:-strong)?|on-fill)$`)
+  const TEXT_IN_STRING = new RegExp(`\\b(?:hover:)?text-(?:${[...TEXT_FAMILIES, 'on-fill'].join('|')})`)
+  const familyOf = (textClass: string) => textClass.replace(/^hover:/, '').replace(/^text-/, '').replace(/-strong$/, '')
+  const isTokenName = (name: string) => ALL_TOKENS.light.has(name)
+  const resolveBg = (cls: string, theme: Theme, card: string): string | undefined => {
+    const [base, alpha] = cls.split('/')
+    const name = base.replace(/^bg-/, '')
+    const hex = isTokenName(name) ? tok(name, theme) : TAILWIND.get(name)
+    return hex ? (alpha ? mix(hex, card, Number(alpha) / 100) : hex) : undefined
+  }
+  const SCAN_SOURCES = () => Object.entries(sources)
+    .filter(([file]) => !/\.test\.tsx?$/.test(file))
+    .map(([file, source]) => [file, source.replace(/^\s*\/\/.*$/gm, '')] as const)
+
+  it('every token class in the source is one the scan recognises', () => {
+    const unknown: string[] = []
+    for (const [file, code] of SCAN_SOURCES()) {
+      for (const m of code.matchAll(/(?<![\w-])((?:[a-z-]+:)*)(text|bg)-([a-z][a-z-]*)(?:\/\d+)?(?![\w-])/g)) {
+        const util = m[2]
+        const name = m[3]
+        if (!isTokenName(name)) continue
+        // fg-muted and accent-text are measured by the first scan, and a token
+        // such as accent-ring is for rings and borders, not text.
+        if (util === 'text' && !TEXT_RE.test(`text-${name}`) && !['fg-muted', 'accent-text'].includes(name)) unknown.push(`${file}: text-${name}`)
+        if (util === 'bg' && !resolveBg(`bg-${name}`, 'light', SURFACES.lightCard)) unknown.push(`${file}: bg-${name}`)
+      }
+    }
+    expect(unknown, 'a token class the contrast scan cannot read').toEqual([])
+  })
+
+  it('token text stays AA on the background in the same string, and no family loses coverage', () => {
     const failures: string[] = []
+    const perFamily = new Map<string, number>()
     let checked = 0
     let hoverChecked = 0
-    const resolveBg = (cls: string, theme: Theme, card: string): string | undefined => {
-      const [base, alpha] = cls.split('/')
-      const m = base.match(/^bg-((?:danger|warning|success|info|progress|caution)-(?:subtle|chip|border|fill|fill-hover|marker)|link-fill|link-fill-hover|row-selected|row-selected-hover|accent-fill|accent-fill-hover)$/)
-      const hex = m ? tok(m[1], theme) : TAILWIND.get(base.replace(/^bg-/, ''))
-      return hex ? (alpha ? mix(hex, card, Number(alpha) / 100) : hex) : undefined
+    let hoverTextChecked = 0
+    const count = (textClass: string) => {
+      const family = textClass === 'text-on-fill' || textClass === 'hover:text-on-fill' ? 'on-fill' : familyOf(textClass)
+      perFamily.set(family, (perFamily.get(family) ?? 0) + 1)
     }
-    for (const [file, source] of Object.entries(sources)) {
-      if (/\.test\.tsx?$/.test(file)) continue
-      const code = source.replace(/^\s*\/\/.*$/gm, '')
-      for (const [, str] of code.matchAll(/["'`]([^"'`]*\b(?:hover:)?text-(?:danger|warning|success|info|progress|caution|link|on-fill)[^"'`]*)["'`]/g)) {
+    for (const [file, code] of SCAN_SOURCES()) {
+      for (const [, str] of code.matchAll(new RegExp(`["'\`]([^"'\`]*${TEXT_IN_STRING.source}[^"'\`]*)["'\`]`, 'g'))) {
         const classes = str.split(/\s+/)
+        const hasBg = classes.some(c => /^(?:dark:|hover:)*bg-/.test(c))
         for (const theme of ['light', 'dark'] as const) {
           const card = theme === 'dark' ? SURFACES.darkCard : SURFACES.lightCard
+          const page = theme === 'dark' ? SURFACES.darkPage : SURFACES.lightPage
           // The dark: background wins in dark mode; else the shared one.
           const bgFor = (prefix: string) => {
             const own = theme === 'dark' ? classes.find(c => c.startsWith(`dark:${prefix}bg-`)) : undefined
@@ -670,23 +716,65 @@ describe('status colour tokens (#3994)', () => {
           }
           const rest = bgFor('')
           const hover = bgFor('hover:') ?? rest
-          const restText = classes.find(c => TEXT.test(c) && !c.startsWith('hover:'))
-          const hoverText = classes.find(c => TEXT.test(c) && c.startsWith('hover:')) ?? restText
-          for (const [state, bgClass, textClass] of [['rest', rest, restText], ['hover', hover, hoverText]] as const) {
+          const restText = classes.find(c => TEXT_RE.test(c) && !c.startsWith('hover:'))
+          const hoverText = classes.find(c => TEXT_RE.test(c) && c.startsWith('hover:')) ?? restText
+          const grounds: Array<[string, string | undefined, string | undefined]> = hasBg
+            ? [['rest', rest, restText], ['hover', hover, hoverText]]
+            : [
+              ['rest on a card', card, restText],
+              ['rest on the page', page, restText],
+              ['hover on a card', card, hoverText],
+              ['hover on the page', page, hoverText],
+            ]
+          for (const [state, bgClass, textClass] of grounds) {
             if (!bgClass || !textClass) continue
-            const bg = resolveBg(bgClass, theme, card)
+            // White on a fill needs the fill; with none in the string it is set by a parent.
+            if (!hasBg && familyOf(textClass) === 'on-fill') continue
+            if (state.startsWith('hover') && hoverText === restText && !hasBg) continue
+            const bg = hasBg ? resolveBg(bgClass, theme, card) : bgClass
             const fg = tok(textClass.replace(/^hover:text-/, '').replace(/^text-/, ''), theme)
             if (!bg || !fg) continue
             checked++
-            if (state === 'hover' && (hover !== rest || hoverText !== restText)) hoverChecked++
+            count(textClass)
+            if (state.startsWith('hover') && (hover !== rest || hoverText !== restText)) hoverChecked++
+            if (state.startsWith('hover') && hoverText !== restText) hoverTextChecked++
             const ratio = contrast(fg, bg)
             if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${state} ${textClass} on ${bgClass} is ${ratio.toFixed(2)}:1 in "${str.trim().slice(0, 90)}"`)
           }
         }
       }
     }
-    expect(hoverChecked).toBeGreaterThan(60)
-    expect(checked).toBeGreaterThan(700)
     expect(failures, failures.join('\n')).toEqual([])
+    for (const [family, floor] of Object.entries(FAMILY_FLOOR)) {
+      expect(perFamily.get(family) ?? 0, `pairs measured for ${family}`).toBeGreaterThan(floor)
+    }
+    expect(hoverChecked, 'hover pairs measured').toBeGreaterThan(HOVER_FLOOR)
+    expect(hoverTextChecked, 'hover text colours measured').toBeGreaterThan(HOVER_TEXT_FLOOR)
+    expect(checked, 'pairs measured').toBeGreaterThan(TOTAL_FLOOR)
   })
+})
+
+// The book status badges that stay on palette greys: skipped, wanted but not
+// monitored, and an unknown status. Their classes are read from bookStatusBadge
+// itself, so a shade change re-checks contrast: slate-600 on slate-300 is 5.10
+// in light, zinc-300 on zinc-700 is 7.07 in dark (#3994 moved the coloured
+// badges to tokens, and this was left without its explicit check).
+describe('book status badges on greys', () => {
+  const t = ((key: string) => key) as unknown as Parameters<typeof bookStatusBadge>[2]
+  const cases: Array<[string, string, boolean]> = [['skipped', 'skipped', true], ['wanted but not monitored', 'wanted', false], ['unknown status', 'weird', true]]
+  for (const [name, status, monitored] of cases) {
+    for (const theme of ['light', 'dark'] as const) {
+      it(`${name} passes AA in ${theme}`, () => {
+        const classes = bookStatusBadge(status, monitored, t).colorClass.split(/\s+/)
+        const prefix = theme === 'dark' ? 'dark:' : ''
+        const bg = classes.find(c => c.startsWith(`${prefix}bg-`))?.slice(prefix.length + 3)
+        const text = classes.find(c => c.startsWith(`${prefix}text-`))?.slice(prefix.length + 5)
+        expect(bg && text, classes.join(' ')).toBeTruthy()
+        const fg = TAILWIND.get(text!)
+        const ground = TAILWIND.get(bg!)
+        expect(fg && ground, `${text} on ${bg}`).toBeTruthy()
+        expect(contrast(fg!, ground!)).toBeGreaterThanOrEqual(AA_NORMAL)
+      })
+    }
+  }
 })

@@ -8,7 +8,7 @@ import { RAW_STATUS_ALLOWLIST } from './rawStatusAllowlist'
 // colours are tokens now (#3994, src/index.css), so a new one means someone
 // skipped them and the next accent or theme change has one more place to find.
 // This fails on one in any file that is not on the allowlist.
-const UTILITY = '(?:text|bg|border|ring|outline|divide|from|via|to|fill|stroke|placeholder|decoration|accent|shadow)'
+const UTILITY = '(?:text|bg|border(?:-[xysetblr])?|ring(?:-offset)?|inset-ring|inset-shadow|drop-shadow|outline|divide|from|via|to|fill|stroke|placeholder|decoration|accent|caret|shadow)'
 const HUES = '(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)'
 const START = '(?<![\\w-])(?:[a-z-]+:)*'
 export const RAW_PALETTE_CLASS = new RegExp(`${START}${UTILITY}-${HUES}-\\d{2,3}(?:/\\d+)?(?![\\w-])`, 'g')
@@ -17,7 +17,7 @@ export const RAW_ARBITRARY_COLOUR = new RegExp(`${START}${UTILITY}-\\[(?:#|rgba?
 // assembled from parts. Only the colour utilities are looked for, and a
 // template that merely builds a date (`${year}-${month}`) has none.
 export const DYNAMIC_COLOUR_CLASS = new RegExp(
-  `${START}${UTILITY}-\\$\\{|['"\`](?<![\\w-])${UTILITY}-['"\`]\\s*\\+|['"\`]${UTILITY}-['"\`]\\s*\\+`,
+  `${START}${UTILITY}-\\$\\{|['"\`](?<![\\w-])${UTILITY}-['"\`]\\s*\\+|['"\`]${UTILITY}-['"\`]\\s*\\+|\\$\\{[^}]*\\}-(?:50|[1-9]00|950)(?![\\w-])`,
   'g',
 )
 const PATTERNS = [RAW_PALETTE_CLASS, RAW_ARBITRARY_COLOUR, DYNAMIC_COLOUR_CLASS]
@@ -62,6 +62,20 @@ describe('raw palette colours (#3994)', () => {
     ['pink', 'text-pink-600'],
     ['fuchsia', 'bg-fuchsia-100'],
     ['indigo', 'bg-indigo-600'],
+    ['a caret', 'caret-red-500'],
+    ['a side border', 'border-t-red-500'],
+    ['a horizontal border', 'dark:border-x-amber-300/40'],
+    ['an end border', 'border-e-emerald-500'],
+    ['a ring offset', 'ring-offset-sky-200'],
+    ['an inset ring', 'inset-ring-red-500'],
+    ['an inset shadow', 'inset-shadow-blue-500'],
+    ['a decoration', 'decoration-rose-500'],
+    ['an accent', 'accent-emerald-600'],
+    ['a placeholder', 'placeholder-amber-500'],
+    ['an outline', 'outline-orange-500'],
+    ['an arbitrary side border', 'border-l-[#dc2626]'],
+    ['a bare interpolated hue', 'className={`${c}-700`}'],
+    ['a bare interpolated hue with a variant', 'dark:${c}-400'],
     ['an arbitrary hex', 'text-[#dc2626]'],
     ['an arbitrary hex with a variant', 'dark:hover:bg-[#023a2d]'],
     ['an arbitrary rgb', 'bg-[rgb(220,38,38)]'],

@@ -25,5 +25,7 @@ export const RAW_STATUS_ALLOWLIST: Record<string, string> = {
     'The purple rename dot and the indigo Audible enrich button are an event kind and a one-off action colour, not a status role.',
   'pages/AuthorDetailPage.tsx': 'The indigo audiobook badge is a media category, like MediaBadge.',
   'pages/BooksPage.tsx': 'The indigo audiobook label is a media category, like MediaBadge.',
+  'pages/settings/IndexersTab.tsx':
+    'The orange Prowlarr badge labels where an indexer came from; it is a category, not the caution status, so it must not share that token.',
   'pages/settings/FormatList.tsx': 'The indigo audiobook format chip is a media category, like MediaBadge.',
 }
