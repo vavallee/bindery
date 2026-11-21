@@ -540,6 +540,34 @@ Each of these is per step: a paused unpack step never stops `FAILURE/HEALTH` or 
 
 SABnzbd needs none of this: it refuses to start downloading without unrar, skips 7-Zip archives when 7-Zip is missing, and reports a full disk or a failed move with its own messages, so its content failures are always blocklisted.
 
+#### Torrents that keep failing
+
+Torrent failures are the other half of the same loop, and Bindery is deliberately cautious with them: a Blocklist entry never expires and applies to every user, and most torrent failures are the indexer's or your own setup's fault, not the release's. So a torrent is blocklisted automatically only when the same release has failed three times in a row with evidence that points at the release, and every doubt resolves towards not blocklisting. This section applies to torrents only; usenet releases follow the rules above.
+
+What counts, and what does not:
+
+| Failure | Effect |
+|---|---|
+| The indexer answered the download link with 404 or 410 (the link is gone) | Counts, but only while the indexer is otherwise serving (see below). |
+| The grab was sent but no poll ever found the torrent in the client | Counts under the same conditions. A single occurrence is usually a client restart and is retried as before. Bindery cannot tell why the client never listed it: a Bindery side fault (an unsigned indexer URL, a dropped add) and a client that was down both look the same. The Queue message reads `never reached the download client`. |
+| The client listed the torrent at some point and later no longer has it | Recorded as `clientRemoved`, never counts. This is you removing it in the client, the client dropping it, or a wiped client. The row is failed and the book is searched again as before. The Queue message reads `removed from the download client`. Downloads that were already running when you upgraded to this version are treated this way too, so an upgrade cannot make an old download count. |
+| The indexer answered the link with HTTP 429, a 5xx or a "disabled till" notice | Never counts. A daily quota and a dead link look the same from here. The indexer is paused instead: until the time it gave (capped at 24 hours, at least 5 minutes), otherwise one hour. Its releases are skipped, the search tries the next one, and the search outcome reads `indexer backing off until ...`. The pause is held in memory, so a restart forgets it. |
+| qBittorrent or Deluge reports the torrent as errored | Recorded in History, never counts. qBittorrent's error state is usually a full disk or an unwritable save path, which would otherwise blocklist every release in turn. The Queue message says so. |
+| The client is unreachable, a timeout, a rejected credential, or an HTTP error from the client itself | Never counts. Retried after the six hour wait. |
+
+"Three in a row" means three counted failures at least an hour apart, inside seven days, with no import of the release and no send that went through without failing in between. The failures must also be evidence about the release rather than the indexer: a failure does not count when another release from the same indexer failed in the last 24 hours, when the indexer sent no other release to your client since this one last failed, or when the download has no indexer. When several releases of one indexer answer 404 or 410 together, that indexer is paused as well. The entry is release scoped, so like the usenet entries it blocks the release for every book and every user. Its reason names the failure and the count, for example `downloadFailed: the indexer no longer serves the release (HTTP 404), failed 3 times in a row`, and History shows each failure with the same wording. Nothing from the error text, such as a URL with an API key, is copied into History or the Blocklist.
+
+What this does not do, so you are not surprised:
+
+- An indexer that fails every release (a 500 on all of them, or a banned account) is only paused, never held against a release, and a release that fails every cycle on an indexer that serves nothing else never reaches three. A release that is dead for good on a quiet indexer, and two dead releases of one book on the same indexer, can therefore be retried every six hours for ever.
+- A once a day quota that rejects the last release of an otherwise healthy indexer is treated as the indexer's problem and is never blocklisted.
+- **Removing a torrent in your client is safe.** Bindery records the first time a poll finds a download in the client. A release you cancel there, however often, is only ever retried, never blocklisted. The limit is a torrent you remove within about ten minutes of the grab, before a poll has listed it: that looks like one that never arrived.
+- **A fault on Bindery's side can leave failures behind.** If an earlier Bindery version or setting problem (an unsigned indexer URL, a dropped add) made a release never arrive once or twice, those failures stay in the seven day window and the next one can be the third. Fix the cause and remove the Blocklist entry if a good release is caught; Bindery does not reset the count when it is upgraded.
+- **A release that fails alone keeps its neighbours from counting.** Failures that were not counted still count as "other releases failed" for the indexer, so a dead release alone on a quiet indexer, retried every six hours, stops a second release on that indexer from counting for 24 hours after each attempt.
+- The Grab button is not paused and does not count: a manual grab always goes through.
+
+For those cases, blocklist the release by hand. On the History page, the `downloadFailed` entry for the release has a Blocklist action. The release then stays out of every future search until you remove its entry on the Blocklist page.
+
 `importBlocked` is deliberately left to you. Those files downloaded fine and are still on disk; what failed was the import. The sweep cannot tell whether they are still there, and re-downloading them would fetch bytes you already have and leave the old torrent in your client with nothing tracking it, so a blocked row is only ever re-grabbed when you ask for it. Use **Retry import** if the files are still in place, and **Grab** if they are gone.
 
 Earlier releases let a failed row block the release permanently, and the skip was silent: the log showed `auto-grabbing book` and then nothing, as though the grab had gone ahead. Every skip now writes a line naming the release, its GUID, the blocking Queue row and its status, and the `book search finished` line for that book ends with an `outcome` that says the same thing.

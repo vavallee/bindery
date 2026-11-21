@@ -321,7 +321,7 @@ export default function WantedPage() {
     <div className={selectedIds.size > 0 ? 'pb-16' : ''}>
       {confirmDialog}
       {toast && (
-        <div className="fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 bg-red-600 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in">
+        <div className="fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 bg-danger-fill text-on-fill rounded-lg shadow-lg text-sm font-medium animate-fade-in">
           {toast}
         </div>
       )}
@@ -442,7 +442,7 @@ export default function WantedPage() {
               <div key={book.id} className={i < pageItems.length - 1 ? 'border-b border-slate-200 dark:border-zinc-800' : ''}>
                 <div className={`${ROW_GRID} px-3 py-1.5 transition-colors ${
                   isSelected
-                    ? 'bg-emerald-500/10 dark:bg-emerald-500/10'
+                    ? 'bg-success-marker/10'
                     : 'hover:bg-slate-200/50 dark:hover:bg-zinc-800/50'
                 }`}>
                   {/* selection */}
@@ -464,7 +464,7 @@ export default function WantedPage() {
                       // hopDepth: 1 — first hop into a book detail page from
                       // this list, not a further Previous/Next chain hop.
                       state={{ ids: pageItemIds, index: i, hopDepth: 1 }}
-                      className="block [overflow-wrap:anywhere] sm:truncate text-sm font-medium text-slate-800 dark:text-zinc-200 hover:text-emerald-700 dark:hover:text-emerald-400 transition-colors"
+                      className="block [overflow-wrap:anywhere] sm:truncate text-sm font-medium text-slate-800 dark:text-zinc-200 hover:text-success transition-colors"
                     >
                       {book.title}
                     </Link>
@@ -475,7 +475,7 @@ export default function WantedPage() {
                       {authorName ? (
                         <Link
                           to={`/author/${book.authorId}`}
-                          className="hover:text-emerald-700 dark:hover:text-emerald-400 transition-colors rounded-sm"
+                          className="hover:text-success transition-colors rounded-sm"
                         >
                           {authorName}
                         </Link>
@@ -485,12 +485,12 @@ export default function WantedPage() {
                       {year != null && <span> · {year}</span>}
                     </div>
                     {book.searchHeldUntil && (
-                      <div className="truncate text-[10px] text-sky-700 dark:text-sky-400" data-testid="wanted-upcoming">
+                      <div className="truncate text-[10px] text-info" data-testid="wanted-upcoming">
                         {t('wanted.upcomingNote', { date: formatCalendarDate(book.searchHeldUntil) ?? '' })}
                       </div>
                     )}
                     {book.authorUnmonitored && (
-                      <div className="truncate text-[10px] text-amber-700 dark:text-amber-400">
+                      <div className="truncate text-[10px] text-warning">
                         {t('wanted.authorNotMonitored', 'Author not monitored, so this is not searched automatically')}
                       </div>
                     )}
@@ -522,7 +522,7 @@ export default function WantedPage() {
                     {/* actions */}
                     <div className="flex items-center justify-end gap-1.5">
                       {book.excluded && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-marker/20 text-warning-strong">
                           {t('wanted.excluded')}
                         </span>
                       )}
@@ -579,7 +579,7 @@ export default function WantedPage() {
                                   href={safeHref(r.infoUrl)}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-sky-700 dark:text-sky-400 hover:underline"
+                                  className="text-info hover:underline"
                                 >
                                   ↗ {t('search.indexerLink', 'indexer')}
                                 </a>
@@ -596,9 +596,9 @@ export default function WantedPage() {
                           disabled={grabbingGuid === r.guid || grabbedGuid === r.guid}
                           className={`px-2 py-2 rounded text-[10px] font-medium flex-shrink-0 touch-manipulation transition-colors disabled:cursor-default ${
                             grabbedGuid === r.guid
-                              ? 'bg-emerald-700 text-white'
+                              ? 'bg-success-fill text-on-fill'
                               : grabbingGuid === r.guid
-                              ? 'bg-emerald-800 text-white/80'
+                              ? 'bg-success-fill-hover text-white/80'
                               : `${primaryFill}`
                           }`}
                         >

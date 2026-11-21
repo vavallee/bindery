@@ -19,7 +19,7 @@ interface Props {
   onSuccess: (updated: Book) => void
 }
 
-const inputClass = 'w-full rounded-md border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-emerald-600 disabled:opacity-50'
+const inputClass = 'w-full rounded-md border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-accent-ring disabled:opacity-50'
 
 function basePath(): string {
   return (window as unknown as { __BINDERY_BASE__?: string }).__BINDERY_BASE__ ?? ''
@@ -154,7 +154,7 @@ export default function RebindModal({ book, onClose, onSuccess }: Props) {
 
         {mismatch ? (
           <div className="mt-5 space-y-3" role="alert">
-            <h3 className="font-semibold text-amber-800 dark:text-amber-300">{t('bookRebind.authorMismatch')}</h3>
+            <h3 className="font-semibold text-warning-strong">{t('bookRebind.authorMismatch')}</h3>
             <p className="text-sm">{t('bookRebind.authorMismatchHint', { current: mismatch.currentAuthor, upstream: mismatch.upstreamAuthor })}</p>
           </div>
         ) : (
@@ -204,7 +204,7 @@ export default function RebindModal({ book, onClose, onSuccess }: Props) {
                       const isOtherLibraryBook = !!candidate.libraryBookId && candidate.libraryBookId !== book.id
                       return (
                         <div key={candidate.foreignBookId} className="rounded p-3 hover:bg-slate-100 dark:hover:bg-zinc-800">
-                          <label className="flex cursor-pointer items-start gap-3 rounded focus-within:outline-2 focus-within:outline-emerald-600">
+                          <label className="flex cursor-pointer items-start gap-3 rounded focus-within:outline-2 focus-within:outline-accent-ring">
                             <input type="radio" name="rebind-result" className="mt-1" disabled={isEdition || isOtherLibraryBook} checked={selected === candidate} onChange={() => { setSelected(candidate); setError(null) }} />
                             <CoverImage src={candidate.imageUrl} alt="" loading="lazy" decoding="async" className="h-16 w-11 shrink-0 rounded object-cover" />
                             <span className="min-w-0 flex-1 text-sm">
@@ -220,7 +220,7 @@ export default function RebindModal({ book, onClose, onSuccess }: Props) {
                           {!!candidate.libraryBookId && (
                             <div className="ml-7 mt-2 flex items-center gap-2 text-xs">
                               <span className="rounded-full bg-slate-200 px-2 py-0.5 dark:bg-zinc-700">{t('addToLibrary.inLibrary')}</span>
-                              <a href={`${basePath()}/book/${candidate.libraryBookId}`} aria-label={t('addToLibrary.openBook', { title: candidate.title })} className="rounded underline focus-visible:outline-2 focus-visible:outline-emerald-600">
+                              <a href={`${basePath()}/book/${candidate.libraryBookId}`} aria-label={t('addToLibrary.openBook', { title: candidate.title })} className="rounded underline focus-visible:outline-2 focus-visible:outline-accent-ring">
                                 {t('addToLibrary.open')}
                               </a>
                             </div>
@@ -250,7 +250,7 @@ export default function RebindModal({ book, onClose, onSuccess }: Props) {
             )}
           </>
         )}
-        {error && <p role="alert" className="mt-4 text-sm text-red-700 dark:text-red-400">{error}</p>}
+        {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
       </div>
       <div className="sticky bottom-0 flex justify-end gap-2 border-t border-slate-200 bg-white px-5 py-4 dark:border-zinc-700 dark:bg-zinc-900 sm:px-6">
         <button type="button" onClick={() => mismatch ? setMismatch(null) : onClose()} disabled={submitting} className={`${btn.secondary} ${btnSize.md} min-h-10`}>

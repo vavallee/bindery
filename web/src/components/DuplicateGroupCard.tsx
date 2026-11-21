@@ -62,9 +62,9 @@ export default function DuplicateGroupCard({ group, busyBooks, onToggle, onExclu
   const chip = (text: string, tone: 'neutral' | 'good' | 'warn' | 'keep' = 'neutral', key?: string) => {
     const tones = {
       neutral: 'bg-slate-200 text-slate-600 dark:bg-zinc-800 dark:text-zinc-400',
-      good: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
-      warn: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
-      keep: 'bg-emerald-700 text-white',
+      good: 'bg-success-subtle text-success-strong',
+      warn: 'bg-warning-subtle text-warning-strong',
+      keep: 'bg-success-fill text-on-fill',
     }
     return <span key={key ?? text} className={`rounded px-1.5 py-0.5 text-[11px] ${tones[tone]}`}>{text}</span>
   }
@@ -141,8 +141,8 @@ export default function DuplicateGroupCard({ group, busyBooks, onToggle, onExclu
               key={`${s.kind}:${s.bookIds.join(',')}:${s.values.join(',')}`}
               data-conflict={s.conflict ? 'true' : 'false'}
               className={`rounded px-2 py-1 text-[11px] ${s.conflict
-                ? 'bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200'
-                : 'bg-emerald-50 text-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-200'}`}
+                ? 'bg-warning-subtle text-warning-strong'
+                : 'bg-success-subtle text-success-strong'}`}
             >
               <span className="font-semibold">
                 {s.conflict
@@ -162,7 +162,7 @@ export default function DuplicateGroupCard({ group, busyBooks, onToggle, onExclu
             <li
               key={book.id}
               data-testid={`duplicate-row-${book.id}`}
-              className={`flex items-start justify-between gap-3 py-2 text-xs ${isKeeper ? 'rounded bg-emerald-50/70 px-1 dark:bg-emerald-900/20' : ''}`}
+              className={`flex items-start justify-between gap-3 py-2 text-xs ${isKeeper ? 'rounded bg-success-subtle px-1' : ''}`}
             >
               <span className="min-w-0">
                 <span className="flex items-baseline gap-1.5">

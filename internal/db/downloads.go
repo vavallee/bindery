@@ -437,6 +437,7 @@ const regrabClaimSQL = `
 		    completed_at=NULL,
 		    imported_at=NULL,
 		    dead_at=NULL,
+		    client_seen_at=NULL,
 		    import_retry_count=0
 		WHERE id=? AND `
 
@@ -670,6 +671,35 @@ func (r *DownloadRepo) ImportManual(ctx context.Context, id int64) (bool, error)
 	var manual bool
 	err := r.db.QueryRowContext(ctx, "SELECT import_manual FROM downloads WHERE id=?", id).Scan(&manual)
 	return manual, err
+}
+
+// MarkClientSeen records that a poll found this download's source in its
+// client, the first time only (#4111): the UPDATE matches a row whose
+// client_seen_at is still NULL, so every later call writes nothing. It reports
+// whether this call was the first sighting. A re-grab clears the column with
+// the other per grab columns, so each attempt is seen on its own.
+//
+// addedAt is the attempt the caller loaded the row for. A re-grab resets
+// added_at, so a poller still holding a copy from before the re-grab matches
+// nothing and cannot stamp the new attempt as seen.
+func (r *DownloadRepo) MarkClientSeen(ctx context.Context, id int64, addedAt time.Time) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		"UPDATE downloads SET client_seen_at=? WHERE id=? AND added_at=? AND client_seen_at IS NULL",
+		time.Now().UTC(), id, addedAt.UTC())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// ClientSeen reports whether a poll has ever found this download's source in
+// its client for the current attempt. Rows that were live when migration 136
+// ran read as seen, so an upgrade cannot make an old row look never received.
+func (r *DownloadRepo) ClientSeen(ctx context.Context, id int64) (bool, error) {
+	var seen bool
+	err := r.db.QueryRowContext(ctx, "SELECT client_seen_at IS NOT NULL FROM downloads WHERE id=?", id).Scan(&seen)
+	return seen, err
 }
 
 // SetError marks the download failed with the message that killed it, and

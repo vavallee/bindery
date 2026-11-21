@@ -92,7 +92,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
       text: target.lastError
         ? t('settings.calibre.deliveries.unreachableWithError', { error: target.lastError })
         : t('settings.calibre.deliveries.unreachable'),
-      tone: 'text-amber-700 dark:text-amber-400',
+      tone: 'text-warning',
     }
   } else {
     reach = { text: t('settings.calibre.deliveries.reachableUnknown'), tone: 'text-fg-muted' }
@@ -102,7 +102,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
   if (pulling) {
     reach = summary?.pull?.lastSeen
       ? { text: t('settings.calibre.deliveries.lastCheckIn', { time: when(summary.pull.lastSeen) }), tone: 'text-accent-text' }
-      : { text: t('settings.calibre.deliveries.neverCheckedIn'), tone: 'text-amber-700 dark:text-amber-400' }
+      : { text: t('settings.calibre.deliveries.neverCheckedIn'), tone: 'text-warning' }
   }
 
   const items = failed?.items ?? []
@@ -118,7 +118,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
       </div>
 
       {loadError && (
-        <p className="text-xs text-red-700 dark:text-red-400">
+        <p className="text-xs text-danger">
           {t('settings.calibre.deliveries.loadFailed', { error: loadError })}
         </p>
       )}
@@ -132,7 +132,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
           <span aria-hidden className="text-fg-muted">·</span>
           <span>{t('settings.calibre.deliveries.delivered', { count: summary.delivered })}</span>
           <span aria-hidden className="text-fg-muted">·</span>
-          <span className={summary.failed > 0 ? 'text-red-700 dark:text-red-400' : ''}>
+          <span className={summary.failed > 0 ? 'text-danger' : ''}>
             {t('settings.calibre.deliveries.failed', { count: summary.failed })}
           </span>
           <span aria-hidden className="text-fg-muted">·</span>
@@ -158,7 +158,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
           <button
             onClick={retryFailed}
             disabled={busy !== null || summary.failed === 0}
-            className={`${btn} bg-sky-700 hover:bg-sky-800 text-white`}
+            className={`${btn} bg-info-fill hover:bg-info-fill-hover text-on-fill`}
           >
             {busy === 'retry' ? t('settings.calibre.deliveries.retrying') : t('settings.calibre.deliveries.retryFailed')}
           </button>
@@ -172,7 +172,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
           <button
             onClick={() => setConfirmReset(true)}
             disabled={busy !== null}
-            className={`${btn} bg-amber-700 hover:bg-amber-800 text-white`}
+            className={`${btn} bg-warning-fill hover:bg-warning-fill-hover text-on-fill`}
           >
             {t('settings.calibre.deliveries.reset')}
           </button>
@@ -180,7 +180,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
       )}
 
       {notice && <p className="text-xs text-accent-text">{notice}</p>}
-      {actionError && <p className="text-xs text-red-700 dark:text-red-400">{actionError}</p>}
+      {actionError && <p className="text-xs text-danger">{actionError}</p>}
 
       {summary && (
         <div>
@@ -211,7 +211,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
                         <td className="px-2 py-1 text-slate-800 dark:text-zinc-200">{d.bookTitle || `#${d.bookId}`}</td>
                         <td className="px-2 py-1 text-fg-muted">{d.authorName}</td>
                         <td className="px-2 py-1 text-fg-muted font-mono">{d.lastErrorCode}</td>
-                        <td className="px-2 py-1 text-red-700 dark:text-red-400 break-all">{d.lastError}</td>
+                        <td className="px-2 py-1 text-danger break-all">{d.lastError}</td>
                         <td className="px-2 py-1 text-fg-muted">{d.attempts}</td>
                         <td className="px-2 py-1 text-fg-muted whitespace-nowrap">{when(d.updatedAt)}</td>
                       </tr>
@@ -254,7 +254,7 @@ export default function CalibreDeliveryPanel({ refreshKey }: { refreshKey?: unkn
               <button
                 onClick={reset}
                 disabled={busy === 'reset'}
-                className={`${btn} bg-amber-700 hover:bg-amber-800 text-white`}
+                className={`${btn} bg-warning-fill hover:bg-warning-fill-hover text-on-fill`}
               >
                 {busy === 'reset' ? t('settings.calibre.deliveries.resetting') : t('settings.calibre.deliveries.resetConfirm')}
               </button>

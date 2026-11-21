@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -271,4 +272,124 @@ func (r *HistoryRepo) query(ctx context.Context, q string, args ...interface{}) 
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+// ReleaseFailureStreak counts one release's current run of counted failures
+// (#4111), in order, from its history. It returns the count and when the last
+// counted failure happened.
+//
+// Only downloadFailed events whose "class" is one of classes are considered
+// (the filter is in SQL, so an event of another class cannot count whatever
+// the caller does). The run is broken, and the count starts again, by:
+//
+//   - an import of the release, found by the guid on the event, or by title and
+//     book for an old event that carries none;
+//   - a grab that went through and was followed by neither a failure nor an
+//     import (a second "grabbed" with nothing between). The grab right before a
+//     "never arrived" failure is that failure's own attempt and breaks nothing.
+//
+// A failure within minGap of the last counted one is recorded but not counted,
+// so a burst of manual searches cannot add up to a blocklist entry. Events
+// older than since are ignored.
+func (r *HistoryRepo) ReleaseFailureStreak(ctx context.Context, guid, title string, bookID *int64, since time.Time,
+	classes []string, neverArrivedClass string, minGap time.Duration) (count int, lastCounted time.Time, pendingGrab bool, err error) {
+	if len(classes) == 0 || guid == "" {
+		return 0, time.Time{}, false, nil
+	}
+	// The class list is bound as one JSON array and expanded by json_each, so
+	// the statement is constant text whatever the number of classes.
+	classJSON, err := json.Marshal(classes)
+	if err != nil {
+		return 0, time.Time{}, false, fmt.Errorf("release failure streak: %w", err)
+	}
+	args := []any{since, models.HistoryEventDownloadFailed, guid, string(classJSON),
+		models.HistoryEventGrabbed, guid, models.HistoryEventBookImported, guid, title, title, bookID}
+	const q = `SELECT event_type, COALESCE(json_extract(data, '$.class'), ''), created_at FROM history
+		WHERE created_at > ? AND (
+			(event_type = ? AND json_extract(data, '$.guid') = ? AND json_extract(data, '$.class') IN (SELECT value FROM json_each(?)))
+			OR (event_type = ? AND json_extract(data, '$.guid') = ?)
+			OR (event_type = ? AND (json_extract(data, '$.guid') = ?
+				OR (COALESCE(json_extract(data, '$.guid'), '') = '' AND source_title = ? AND ? != '' AND book_id IS ?)))
+		) ORDER BY created_at ASC, id ASC`
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return 0, time.Time{}, false, fmt.Errorf("release failure streak: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var typ, class string
+		var at time.Time
+		if err := rows.Scan(&typ, &class, &at); err != nil {
+			return 0, time.Time{}, false, fmt.Errorf("release failure streak: %w", err)
+		}
+		switch typ {
+		case models.HistoryEventBookImported:
+			count, lastCounted, pendingGrab = 0, time.Time{}, false
+		case models.HistoryEventGrabbed:
+			if pendingGrab {
+				count, lastCounted = 0, time.Time{}
+			}
+			pendingGrab = true
+		default:
+			if class != neverArrivedClass {
+				// A failure that is not a never-arrived one was not preceded
+				// by a grab of its own.
+				if pendingGrab {
+					count, lastCounted = 0, time.Time{}
+				}
+			}
+			pendingGrab = false
+			if lastCounted.IsZero() || at.Sub(lastCounted) >= minGap {
+				count++
+				lastCounted = at
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, time.Time{}, false, fmt.Errorf("release failure streak: %w", err)
+	}
+	return count, lastCounted, pendingGrab, nil
+}
+
+// IndexerFailuresElsewhere counts the downloadFailed events of the given
+// classes since `since` that name this indexer ("indexerId" on the event) on a
+// release other than excludeGUID. It is the evidence that a failure is the
+// indexer's and not the release's: when other releases from the same indexer
+// fail too, the fault is indexer wide.
+func (r *HistoryRepo) IndexerFailuresElsewhere(ctx context.Context, indexerID int64, excludeGUID string, classes []string, since time.Time) (int, error) {
+	if len(classes) == 0 {
+		return 0, nil
+	}
+	marks := make([]string, len(classes))
+	args := []any{models.HistoryEventDownloadFailed, since, fmt.Sprint(indexerID), excludeGUID}
+	for i, c := range classes {
+		marks[i] = "?"
+		args = append(args, c)
+	}
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM history
+		WHERE event_type = ? AND created_at > ?
+		AND CAST(json_extract(data, '$.indexerId') AS TEXT) = ?
+		AND COALESCE(json_extract(data, '$.guid'), '') != ?
+		AND json_extract(data, '$.class') IN (`+strings.Join(marks, ",")+`)`, args...).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("indexer failures elsewhere: %w", err)
+	}
+	return n, nil
+}
+
+// IndexerServedElsewhere reports whether a release other than excludeGUID was
+// sent to a download client from this indexer ("indexerId" on the grabbed
+// event) after `since`: the evidence that the indexer is otherwise serving.
+func (r *HistoryRepo) IndexerServedElsewhere(ctx context.Context, indexerID int64, excludeGUID string, since time.Time) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM history
+		WHERE event_type = ? AND created_at > ?
+		AND CAST(json_extract(data, '$.indexerId') AS TEXT) = ?
+		AND COALESCE(json_extract(data, '$.guid'), '') != ?`,
+		models.HistoryEventGrabbed, since, fmt.Sprint(indexerID), excludeGUID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("indexer served elsewhere: %w", err)
+	}
+	return n > 0, nil
 }

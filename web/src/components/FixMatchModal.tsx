@@ -170,7 +170,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
               placeholder={t('bookDetail.fixMatch.searchPlaceholder', 'Search your library for the correct book…')}
               className="w-full px-3 py-2 rounded border border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm"
             />
-            {error && <p className="mt-2 text-xs text-red-700 dark:text-red-400">{error}</p>}
+            {error && <p className="mt-2 text-xs text-danger">{error}</p>}
             <div className="mt-3 max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-zinc-800">
               {loading && <p className="py-3 text-xs text-fg-muted">{t('common.loading')}</p>}
               {!loading && term.trim().length >= 2 && results.length === 0 && (
@@ -316,7 +316,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
                   )}
                   {!previewLoading && preview?.destination && preview.destination}
                   {!previewLoading && !preview?.destination && (
-                    <span className="font-sans text-amber-700 dark:text-amber-400">
+                    <span className="font-sans text-warning">
                       {t(
                         'bookDetail.fixMatch.destinationUnknown',
                         'Bindery could not work out the destination. The file will still be moved and renamed.',
@@ -329,11 +329,11 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
             </dl>
             )}
 
-            {relocate && previewError && <p className="mt-2 text-xs text-red-700 dark:text-red-400">{previewError}</p>}
+            {relocate && previewError && <p className="mt-2 text-xs text-danger">{previewError}</p>}
             {relocate && preview?.message && (
-              <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">{preview.message}</p>
+              <p className="mt-2 text-xs text-warning">{preview.message}</p>
             )}
-            {error && <p className="mt-2 text-xs text-red-700 dark:text-red-400">{error}</p>}
+            {error && <p className="mt-2 text-xs text-danger">{error}</p>}
           </div>
         )}
 
@@ -360,7 +360,7 @@ export default function FixMatchModal({ sourceBookId, path, format, onClose, onR
               type="button"
               onClick={confirmReassign}
               disabled={submitting || (relocate && previewLoading) || previewRefused}
-              className="px-3 py-1.5 text-xs rounded bg-amber-700 text-white hover:bg-amber-800 disabled:opacity-50"
+              className="px-3 py-1.5 text-xs rounded bg-warning-fill text-on-fill hover:bg-warning-fill-hover disabled:opacity-50"
             >
               {movesOnDisk
                 ? t('bookDetail.fixMatch.confirmButton', 'Move and reassign')

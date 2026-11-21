@@ -52,7 +52,7 @@ const ROW = 'bg-slate-100 dark:bg-zinc-900 hover:bg-slate-200 dark:hover:bg-zinc
 // emerald-900: on emerald-900 the muted text (zinc-400) is 3.8:1, below AA.
 // theme/contrast.test.ts measures this value.
 export const SELECTED_HOVER_DARK = '#023a2d'
-const ROW_SELECTED = 'bg-emerald-50 dark:bg-emerald-950 hover:bg-emerald-100 dark:hover:bg-[#023a2d]'
+const ROW_SELECTED = 'bg-row-selected hover:bg-row-selected-hover'
 // Pinned columns. The selection column is w-10 (2.5rem), so the first data
 // column pins at left-10 when there is one.
 const PIN_SELECT = 'sticky left-0 z-[1] bg-inherit'
@@ -164,7 +164,7 @@ export default function DataTable<T, K extends string | number>({
               return (
                 <tr
                   key={key}
-                  className={`${selected ? ROW_SELECTED : ROW} ${onRowClick ? 'cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-500' : ''}`}
+                  className={`${selected ? ROW_SELECTED : ROW} ${onRowClick ? 'cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-ring' : ''}`}
                   onClick={onRowClick ? e => { if (!fromControl(e)) onRowClick(row, i) } : undefined}
                   tabIndex={onRowClick ? 0 : undefined}
                   onKeyDown={onRowClick ? e => {

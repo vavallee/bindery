@@ -63,7 +63,7 @@ export default function RequesterLibraryPage() {
         <button type="submit" className="px-4 py-2 rounded-md text-sm border border-slate-300 dark:border-zinc-700">{t('common.search')}</button>
       </form>
 
-      {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {!loading && !error && items.length === 0 && (
         <p className="text-sm text-fg-muted">{search ? t('requests.library.noMatches') : t('requests.library.empty')}</p>
       )}

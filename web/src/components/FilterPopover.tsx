@@ -129,7 +129,7 @@ export default function FilterPopover({
       >
         {label}
         {activeCount > 0 && (
-          <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] px-1 rounded-full bg-emerald-700 text-white text-[11px] font-semibold">
+          <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] px-1 rounded-full bg-success-fill text-on-fill text-[11px] font-semibold">
             {activeCount}
           </span>
         )}

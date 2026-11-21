@@ -32,7 +32,7 @@ export default function AdoptionRail({ folders, total, activeFolder, onShow }: P
             : 'text-fg-muted hover:bg-slate-200/60 dark:hover:bg-zinc-800/60 hover:text-slate-900 dark:hover:text-white'
         }`}
       >
-        {dot && <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot === 'amber' ? 'bg-amber-500' : 'bg-slate-400 dark:bg-zinc-600'}`} />}
+        {dot && <span aria-hidden="true" className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot === 'amber' ? 'bg-warning-marker' : 'bg-slate-400 dark:bg-zinc-600'}`} />}
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <span className="tabular-nums text-xs text-fg-muted">{count}</span>
       </button>

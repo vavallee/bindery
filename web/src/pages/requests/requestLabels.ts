@@ -17,11 +17,11 @@ export function requestStatusLabel(t: TFunction, r: LibraryRequest): string {
 }
 
 export function requestStatusClass(r: LibraryRequest): string {
-  if (r.status === 'declined') return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
-  if (r.status === 'pending') return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+  if (r.status === 'declined') return 'bg-danger-subtle text-danger-strong'
+  if (r.status === 'pending') return 'bg-warning-subtle text-warning-strong'
   return r.fulfilled
-    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300'
-    : 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300'
+    ? 'bg-success-subtle text-success-strong'
+    : 'bg-info-subtle text-info-strong'
 }
 
 export function mediaTypeLabel(t: TFunction, m: string): string {

@@ -36,7 +36,7 @@ export default function WhatsNewToast({ version }: { version: string }) {
   return (
     <div
       role="status"
-      className="fixed bottom-safe-4 right-safe-4 left-safe-4 sm:left-auto ml-auto z-50 max-w-sm flex items-start gap-3 px-4 py-3 rounded-lg shadow-lg border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50 dark:bg-emerald-950/70 text-sm text-emerald-900 dark:text-emerald-200"
+      className="fixed bottom-safe-4 right-safe-4 left-safe-4 sm:left-auto ml-auto z-50 max-w-sm flex items-start gap-3 px-4 py-3 rounded-lg shadow-lg border border-success-border bg-success-subtle text-sm text-success-strong"
     >
       <span className="flex-1">
         {t('whatsNew.updated', 'Updated to v{{version}}.', { version })}{' '}
@@ -52,7 +52,7 @@ export default function WhatsNewToast({ version }: { version: string }) {
       <button
         onClick={() => setShow(false)}
         aria-label={t('common.dismiss', 'Dismiss')}
-        className="px-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
+        className="px-1 rounded hover:bg-success-border/40 transition-colors"
       >
         ✕
       </button>

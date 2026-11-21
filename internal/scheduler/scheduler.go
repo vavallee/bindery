@@ -293,6 +293,11 @@ type Scheduler struct {
 	upgradeSearched    map[int64]time.Time
 	metadataCooldownMu sync.Mutex
 	metadataCooldown   map[int64]time.Time
+	// indexerBackoff holds, per indexer, until when its releases are passed
+	// over after a grab found it rate limiting or failing (#4111). In memory,
+	// like the maps above: a restart forgets it and costs one more attempt.
+	indexerBackoffMu sync.Mutex
+	indexerBackoff   map[int64]time.Time
 	// metadataBreakerTrips counts, per author, the tripped passes in a row it
 	// was part of; see metadataRefreshBreakerTripsToCool.
 	metadataBreakerTrips map[int64]breakerTrip
@@ -1587,6 +1592,14 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 			}
 			return nil, true, nil
 		}
+		if until, backedOff := s.indexerBackedOff(resultIndexerID(res), time.Now().UTC()); backedOff {
+			if heldOutcome == "" {
+				heldOutcome = "indexer backing off until " + until.Format(time.RFC3339)
+			}
+			slog.Info("skipping a release from an indexer that is backing off, trying the next one",
+				"book", book.Title, "release", res.Title, "indexer", res.IndexerName, "until", until)
+			return nil, true, nil
+		}
 		bestExisting = existing
 		return c, false, nil
 	}
@@ -1787,6 +1800,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		if setErr := s.downloads.SetError(ctx, dl.ID, downloader.SendFailureMessage(err)); setErr != nil {
 			slog.Warn("failed to persist download error", "download_id", dl.ID, "error", setErr)
 		}
+		s.recordSendFailure(ctx, dl, err)
 		outcome = "send to downloader failed"
 		return
 	}
@@ -1822,6 +1836,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 			"guid":      best.GUID,
 			"author":    authorName,
 			"indexer":   best.IndexerName,
+			"indexerId": resultIndexerID(best),
 			"protocol":  best.Protocol,
 			"size":      best.Size,
 			"mediaType": mediaType,

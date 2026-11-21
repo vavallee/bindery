@@ -199,12 +199,12 @@ function groupRowsByFormat(
 
 // Small coloured dot for a history row, by event type.
 const eventDotColors: Record<string, string> = {
-  grabbed: 'bg-blue-500',
-  bookImported: 'bg-emerald-500',
-  imported: 'bg-emerald-500',
-  downloadFailed: 'bg-red-500',
-  importFailed: 'bg-red-500',
-  deleted: 'bg-red-500',
+  grabbed: 'bg-progress-marker',
+  bookImported: 'bg-success-marker',
+  imported: 'bg-success-marker',
+  downloadFailed: 'bg-danger-marker',
+  importFailed: 'bg-danger-marker',
+  deleted: 'bg-danger-marker',
   renamed: 'bg-purple-500',
   bookFileRenamed: 'bg-purple-500',
   ignored: 'bg-slate-400 dark:bg-zinc-600',
@@ -255,13 +255,13 @@ function ReleaseRow({
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={e => e.stopPropagation()}
-                className="text-sky-700 dark:text-sky-400 hover:underline"
+                className="text-info hover:underline"
               >
                 ↗ {t('search.indexerLink', 'indexer')}
               </a>
             </>
           )}
-          {r.rejection && <span className="ml-2 text-amber-700 dark:text-amber-400">· {r.rejection}</span>}
+          {r.rejection && <span className="ml-2 text-warning">· {r.rejection}</span>}
         </span>
       </div>
       <button
@@ -1207,7 +1207,7 @@ function BookDetailPageInner() {
               {t('bookDetail.monitoredLabel', 'Monitored')}
             </Switch>
             {book.excluded && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400">
+              <span className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-warning-marker/20 text-warning-strong">
                 {t('bookDetail.excludedBadge')}
               </span>
             )}
@@ -1225,7 +1225,7 @@ function BookDetailPageInner() {
               <span className="text-fg-muted">{lang}</span>
             ) : (
               <span
-                className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-amber-500/20 text-amber-800 dark:text-amber-400"
+                className="inline-flex items-center px-2 py-0.5 rounded font-medium bg-warning-marker/20 text-warning-strong"
                 title={t('bookDetail.languageUnknownHint')}
               >
                 {t('bookDetail.languageUnknown')}
@@ -1364,7 +1364,7 @@ function BookDetailPageInner() {
             {canAutoSearch && (
               <p
                 role="status"
-                className={`text-sm ${autoSearchStatus?.ok === false ? 'text-red-700 dark:text-red-300' : 'text-emerald-700 dark:text-emerald-300'}`}
+                className={`text-sm ${autoSearchStatus?.ok === false ? 'text-danger' : 'text-success'}`}
               >
                 {autoSearchStatus?.text}
               </p>
@@ -1374,13 +1374,13 @@ function BookDetailPageInner() {
       </div>
 
       {error && (
-        <div className="mt-6 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+        <div className="mt-6 px-3 py-2 bg-danger-subtle border border-danger-border rounded text-sm text-danger-strong">
           {error}
         </div>
       )}
 
       {autoSearchNotice && (
-        <div className="mt-6 px-3 py-2 bg-emerald-100 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-900 rounded text-sm text-emerald-800 dark:text-emerald-300">
+        <div className="mt-6 px-3 py-2 bg-success-subtle border border-success-border rounded text-sm text-success-strong">
           {autoSearchNotice}
         </div>
       )}
@@ -1685,7 +1685,7 @@ function BookDetailPageInner() {
           </div>
 
           {book.excluded && (
-            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400 font-medium">
+            <p className="mt-2 text-xs text-warning font-medium">
               {t('bookDetail.excludedFromSearches')}
             </p>
           )}
@@ -1709,7 +1709,7 @@ function BookDetailPageInner() {
                     : providerDisplayName(row.provider) || t('bookDetail.metadataSource.unknownProvider', 'Unknown provider')}
                 </span>
                 {row.primary && (
-                  <span className="text-xs px-1.5 py-0.5 rounded-full border border-emerald-500/40 text-emerald-700 dark:text-emerald-300">
+                  <span className="text-xs px-1.5 py-0.5 rounded-full border border-success-marker/40 text-success">
                     {t('bookDetail.metadataSource.current', 'Current')}
                   </span>
                 )}
@@ -1844,7 +1844,7 @@ function BookDetailPageInner() {
         )}
 
         {grabError && (
-          <div role="alert" className="mt-6 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+          <div role="alert" className="mt-6 px-3 py-2 bg-danger-subtle border border-danger-border rounded text-sm text-danger-strong">
             {grabError}
           </div>
         )}
@@ -1898,7 +1898,7 @@ function BookDetailPageInner() {
                         })}
                   </span>
                   {failure && (
-                    <span className="text-[11px] text-red-700 dark:text-red-300 truncate" title={failure}>
+                    <span className="text-[11px] text-danger truncate" title={failure}>
                       {failure.length > 200 ? `${failure.slice(0, 200)}…` : failure}
                     </span>
                   )}
@@ -1916,7 +1916,7 @@ function BookDetailPageInner() {
                     type="button"
                     onClick={() => setRejectTarget(ev)}
                     title={t('history.rejectImportHint')}
-                    className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors flex-shrink-0"
+                    className="text-xs text-warning hover:text-warning-strong transition-colors flex-shrink-0"
                   >
                     {t('history.rejectImport')}
                   </button>

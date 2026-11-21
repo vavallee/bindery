@@ -40,14 +40,16 @@ describe('primaryFill', () => {
   }) as Record<string, string>
 
   it('sets its own text colour, and btn.primary uses it', () => {
-    expect(primaryFill.split(' ')).toContain('text-white')
+    expect(primaryFill.split(' ')).toContain('text-on-fill')
     expect(btn.primary).toContain(primaryFill)
   })
 
-  it('keeps white text at AA on the rest and hover fills', () => {
-    // Tailwind v4 emerald-700 and emerald-800 in sRGB.
-    expect(primaryFill).toContain('bg-emerald-700')
-    expect(primaryFill).toContain('hover:bg-emerald-800')
+  it('keeps on-fill text at AA on the rest and hover fills', () => {
+    // The accent-fill tokens are emerald-700 and emerald-800 (#3994). Their
+    // contrast against on-fill is measured in both themes in
+    // src/theme/contrast.test.ts, which also pins the values.
+    expect(primaryFill).toContain('bg-accent-fill')
+    expect(primaryFill).toContain('hover:bg-accent-fill-hover')
     expect(ratio('#ffffff', '#007a55')).toBeGreaterThanOrEqual(4.5)
     expect(ratio('#ffffff', '#006045')).toBeGreaterThanOrEqual(4.5)
   })

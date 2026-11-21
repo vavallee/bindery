@@ -90,8 +90,8 @@ export default function RequestsPage() {
         ))}
       </div>
 
-      {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
-      {notice && <p role="status" className="text-sm text-emerald-800 dark:text-emerald-300">{notice}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+      {notice && <p role="status" className="text-sm text-success-strong">{notice}</p>}
       {/* Centered, with a hint line, so this reads like the Queue, Discover and
           Import empty states instead of a stray left aligned sentence. */}
       {!loading && !error && items.length === 0 && (
@@ -125,7 +125,7 @@ export default function RequestsPage() {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {r.status === 'pending' && r.alreadyInLibrary && (
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">{t('requests.admin.alreadyInLibrary')}</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-success-subtle text-success-strong">{t('requests.admin.alreadyInLibrary')}</span>
                   )}
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${requestStatusClass(r)}`}>{requestStatusLabel(t, r)}</span>
                   {r.status === 'pending' && approving !== r.id && declining !== r.id && (
@@ -162,7 +162,7 @@ export default function RequestsPage() {
                     />
                   </label>
                   <button type="button" onClick={() => setDeclining(null)} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel')}</button>
-                  <button type="submit" className="px-3 py-1.5 rounded text-sm font-medium bg-red-600 hover:bg-red-700 text-white">{t('requests.admin.confirmDecline')}</button>
+                  <button type="submit" className="px-3 py-1.5 rounded text-sm font-medium bg-danger-fill hover:bg-danger-fill-hover text-on-fill">{t('requests.admin.confirmDecline')}</button>
                 </form>
               )}
             </li>

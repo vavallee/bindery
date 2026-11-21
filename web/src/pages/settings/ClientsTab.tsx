@@ -198,7 +198,7 @@ export default function ClientsTab({ clients, setClients }: Props) {
                   to introspect, which is worth saying plainly but is not an
                   error, so it renders muted rather than red. */}
               {c.health?.status === 'error' && (
-                <div className="mt-1 px-3 py-2 bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-300 border border-red-300 dark:border-red-900 rounded text-xs">
+                <div className="mt-1 px-3 py-2 bg-danger-subtle text-danger-strong border border-danger-border rounded text-xs">
                   {c.health.message}
                 </div>
               )}
@@ -215,14 +215,14 @@ export default function ClientsTab({ clients, setClients }: Props) {
                 />
               )}
               {clientTestResult[c.id] && (
-                <div role="status" className={`mt-1 px-3 py-1.5 rounded text-xs flex items-center gap-2 ${clientTestResult[c.id].ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
-                  <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${clientTestResult[c.id].ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                <div role="status" className={`mt-1 px-3 py-1.5 rounded text-xs flex items-center gap-2 ${clientTestResult[c.id].ok ? 'bg-success-subtle text-success-strong' : 'bg-danger-subtle text-danger-strong'}`}>
+                  <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${clientTestResult[c.id].ok ? 'bg-success-marker' : 'bg-danger-marker'}`} />
                   {clientTestResult[c.id].msg}
                 </div>
               )}
               {clientTestResult[c.id]?.warn && (
-                <div role="alert" className="mt-1 px-3 py-1.5 rounded text-xs flex items-start gap-2 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                  <span className="inline-block w-2 h-2 mt-1 rounded-full flex-shrink-0 bg-amber-500" />
+                <div role="alert" className="mt-1 px-3 py-1.5 rounded text-xs flex items-start gap-2 bg-warning-subtle text-warning-strong">
+                  <span className="inline-block w-2 h-2 mt-1 rounded-full flex-shrink-0 bg-warning-marker" />
                   {clientTestResult[c.id].warn}
                 </div>
               )}
@@ -238,8 +238,8 @@ export default function ClientsTab({ clients, setClients }: Props) {
                 />
               )}
               {diagnosis[c.id]?.error && (
-                <div role="alert" className="mt-1 px-3 py-1.5 rounded text-xs flex items-center gap-2 bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">
-                  <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-red-500" />
+                <div role="alert" className="mt-1 px-3 py-1.5 rounded text-xs flex items-center gap-2 bg-danger-subtle text-danger-strong">
+                  <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-danger-marker" />
                   {t('settings.clients.diagnose.failed', { error: diagnosis[c.id].error })}
                 </div>
               )}
@@ -479,7 +479,7 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           ? t('settings.clients.rtorrentUrlBaseHelp')
           : <RichText text={t('settings.clients.urlBaseHint', 'Optional path prefix for reverse proxy deployments (e.g. <code>/sabnzbd</code>). Leave blank for direct connections.')} components={{ code: <code className="font-mono" /> }} />}</p>
         {scgiIgnored.length > 0 && (
-          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+          <p className="text-xs text-warning mt-1">
             {t('settings.clients.rtorrentScgiIgnoredHint', { fields: scgiIgnored.map(f => scgiFieldLabel(t, f)).join(', ') })}
           </p>
         )}
@@ -573,16 +573,16 @@ function EditClientForm({ client, onClose, onSaved }: { client: DownloadClient; 
           <p className="text-xs text-fg-muted mt-1">{t('settings.clients.removeOnImportHelp')}</p>
         </div>
       )}
-      {saveError && <p className="text-sm text-red-700 dark:text-red-400">{saveError}</p>}
+      {saveError && <p className="text-sm text-danger">{saveError}</p>}
       {testResult && (
-        <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
-          <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${testResult.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+        <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-success-subtle text-success-strong' : 'bg-danger-subtle text-danger-strong'}`}>
+          <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${testResult.ok ? 'bg-success-marker' : 'bg-danger-marker'}`} />
           {testResult.msg}
         </div>
       )}
       {testResult?.warn && (
-        <div role="alert" className="px-3 py-1.5 rounded text-xs flex items-start gap-2 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-          <span className="inline-block w-2 h-2 mt-1 rounded-full flex-shrink-0 bg-amber-500" />
+        <div role="alert" className="px-3 py-1.5 rounded text-xs flex items-start gap-2 bg-warning-subtle text-warning-strong">
+          <span className="inline-block w-2 h-2 mt-1 rounded-full flex-shrink-0 bg-warning-marker" />
           {testResult.warn}
         </div>
       )}
@@ -770,7 +770,7 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
           ? t('settings.clients.rtorrentUrlBaseHelp')
           : <RichText text={t('settings.clients.urlBaseHint', 'Optional path prefix for reverse proxy deployments (e.g. <code>/sabnzbd</code>). Leave blank for direct connections.')} components={{ code: <code className="font-mono" /> }} />}</p>
         {scgiIgnored.length > 0 && (
-          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+          <p className="text-xs text-warning mt-1">
             {t('settings.clients.rtorrentScgiIgnoredHint', { fields: scgiIgnored.map(f => scgiFieldLabel(t, f)).join(', ') })}
           </p>
         )}
@@ -851,16 +851,16 @@ function AddClientForm({ onClose, onAdded }: { onClose: () => void; onAdded: (c:
           <p className="text-xs text-fg-muted mt-1">{t('settings.clients.removeOnImportHelp')}</p>
         </div>
       )}
-      {saveError && <p className="text-sm text-red-700 dark:text-red-400">{saveError}</p>}
+      {saveError && <p className="text-sm text-danger">{saveError}</p>}
       {testResult && (
-        <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'}`}>
-          <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${testResult.ok ? 'bg-emerald-500' : 'bg-red-500'}`} />
+        <div role="status" className={`px-3 py-1.5 rounded text-xs flex items-center gap-2 ${testResult.ok ? 'bg-success-subtle text-success-strong' : 'bg-danger-subtle text-danger-strong'}`}>
+          <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${testResult.ok ? 'bg-success-marker' : 'bg-danger-marker'}`} />
           {testResult.msg}
         </div>
       )}
       {testResult?.warn && (
-        <div role="alert" className="px-3 py-1.5 rounded text-xs flex items-start gap-2 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-          <span className="inline-block w-2 h-2 mt-1 rounded-full flex-shrink-0 bg-amber-500" />
+        <div role="alert" className="px-3 py-1.5 rounded text-xs flex items-start gap-2 bg-warning-subtle text-warning-strong">
+          <span className="inline-block w-2 h-2 mt-1 rounded-full flex-shrink-0 bg-warning-marker" />
           {testResult.warn}
         </div>
       )}

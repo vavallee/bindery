@@ -20,14 +20,14 @@ export default function BulkNotice({ message, onDismiss }: { message: string | n
   return (
     <div
       role="alert"
-      className="mb-3 flex items-start gap-3 px-3 py-2 rounded-md text-sm bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 text-amber-900 dark:text-amber-200"
+      className="mb-3 flex items-start gap-3 px-3 py-2 rounded-md text-sm bg-warning-subtle border border-warning-border text-warning-strong"
     >
       <span className="flex-1">{message}</span>
       <button
         type="button"
         onClick={onDismiss}
         aria-label={t('common.dismiss', 'Dismiss')}
-        className="shrink-0 px-1 leading-none text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100 cursor-pointer"
+        className="shrink-0 px-1 leading-none text-warning hover:text-warning-strong cursor-pointer"
       >
         ×
       </button>

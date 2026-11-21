@@ -122,7 +122,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
             {t('catalogueReconciliation.loading', 'Checking the current provider catalogue…')}
           </p>
         ) : error && !result ? (
-          <p className="mt-4 text-sm text-red-700 dark:text-red-400">{error}</p>
+          <p className="mt-4 text-sm text-danger">{error}</p>
         ) : result ? (
           <>
             <div className="mt-4 grid grid-cols-3 gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200 dark:border-zinc-800 dark:bg-zinc-800">
@@ -165,7 +165,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
 
             <div className="mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto">
               {applied ? (
-                <div className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+                <div className="rounded border border-success-border bg-success-subtle px-3 py-2 text-sm text-success-strong">
                   {t('catalogueReconciliation.applied', {
                     deleted: applied.deleted,
                     skipped: applied.skipped,
@@ -191,7 +191,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
                               title: candidate.title,
                               defaultValue: 'Select {{title}}',
                             })}
-                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500 dark:border-zinc-600 dark:bg-zinc-800"
+                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-danger focus:ring-danger-marker dark:border-zinc-600 dark:bg-zinc-800"
                           />
                           <span>
                             <span className="block font-medium text-slate-800 dark:text-zinc-200">{candidate.title}</span>
@@ -213,8 +213,8 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
                   <h3 id="catalogue-reconciliation-indeterminate-heading" className="text-xs font-semibold text-slate-700 dark:text-zinc-300">
                     {t('catalogueReconciliation.indeterminateHeading', 'Kept because evidence is incomplete')}
                   </h3>
-                  <div className="mt-2 rounded border border-amber-200 bg-amber-50/50 dark:border-amber-950 dark:bg-amber-950/20">
-                    <ul className="divide-y divide-amber-200/70 dark:divide-amber-950">
+                  <div className="mt-2 rounded border border-warning-border bg-warning-subtle">
+                    <ul className="divide-y divide-warning-border/70">
                       {indeterminateRows.map(row => (
                         <li key={row.bookId} className="px-3 py-2 text-xs">
                           <span className="block font-medium text-slate-800 dark:text-zinc-200">{row.title}</span>
@@ -233,7 +233,7 @@ export default function CatalogueReconciliationModal({ authorId, authorName, onC
           </>
         ) : null}
 
-        {error && result && <p className="mt-3 text-sm text-red-700 dark:text-red-400">{error}</p>}
+        {error && result && <p className="mt-3 text-sm text-danger">{error}</p>}
 
         <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-4 dark:border-zinc-800">
           <button type="button" onClick={onClose} className={`${btn.secondary} ${btnSize.md}`}>
@@ -264,7 +264,7 @@ function SummaryCell({ label, value, tone }: { label: string; value: number; ton
   return (
     <div className="bg-white px-3 py-2 dark:bg-zinc-900">
       <div className="text-[11px] text-fg-muted">{label}</div>
-      <div className={`text-lg font-semibold tabular-nums ${tone === 'danger' ? 'text-red-700 dark:text-red-300' : 'text-slate-900 dark:text-white'}`}>
+      <div className={`text-lg font-semibold tabular-nums ${tone === 'danger' ? 'text-danger-strong' : 'text-slate-900 dark:text-white'}`}>
         {value}
       </div>
     </div>

@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http/httptest"
 	"testing"
@@ -16,6 +17,7 @@ import (
 // contentFailureFixture is a scanner with a blocklist wired the way main.go
 // wires it, plus the repos to give its downloads books and clients.
 type contentFailureFixture struct {
+	database  *sql.DB
 	scanner   *Scanner
 	downloads *db.DownloadRepo
 	blocklist *db.BlocklistRepo
@@ -40,7 +42,7 @@ func newContentFailureFixture(t *testing.T) contentFailureFixture {
 	s := NewScanner(dlRepo, clientRepo, books, authors,
 		db.NewHistoryRepo(database), t.TempDir(), "", "", "", "")
 	s.WithFormatEnforcement(db.NewQualityProfileRepo(database), blocklist)
-	return contentFailureFixture{scanner: s, downloads: dlRepo, blocklist: blocklist, clients: clientRepo, books: books, authors: authors}
+	return contentFailureFixture{database: database, scanner: s, downloads: dlRepo, blocklist: blocklist, clients: clientRepo, books: books, authors: authors}
 }
 
 // addBook creates a wanted book and returns its id.

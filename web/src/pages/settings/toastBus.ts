@@ -23,6 +23,6 @@ export function publish(kind: ToastMessage['kind'], text: string) {
 // the toast appears and goes without motion, so prefers-reduced-motion needs
 // no handling here; if a transition is added it must be a motion-safe: one.
 export const TOAST_FILL: Record<ToastMessage['kind'], string> = {
-  success: 'bg-emerald-700 text-white',
-  error: 'bg-red-600 text-white',
+  success: 'bg-success-fill text-on-fill',
+  error: 'bg-danger-fill text-on-fill',
 }

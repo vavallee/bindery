@@ -211,10 +211,10 @@ export default function GrimmoryTab() {
         </button>
       </div>
 
-      {saveError && <p className="text-red-700 dark:text-red-400 text-xs">{saveError}</p>}
-      {testError && <p className="text-red-700 dark:text-red-400 text-xs">{testError}</p>}
+      {saveError && <p className="text-danger text-xs">{saveError}</p>}
+      {testError && <p className="text-danger text-xs">{testError}</p>}
       {testResult && (
-        <p className={`text-xs ${testResult.ok ? 'text-accent-text' : 'text-red-700 dark:text-red-400'}`}>
+        <p className={`text-xs ${testResult.ok ? 'text-accent-text' : 'text-danger'}`}>
           {testResult.message}
         </p>
       )}
@@ -234,7 +234,7 @@ export default function GrimmoryTab() {
         {!config?.enabled && (
           <p className="mt-2 text-[11px] text-fg-muted">{t('settings.grimmory.push.enableFirst', 'Enable and save the integration first.')}</p>
         )}
-        {syncError && <p className="mt-2 text-red-700 dark:text-red-400 text-xs">{syncError}</p>}
+        {syncError && <p className="mt-2 text-danger text-xs">{syncError}</p>}
         {sync && (sync.running || sync.finishedAt) && (
           <div className="mt-3 text-xs text-fg-muted space-y-1">
             <p>
@@ -242,9 +242,9 @@ export default function GrimmoryTab() {
               {' — '}
               {t('settings.grimmory.push.progress', { processed: sync.stats.processed, total: sync.stats.total, pushed: sync.stats.pushed, already: sync.stats.alreadyPushed, failed: sync.stats.failed, defaultValue: '{{processed}}/{{total}} processed, {{pushed}} pushed, {{already}} already pushed, {{failed}} failed' })}
             </p>
-            {sync.error && <p className="text-red-700 dark:text-red-400">{sync.error}</p>}
+            {sync.error && <p className="text-danger">{sync.error}</p>}
             {sync.errors.length > 0 && (
-              <ul className="list-disc ml-4 text-red-700 dark:text-red-400">
+              <ul className="list-disc ml-4 text-danger">
                 {sync.errors.slice(0, 5).map(e => (
                   <li key={`${e.bookId}-${e.path}`}>{e.title}: {e.reason}</li>
                 ))}

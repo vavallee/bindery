@@ -159,7 +159,7 @@ export default function UsersPage() {
       aria-label={t('users.roleFor', { username: u.username })}
       className={`px-2 py-0.5 rounded text-xs font-medium border border-slate-300 dark:border-zinc-700 ${
         u.role === 'admin'
-          ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400'
+          ? 'bg-warning-subtle text-warning-strong'
           : 'bg-slate-100 dark:bg-zinc-800 text-fg-muted'
       }`}
     >
@@ -214,7 +214,7 @@ export default function UsersPage() {
           onClick={() => handleDelete(u)}
           disabled={!!blocked}
           title={blocked}
-          className={`${btnCls} text-xs bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-700 dark:text-red-400 pointer-coarse:py-2.5 disabled:opacity-50 disabled:cursor-not-allowed`}
+          className={`${btnCls} text-xs bg-danger-subtle hover:bg-danger-border/40 text-danger-strong pointer-coarse:py-2.5 disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           {t('common.delete')}
         </button>
@@ -247,7 +247,7 @@ export default function UsersPage() {
       )}
 
       {loading && <p className="text-sm text-fg-muted">{t('common.loading')}</p>}
-      {error && <p className="text-sm text-red-700 dark:text-red-400">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
       {/* What Auto-approve does, said as that column's note and only when a
           requester is listed: as a bare paragraph under the heading it read
           as the page's description. */}
@@ -372,7 +372,7 @@ export default function UsersPage() {
             </select>
             <p className="mt-1 text-xs text-fg-muted">{t('users.roleRequesterHint')}</p>
           </div>
-          {createError && <p className="text-sm text-red-700 dark:text-red-400">{createError}</p>}
+          {createError && <p className="text-sm text-danger">{createError}</p>}
           <button
             type="submit"
             disabled={creating || !newUsername || !newPassword}

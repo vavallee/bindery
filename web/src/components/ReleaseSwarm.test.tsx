@@ -22,7 +22,7 @@ describe('ReleaseSwarm', () => {
   // must show rather than read as unreported.
   it('shows and flags a reported zero', () => {
     render(<ReleaseSwarm seeders={0} peers={0} />)
-    expect(screen.getByText('0 seeders')).toHaveClass('text-red-700')
+    expect(screen.getByText('0 seeders')).toHaveClass('text-danger')
     expect(screen.getByText(/0 peers/)).toBeInTheDocument()
   })
 

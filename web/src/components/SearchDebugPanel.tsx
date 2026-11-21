@@ -42,7 +42,7 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
             {indexers.length} indexer{indexers.length === 1 ? '' : 's'}
             {' · '}
             {rawCount} raw → {resultCount} shown
-            {anyIndexerErr && <span className="ml-2 text-red-700 dark:text-red-400">· indexer error</span>}
+            {anyIndexerErr && <span className="ml-2 text-danger">· indexer error</span>}
           </span>
         </span>
         <span className="text-xs text-fg-muted font-normal">
@@ -98,13 +98,13 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
                         </span>
                       )}
                       {ix.error && (
-                        <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400">
+                        <span className="px-1.5 py-0.5 rounded bg-danger-subtle text-danger-strong">
                           error
                         </span>
                       )}
                     </div>
                     {ix.error && (
-                      <div className="text-red-700 dark:text-red-400 break-words font-mono mt-0.5">{ix.error}</div>
+                      <div className="text-danger break-words font-mono mt-0.5">{ix.error}</div>
                     )}
                     {ix.categories && ix.categories.length > 0 && (
                       <div className="text-fg-muted font-mono">
@@ -132,7 +132,7 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
                     <div className="flex-1 min-w-0">
                       <span className="font-medium text-slate-800 dark:text-zinc-200">{src.name}</span>
                       {src.error && (
-                        <div className="text-red-700 dark:text-red-400 break-words font-mono mt-0.5">{src.error}</div>
+                        <div className="text-danger break-words font-mono mt-0.5">{src.error}</div>
                       )}
                     </div>
                     <div className="flex-shrink-0 text-right text-fg-muted">
@@ -152,17 +152,17 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
                 <div>raw from indexers: {debug.pipeline.rawCount}</div>
                 <div>after dedupe: {debug.pipeline.afterDedupe}{' '}
                   {debug.pipeline.rawCount !== debug.pipeline.afterDedupe && (
-                    <span className="text-amber-700 dark:text-amber-400">(−{debug.pipeline.rawCount - debug.pipeline.afterDedupe})</span>
+                    <span className="text-warning">(−{debug.pipeline.rawCount - debug.pipeline.afterDedupe})</span>
                   )}
                 </div>
                 <div>after usenet-junk filter: {debug.pipeline.afterUsenetJunk}{' '}
                   {debug.pipeline.afterDedupe !== debug.pipeline.afterUsenetJunk && (
-                    <span className="text-amber-700 dark:text-amber-400">(−{debug.pipeline.afterDedupe - debug.pipeline.afterUsenetJunk})</span>
+                    <span className="text-warning">(−{debug.pipeline.afterDedupe - debug.pipeline.afterUsenetJunk})</span>
                   )}
                 </div>
                 <div>after relevance filter: {debug.pipeline.afterRelevance}{' '}
                   {debug.pipeline.afterUsenetJunk !== debug.pipeline.afterRelevance && (
-                    <span className="text-amber-700 dark:text-amber-400">(−{debug.pipeline.afterUsenetJunk - debug.pipeline.afterRelevance})</span>
+                    <span className="text-warning">(−{debug.pipeline.afterUsenetJunk - debug.pipeline.afterRelevance})</span>
                   )}
                 </div>
                 {droppedTotal > 0 && (

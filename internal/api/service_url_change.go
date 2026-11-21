@@ -12,7 +12,7 @@ import (
 
 // canonicalServiceURL reduces a service base URL to the form used to decide
 // whether an edit moved it to a different server: lower case scheme and host,
-// default port dropped, trailing slashes dropped, query and fragment ignored.
+// default port dropped, a trailing dot on the host dropped, trailing slashes dropped, query and fragment ignored.
 // An unparseable value falls back to its trimmed text.
 func canonicalServiceURL(raw string) string {
 	raw = strings.TrimSpace(raw)
@@ -21,7 +21,7 @@ func canonicalServiceURL(raw string) string {
 		return raw
 	}
 	scheme := strings.ToLower(u.Scheme)
-	host := strings.ToLower(u.Hostname())
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 	port := u.Port()
 	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
 		port = ""
