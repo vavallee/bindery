@@ -2,7 +2,6 @@ package downloader
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -94,19 +93,6 @@ func TestSlskdNeverReachesSABnzbd(t *testing.T) {
 		t.Fatalf("TestConnection: %v", err)
 	}
 
-	if _, err := sendDownload(ctx, client, "slskd://user", "title"); !errors.Is(err, ErrSlskdNotSupported) {
-		t.Errorf("sendDownload err = %v, want ErrSlskdNotSupported", err)
-	}
-	if _, err := SendDownload(ctx, client, "slskd://user", "title"); !errors.Is(err, ErrSlskdNotSupported) {
-		t.Errorf("SendDownload err = %v, want ErrSlskdNotSupported", err)
-	}
-	id := "abc"
-	if err := RemoveDownload(ctx, client, &models.Download{SABnzbdNzoID: &id}, true, ""); !errors.Is(err, ErrSlskdNotSupported) {
-		t.Errorf("RemoveDownload err = %v, want ErrSlskdNotSupported", err)
-	}
-	if _, _, err := GetLiveStatuses(ctx, client); !errors.Is(err, ErrSlskdNotSupported) {
-		t.Errorf("GetLiveStatuses err = %v, want ErrSlskdNotSupported", err)
-	}
 	if rep, err := GetStalledTorrents(ctx, client); err != nil || rep.UsesTorrentID || len(rep.ClientReported) != 0 {
 		t.Errorf("GetStalledTorrents = %+v, %v; want an empty report", rep, err)
 	}

@@ -37,7 +37,7 @@ func TestReleasesGroupsByUserFolderAndFormat(t *testing.T) {
 		if r.IndexerID != nil {
 			t.Errorf("IndexerID = %v, want nil", *r.IndexerID)
 		}
-		if r.Protocol != Protocol || !strings.HasPrefix(r.GUID, GUIDPrefix) || r.NZBURL != "" {
+		if r.Protocol != Protocol || !strings.HasPrefix(r.GUID, GUIDPrefix) || !slskd.IsGrabURL(r.NZBURL) {
 			t.Errorf("release shape wrong: %+v", r)
 		}
 	}

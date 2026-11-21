@@ -38,6 +38,9 @@ vi.mock('../auth/AuthContext', async importOriginal => ({
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) => {
+      if (key === 'queue.soulseek.queuedAt') return `Queued in ${String(options?.user)}'s upload queue (position ${String(options?.position)})`
+      if (key === 'queue.soulseek.downloading') return `Downloading from ${String(options?.user)} (${String(options?.done)} of ${String(options?.total)} files done)`
+      if (key === 'queue.soulseek.waiting') return `Waiting for ${String(options?.user)} to start sending`
       if (key === 'queue.remaining') return `${String(options?.time)} remaining`
       if (key === 'queue.scanLibraryFor') return `Scan library for ${String(options?.title)}`
       if (key === 'queue.scanLibrary') return 'Scan library'
@@ -218,6 +221,26 @@ describe('QueuePage', () => {
     })
 
     expect(await screen.findByText('Queue is empty')).toBeInTheDocument()
+  })
+
+  it('shows the peer and queue position on a Soulseek row', async () => {
+    vi.mocked(api.listQueue).mockResolvedValue({
+      items: [
+        makeQueueItem({
+          id: 31, title: 'Dune [EPUB]', protocol: 'soulseek', status: 'downloading',
+          soulseek: { user: 'peer1', state: 'waiting', files: 1, filesDone: 0, queuePosition: 4 },
+        }),
+        makeQueueItem({
+          id: 32, guid: 'g32', title: 'Emma [M4B]', protocol: 'soulseek', status: 'downloading',
+          soulseek: { user: 'peer2', state: 'downloading', files: 12, filesDone: 3 },
+        }),
+      ],
+    })
+    renderQueuePage()
+
+    expect(await screen.findByText("Queued in peer1's upload queue (position 4)")).toBeInTheDocument()
+    expect(screen.getByText('Downloading from peer2 (3 of 12 files done)')).toBeInTheDocument()
+    expect(screen.getAllByText('Downloading').length).toBe(2)
   })
 
   it('surfaces the Manual Import and Scan Library hints in the empty state', async () => {

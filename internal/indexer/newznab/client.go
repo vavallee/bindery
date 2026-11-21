@@ -257,6 +257,11 @@ func HasAPIKey(raw string) bool {
 // URL with no credential is returned unchanged. The same applies to a GUID or
 // detail link, which torznab feeds often build from the download URL.
 func RedactDownloadURL(raw string) string {
+	// A Soulseek result's address lists a peer's file paths. It is Bindery's
+	// own and carries no credential, but it is long and not for a response.
+	if strings.HasPrefix(raw, "slskd://") {
+		return "slskd://result"
+	}
 	return httpsec.StripURLSecrets(raw)
 }
 

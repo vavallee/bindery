@@ -621,7 +621,7 @@ The proxy password is stored like the other client passwords and is never sent b
 
 ### slskd (Soulseek)
 
-Soulseek is opt in. Bindery does nothing with it until you add a slskd client, and it never speaks the Soulseek protocol itself: slskd does, and Bindery talks to slskd's REST API ([#1717](https://github.com/vavallee/bindery/issues/1717)). In this release you can add the client, test it and run Diagnose on it. Searching it and sending it downloads come in later releases, so a slskd client does not download anything yet.
+Soulseek is opt in. Bindery does nothing with it until you add a slskd client, and it never speaks the Soulseek protocol itself: slskd does, and Bindery talks to slskd's REST API ([#1717](https://github.com/vavallee/bindery/issues/1717)). You can add the client, test it and run Diagnose on it. With it enabled, interactive search also searches Soulseek and you can grab what it finds by hand.
 
 What you need:
 
@@ -633,7 +633,28 @@ What you need:
 
 Fill in the client like any other: host, port (slskd listens on 5030 by default), URL base if slskd sits behind a reverse proxy, and the API key. There is no category field because slskd has no categories.
 
-What works today: with a slskd client enabled, the book page's interactive search, the Wanted page search and the free text Search page also ask slskd, and the Soulseek results appear in the same list as your indexer results. Each one carries a Soulseek badge, the peer's user name, how many files it holds, and whether the peer has a free upload slot or how long its queue is. The Grab button on those results is disabled, because grabbing from Soulseek arrives in a later release. Nothing is downloaded, and the automatic search that runs for wanted books does not use Soulseek at all.
+What works today: with a slskd client enabled, the book page's interactive search, the Wanted page search and the free text Search page also ask slskd, and the Soulseek results appear in the same list as your indexer results. Each one carries a Soulseek badge, the peer's user name, how many files it holds, and whether the peer has a free upload slot or how long its queue is. You can grab them. Grabbing is interactive only: the automatic search that runs for wanted books does not use Soulseek at all, and nothing is ever grabbed from Soulseek without you pressing Grab. Auto grab is not included.
+
+How a Soulseek grab runs:
+
+- Bindery asks slskd for the files of the folder you picked, from that one peer, in one batch. The files land in slskd's downloads folder under `bindery/<download id>/`. The folder name holds the download's id and nothing else, so no title or user name is written to disk.
+- **slskd and Bindery must share the downloads volume**, or the client's path remap must reach slskd's downloads folder. Bindery reads the finished files from `<slskd downloads folder>/bindery/<id>/` through the remap, then imports them like any other download. If it cannot see the folder the download is marked as an import failure that says so, and it is retried for a few checks before it is blocked.
+- A download is complete only when every requested file finished. If any file fails, is rejected by the peer or is cancelled, the whole download is failed with a message, its transfers are cancelled in slskd and the files that did arrive are deleted. Nothing is imported from a half download, and you can pick another result.
+- A peer's queue can be long, so waiting is allowed: a download that has been queued or starting for 30 minutes with nothing moving is cancelled in slskd and failed. One that is transferring but has received no new bytes for 10 minutes is cancelled and failed the same way. The Queue shows the peer's name and, while queued, the place in its upload queue when slskd reports one.
+- Removing a Soulseek download from the Queue cancels its transfers in slskd. With "delete files" ticked it also deletes that download's own folder. Other downloads' folders are never touched. After a successful import the finished transfers are removed from slskd's list and the files stay where they are, in case slskd shares that folder back.
+- Bindery never follows a symbolic link inside the download folder, but a hardlink that slskd places there cannot be told apart from an ordinary file, so it is imported like one. A download is limited to 200 files and 10 GiB in total. A folder over either limit is not offered, because a grab of it would be refused.
+
+Files from peers are checked harder than files from an indexer. For a Soulseek download the import check runs in block mode whatever the content check settings say, with one exception: if you have set a content check to off, that stays off. In block mode the import is refused, the release is blocklisted and the book stays wanted when:
+
+- the folder holds the wrong format for what was grabbed, for example audio files for an ebook;
+- an EPUB or Kindle file cannot be opened;
+- an EPUB or Kindle file says it is a different book (its title and author do not match);
+- audiobook tags clearly name another book;
+- the file's language is outside the language profile, where the file says what it is.
+
+The blocklist entry is keyed on the Soulseek result itself (the peer and the files), since a Soulseek result has no indexer. A refused download keeps its folder, so Match to book in the Queue or manual import can still bring the files in if you decide they are right.
+
+**PDF has no content check.** Bindery does not read a PDF's inside, so a PDF from Soulseek is only held to the format rule above and always imports if the format matches. Look at the file yourself before you trust a PDF from a stranger.
 
 Soulseek searches are slow next to an indexer. slskd runs one search at a time and Bindery asks it to collect answers for about 15 seconds, so a search that includes Soulseek usually takes that long to finish. That wait is capped: Bindery never waits more than 20 seconds for slskd, so a busy or hung slskd delays your indexer results by at most 20 seconds. Past the cap the search goes on without Soulseek and the search debug view shows the slskd source as timed out, under Sources. A book that wants both an ebook and an audiobook sends one Soulseek search and splits the answer between the two formats. If slskd is busy or does not answer, the indexer results still show.
 

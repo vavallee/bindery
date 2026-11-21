@@ -328,19 +328,21 @@ describe('SearchPage Soulseek results', () => {
     expect(screen.getByTestId('soulseek-slot')).toHaveTextContent('queue 4')
   })
 
-  it('disables Grab with a tooltip and never sends a grab', async () => {
+  it('enables Grab and sends the grab for a Soulseek result', async () => {
     vi.mocked(api.searchIndexers).mockResolvedValue([soulseekResult])
+    vi.mocked(api.grab).mockResolvedValue(makeDownload({ guid: 'slskd:abc' }))
     renderSearchPage()
     fireEvent.change(screen.getByPlaceholderText(en.search.placeholder), { target: { value: 'dune' } })
     fireEvent.submit(screen.getByPlaceholderText(en.search.placeholder).closest('form')!)
 
     const grab = await screen.findByRole('button', { name: en.search.grab })
-    expect(grab).toHaveAttribute('aria-disabled', 'true')
-    expect(grab).toHaveAttribute('title', en.search.soulseek.grabUnavailable)
-    expect(grab).not.toBeDisabled() // stays focusable so the explanation is reachable
-    expect(grab).toHaveAccessibleDescription(en.search.soulseek.grabUnavailable)
+    expect(grab).not.toBeDisabled()
+    expect(grab).not.toHaveAttribute('aria-disabled')
+    expect(grab).not.toHaveAttribute('title')
     fireEvent.click(grab)
-    expect(api.grab).not.toHaveBeenCalled()
+    await waitFor(() => expect(api.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ guid: 'slskd:abc', protocol: 'soulseek' }),
+    ))
   })
 
   it('leaves an indexer result alone: no badge, Grab enabled', async () => {

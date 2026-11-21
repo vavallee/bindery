@@ -2,6 +2,9 @@ package soulseek
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"unicode"
@@ -30,6 +33,9 @@ type flight struct {
 	done chan struct{}
 	resp []slskd.SearchResponse
 	err  error
+	// ownerEnded is true when the search failed because its owner's context
+	// ended, so a waiter with a live context should search again.
+	ownerEnded bool
 }
 
 // NewSource builds the search source for an slskd client. name is shown on the
@@ -61,29 +67,49 @@ func (s *Source) Search(ctx context.Context, q indexer.SourceQuery) ([]newznab.S
 // without this the second would queue behind the first and miss the search
 // budget. The media type is applied afterwards by Releases, per caller.
 func (s *Source) search(ctx context.Context, text string) ([]slskd.SearchResponse, error) {
-	s.mu.Lock()
-	if f, ok := s.inflight[text]; ok {
-		s.mu.Unlock()
-		select {
-		case <-f.done:
-			return f.resp, f.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
+	for {
+		s.mu.Lock()
+		if f, ok := s.inflight[text]; ok {
+			s.mu.Unlock()
+			select {
+			case <-f.done:
+				// The owner gave up because its own context ended, which says
+				// nothing about this caller's. Search again, as the new owner.
+				if f.ownerEnded && ctx.Err() == nil {
+					continue
+				}
+				return f.resp, f.err
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
+		f := &flight{done: make(chan struct{})}
+		if s.inflight == nil {
+			s.inflight = map[string]*flight{}
+		}
+		s.inflight[text] = f
+		s.mu.Unlock()
+		return s.own(ctx, text, f)
 	}
-	f := &flight{done: make(chan struct{})}
-	if s.inflight == nil {
-		s.inflight = map[string]*flight{}
-	}
-	s.inflight[text] = f
-	s.mu.Unlock()
+}
 
-	f.resp, f.err = s.client.Search(ctx, text)
-	s.mu.Lock()
-	delete(s.inflight, text)
-	s.mu.Unlock()
-	close(f.done)
-	return f.resp, f.err
+// own runs the search for a flight. Whatever happens, including a panic in the
+// client, the flight leaves the table and its waiters are released, so a later
+// search with the same text never blocks on a flight nobody will finish.
+func (s *Source) own(ctx context.Context, text string, f *flight) (resp []slskd.SearchResponse, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Warn("soulseek search panicked", "panic", fmt.Sprint(r))
+			resp, err = nil, errors.New("the Soulseek search failed unexpectedly")
+		}
+		f.resp, f.err = resp, err
+		f.ownerEnded = err != nil && ctx.Err() != nil
+		s.mu.Lock()
+		delete(s.inflight, text)
+		s.mu.Unlock()
+		close(f.done)
+	}()
+	return s.client.Search(ctx, text)
 }
 
 // maxTitleWords bounds the title part of a query. Soulseek matches every word,
