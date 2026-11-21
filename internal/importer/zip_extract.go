@@ -474,9 +474,10 @@ func resolveStrictlyInside(folder string, roots []string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if fi, err := os.Stat(realFolder); err != nil || !fi.IsDir() {
-		return "", false
-	}
+	// The containment check is filepath.Rel plus filepath.IsLocal on the value
+	// that is then joined onto the root and returned, the guard shape CodeQL's
+	// go/path-injection query credits (see WriteOPFSidecarFile). Nothing reads
+	// or stats the folder before it has passed.
 	for _, r := range roots {
 		if strings.TrimSpace(r) == "" || !filepath.IsAbs(r) {
 			continue
@@ -486,9 +487,14 @@ func resolveStrictlyInside(folder string, roots []string) (string, bool) {
 			continue
 		}
 		rel, err := filepath.Rel(realRoot, realFolder)
-		if err == nil && rel != "." && relInside(rel) {
-			return realFolder, true
+		if err != nil || rel == "." || !filepath.IsLocal(rel) {
+			continue
 		}
+		target := filepath.Join(realRoot, rel)
+		if fi, err := os.Stat(target); err != nil || !fi.IsDir() {
+			return "", false
+		}
+		return target, true
 	}
 	return "", false
 }
@@ -496,27 +502,29 @@ func resolveStrictlyInside(folder string, roots []string) (string, bool) {
 // unpackZipForImport runs the ZIP extraction for a download that found no book
 // file, when every guard allows it. extracted reports that files were written.
 // note explains, for the "waiting" message, why a ZIP is still there when
-// nothing was extracted. A non nil err is a failed extraction that left the
-// folder as it was.
-func (s *Scanner) unpackZipForImport(ctx context.Context, dl *models.Download, downloadPath, clientType string, explicitFiles []string) (extracted bool, note string, err error) {
-	if len(topLevelZips(downloadPath)) == 0 {
-		return false, "", nil
-	}
+// nothing was extracted; guard is set when the note is such a refusal, which
+// only means something for a ZIP. A non nil err is a failed extraction that
+// left the folder as it was. The folder is not listed until it has passed the
+// containment check.
+func (s *Scanner) unpackZipForImport(ctx context.Context, dl *models.Download, downloadPath, clientType string, explicitFiles []string) (extracted bool, note string, guard bool, err error) {
 	switch {
 	case !s.zipExtractionEnabled(ctx):
-		return false, "Bindery's ZIP extraction is switched off (Settings, File Naming, Extract ZIP archives of usenet downloads).", nil
+		return false, "Bindery's ZIP extraction is switched off (Settings, File Naming, Extract ZIP archives of usenet downloads).", true, nil
 	case (clientType != "sabnzbd" && clientType != "nzbget") || dl == nil || dl.Protocol == "torrent" || dl.Protocol == "soulseek" || isManualImport(ctx) || len(explicitFiles) > 0:
-		return false, "Bindery extracts ZIP files only for usenet downloads.", nil
+		return false, "Bindery extracts ZIP files only for usenet downloads.", true, nil
 	}
 	folder, ok := resolveStrictlyInside(downloadPath, zipExtractRootsFrom(ctx))
 	if !ok {
-		return false, "Bindery extracts ZIP files only inside its own download folders, and this one is outside them, so it was not touched.", nil
+		return false, "Bindery extracts ZIP files only inside its own download folders, and this one is outside them, so it was not touched.", true, nil
+	}
+	if len(topLevelZips(folder)) == 0 {
+		return false, "", false, nil
 	}
 	out, err := extractZipsInFolder(folder)
 	if err != nil {
-		return false, "", err
+		return false, "", false, err
 	}
 	slog.Info("extracted ZIP files of a usenet download", "path", folder, "files", out.files, "archives", out.archives,
 		"encrypted", out.encrypted, "special", out.special, "existing", out.existing)
-	return out.files > 0, out.note(), nil
+	return out.files > 0, out.note(), false, nil
 }

@@ -147,15 +147,16 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// A usenet job that holds only a ZIP (#4131): SABnzbd and NZBGet leave a zip
 	// alone. Unpack it here, under the guards in zip_extract.go, and look again.
 	var zipNote string
+	var zipNoteIsRefusal bool
 	if len(bookFiles) == 0 && len(tooSmallFiles) == 0 {
-		extracted, note, zerr := s.unpackZipForImport(ctx, dl, downloadPath, cleanupClientType, explicitFiles)
+		extracted, note, refusal, zerr := s.unpackZipForImport(ctx, dl, downloadPath, cleanupClientType, explicitFiles)
 		if zerr != nil {
 			slog.Warn("could not extract the ZIP of a usenet download", "path", downloadPath, "error", zerr)
 			s.failImport(ctx, dl, models.StateImportFailed,
 				fmt.Sprintf("waiting for a ZIP to be extracted: this download holds only an archive, and Bindery could not extract it (%v). Nothing was written to the folder. Extract it yourself, then use Retry import on the Queue page.", zerr))
 			return
 		}
-		zipNote = note
+		zipNote, zipNoteIsRefusal = note, refusal
 		if extracted {
 			bookFiles, tooSmallFiles = discoverBookFilesSized(downloadPath, explicitFiles, !isManualImport(ctx))
 		}
@@ -224,6 +225,9 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			// waiting for.
 			slog.Info("download holds only an archive; waiting for it to be extracted",
 				"path", downloadPath, "archive", filepath.Base(archive))
+			if zipNoteIsRefusal && archiveKind(archive) != "ZIP" {
+				zipNote = "" // a ZIP refusal says nothing about a RAR or 7z
+			}
 			s.failImport(ctx, dl, models.StateImportFailed, archiveWaitMessage(archive, downloadPath, zipNote))
 			return
 		}
