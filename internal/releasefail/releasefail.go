@@ -12,7 +12,8 @@
 //
 // There is no counter column. A failure is written to history as a
 // downloadFailed event carrying the release GUID and a class, and the count is
-// the number of those events since the release last imported, inside Window.
+// the run of those events since the release last imported, inside Window, at
+// least MinSpacing apart (see HistoryRepo.ReleaseFailureStreak).
 // Deleting history only resets a counter, which errs towards retrying.
 package releasefail
 
@@ -23,6 +24,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vavallee/bindery/internal/db"
@@ -49,15 +51,20 @@ const (
 	ClassNeverArrived Class = "neverArrived"
 	// ClassClientError is the client reporting the torrent as errored. For
 	// qBittorrent that state is usually a disk fault (an unwritable save path
-	// or a full disk), which is Bindery's host and not the release, so it is
-	// counted rather than blocklisted at once.
+	// or a full disk), which is the host and not the release, and a full disk
+	// would blocklist every release in turn. It is recorded in history and
+	// never counted.
 	ClassClientError Class = "clientError"
+	// ClassIndexerWide is an indexer failure that was not counted because it
+	// is not evidence about this release: the indexer was already backing off,
+	// or other releases from it failed the same way.
+	ClassIndexerWide Class = "indexerWide"
 )
 
 // Counts reports whether failures of this class count towards a blocklist.
 func (c Class) Counts() bool {
 	switch c {
-	case ClassIndexer, ClassRelease, ClassNeverArrived, ClassClientError:
+	case ClassIndexer, ClassRelease, ClassNeverArrived:
 		return true
 	}
 	return false
@@ -65,7 +72,7 @@ func (c Class) Counts() bool {
 
 // CountedClasses is every class that counts, for the history query.
 var CountedClasses = []string{
-	string(ClassIndexer), string(ClassRelease), string(ClassNeverArrived), string(ClassClientError),
+	string(ClassIndexer), string(ClassRelease), string(ClassNeverArrived),
 }
 
 const (
@@ -79,6 +86,13 @@ const (
 	// DefaultIndexerBackoff is how long an indexer is left alone after a
 	// transient failure that carried no time of its own.
 	DefaultIndexerBackoff = time.Hour
+	// MinSpacing is the least time between two counted failures of one
+	// release. A burst of manual searches or sweeps cannot reach the threshold.
+	MinSpacing = time.Hour
+	// IndexerWideWindow is how far back another release's failure from the
+	// same indexer counts as evidence that the indexer, not this release, is
+	// at fault.
+	IndexerWideWindow = 24 * time.Hour
 	// MaxIndexerBackoff caps a time the indexer asked for.
 	MaxIndexerBackoff = 24 * time.Hour
 	// MinIndexerBackoff floors a time the indexer asked for.
@@ -175,30 +189,73 @@ func IndexerBackoffUntil(f SendFailure, now time.Time) time.Time {
 
 // Verdict is the escalation decision for one failure.
 type Verdict struct {
-	// Count is how many counted failures the release has, this one included.
+	// Count is how many counted failures the release has, this one included
+	// when it counts.
 	Count int
 	// Block is true when the release should now be blocklisted.
 	Block bool
+	// Class is the class to store on the history event: the one asked for,
+	// or ClassIndexerWide when the failure is not evidence about the release.
+	Class Class
 }
 
-// Assess counts the failure about to be recorded for dl. Call it before
-// writing the history event, so the event can say it blocklisted the release.
+// Assess decides what the failure about to be recorded for dl means. Call it
+// before writing the history event, store Verdict.Class on it, and say on it
+// whether the release was blocklisted.
+//
+// A failure counts only when it is evidence about the release:
+//   - an indexer failure is not counted while the indexer is already backing
+//     off (indexerBackedOff), or when another release from it failed the same
+//     way in the last IndexerWideWindow, because that is an indexer wide fault;
+//   - a never-arrived failure is not counted when the indexer failed releases
+//     in that window, for the same reason;
+//   - one inside MinSpacing of the last counted failure is recorded but adds
+//     nothing (see HistoryRepo.ReleaseFailureStreak).
+//
 // A history error counts as no prior failures: it fails towards a retry.
-func Assess(ctx context.Context, history *db.HistoryRepo, dl *models.Download, class Class, now time.Time) Verdict {
-	if !class.Counts() {
-		return Verdict{}
+func Assess(ctx context.Context, history *db.HistoryRepo, dl *models.Download, class Class, now time.Time, indexerBackedOff bool) Verdict {
+	v := Verdict{Class: class}
+	if !class.Counts() || history == nil || strings.TrimSpace(dl.GUID) == "" {
+		return v
 	}
-	prior := 0
-	if history != nil && strings.TrimSpace(dl.GUID) != "" {
-		n, err := history.CountReleaseFailures(ctx, dl.GUID, dl.Title, now.Add(-Window), CountedClasses)
+	if class == ClassIndexer && indexerBackedOff {
+		v.Class = ClassIndexerWide
+		return v
+	}
+	if (class == ClassIndexer || class == ClassNeverArrived) && dl.IndexerID != nil {
+		n, err := history.IndexerFailuresElsewhere(ctx, *dl.IndexerID, otherGUID(class, dl.GUID), string(ClassIndexer), now.Add(-IndexerWideWindow))
 		if err != nil {
-			slog.Warn("could not count prior failures of a release", "guid", dl.GUID, "error", err)
+			slog.Warn("could not look for indexer wide failures", "guid", dl.GUID, "error", err)
 		}
-		prior = n
+		if n > 0 {
+			v.Class = ClassIndexerWide
+			return v
+		}
 	}
-	v := Verdict{Count: prior + 1}
+	prior, last, pending, err := history.ReleaseFailureStreak(ctx, dl.GUID, dl.Title, dl.BookID, now.Add(-Window),
+		CountedClasses, string(ClassNeverArrived), MinSpacing)
+	if err != nil {
+		slog.Warn("could not count prior failures of a release", "guid", dl.GUID, "error", err)
+	}
+	if pending && class != ClassNeverArrived {
+		prior, last = 0, time.Time{}
+	}
+	v.Count = prior
+	if last.IsZero() || now.Sub(last) >= MinSpacing {
+		v.Count = prior + 1
+	}
 	v.Block = v.Count >= EscalateAfter
 	return v
+}
+
+// otherGUID is the guid to exclude when looking for the indexer's other
+// failures: an indexer failure of this release is not "elsewhere", a
+// never-arrived one has no indexer failure of its own to exclude.
+func otherGUID(class Class, guid string) string {
+	if class == ClassIndexer {
+		return guid
+	}
+	return ""
 }
 
 // Reason is the blocklist reason for a verdict. It names the class and the
@@ -207,12 +264,21 @@ func Reason(detail string, count int) string {
 	return fmt.Sprintf("downloadFailed: %s, failed %d times in a row", detail, count)
 }
 
+// blocklistMu makes the check and the insert in Blocklist one step. Both
+// writers (the scheduler and the importer's poller) live in this process, so a
+// mutex is enough to keep two failures of one release from adding two rows.
+var blocklistMu sync.Mutex
+
 // Blocklist adds dl's release to the blocklist for every book, unless a
-// release scoped entry already blocks it.
+// release scoped entry already blocks it. Blocklist matching is global by
+// design (migration 049), as for the usenet content failures (#3024), so an
+// entry written for one owner's download blocks the release for every owner.
 func Blocklist(ctx context.Context, blocklist *db.BlocklistRepo, dl *models.Download, reason string) {
 	if blocklist == nil || strings.TrimSpace(dl.GUID) == "" {
 		return
 	}
+	blocklistMu.Lock()
+	defer blocklistMu.Unlock()
 	if blocked, err := blocklist.BlocksBook(ctx, dl.GUID, nil); err == nil && blocked {
 		return
 	}

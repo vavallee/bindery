@@ -28,18 +28,28 @@ import (
 func (s *Scheduler) recordSendFailure(ctx context.Context, dl *models.Download, sendErr error) {
 	now := time.Now().UTC()
 	f := releasefail.ClassifySend(sendErr.Error(), now)
+	// Read the pause before this failure sets it: a failure that happens while
+	// the indexer is already backing off is not evidence about the release.
+	alreadyBackedOff := false
+	if dl.IndexerID != nil {
+		_, alreadyBackedOff = s.indexerBackedOff(*dl.IndexerID, now)
+	}
 	if until := releasefail.IndexerBackoffUntil(f, now); !until.IsZero() && dl.IndexerID != nil {
 		s.backOffIndexer(*dl.IndexerID, until)
 		slog.Warn("backing off an indexer after a failed grab",
 			"indexer_id", *dl.IndexerID, "until", until, "detail", f.Detail)
 	}
-	verdict := releasefail.Assess(ctx, s.history, dl, f.Class, now)
+	verdict := releasefail.Assess(ctx, s.history, dl, f.Class, now, alreadyBackedOff)
 	message := f.Detail
 	if verdict.Block {
 		message += ". Blocklisted after " + strconv.Itoa(verdict.Count) + " failures in a row"
 	}
 	if s.history != nil {
-		data, _ := json.Marshal(map[string]string{"guid": dl.GUID, "message": message, "class": string(f.Class)})
+		fields := map[string]string{"guid": dl.GUID, "message": message, "class": string(verdict.Class)}
+		if dl.IndexerID != nil {
+			fields["indexerId"] = strconv.FormatInt(*dl.IndexerID, 10)
+		}
+		data, _ := json.Marshal(fields)
 		_ = s.history.Create(ctx, &models.HistoryEvent{
 			BookID:      dl.BookID,
 			EventType:   models.HistoryEventDownloadFailed,

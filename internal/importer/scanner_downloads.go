@@ -623,11 +623,11 @@ func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, m
 // is permanent. detail names the failure in the blocklist reason and holds
 // nothing taken from the client.
 func (s *Scanner) markDownloadFailedCounted(ctx context.Context, dl *models.Download, message string, class releasefail.Class, detail string) {
-	verdict := releasefail.Assess(ctx, s.history, dl, class, time.Now().UTC())
+	verdict := releasefail.Assess(ctx, s.history, dl, class, time.Now().UTC(), false)
 	if verdict.Block {
 		message += fmt.Sprintf(". Blocklisted after %d failures in a row.", verdict.Count)
 	}
-	s.markDownloadFailedClass(ctx, dl, message, string(class))
+	s.markDownloadFailedClass(ctx, dl, message, string(verdict.Class))
 	if verdict.Block {
 		releasefail.Blocklist(ctx, s.blocklist, dl, releasefail.Reason(detail, verdict.Count))
 	}
@@ -641,6 +641,9 @@ func (s *Scanner) markDownloadFailedClass(ctx context.Context, dl *models.Downlo
 	data := map[string]string{"guid": dl.GUID, "message": message}
 	if class != "" {
 		data["class"] = class
+		if dl.IndexerID != nil {
+			data["indexerId"] = strconv.FormatInt(*dl.IndexerID, 10)
+		}
 	}
 	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, dl.OwnerUserID, data)
 	s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{

@@ -749,7 +749,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			s.tryImportQbittorrent(withTorrentOwnFolder(ctx, qbitHasOwnFolder(torrent)), qb, client, &dl, downloadPath, bookFiles)
 		} else if isFailed && dl.Status != models.StateFailed {
 			slog.Warn("download failed", "title", dl.Title, "state", torrent.State)
-			s.markDownloadFailedCounted(ctx, &dl, "Torrent failed in qBittorrent", releasefail.ClassClientError, "qBittorrent reported the torrent as errored")
+			s.markDownloadFailedClass(ctx, &dl, "Torrent failed in qBittorrent. This is usually a disk or permissions problem where the client runs (a full disk, an unwritable save path), so the release was not blocklisted", string(releasefail.ClassClientError))
 		}
 	}
 
@@ -831,7 +831,7 @@ func (s *Scanner) checkDelugeDownloads(ctx context.Context, client *models.Downl
 			s.tryImportDeluge(ctx, &dl, downloadPath, bookFiles)
 		case isFailed && dl.Status != models.StateFailed:
 			slog.Warn("download failed", "title", dl.Title, "state", t.State)
-			s.markDownloadFailedCounted(ctx, &dl, "Torrent failed in Deluge", releasefail.ClassClientError, "Deluge reported the torrent as errored")
+			s.markDownloadFailedClass(ctx, &dl, "Torrent failed in Deluge. This is usually a disk or permissions problem where the client runs, so the release was not blocklisted", string(releasefail.ClassClientError))
 		}
 	}
 
