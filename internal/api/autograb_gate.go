@@ -36,7 +36,7 @@ const autoGrabDisabledCode = "auto_grab_disabled"
 // autoGrabDisabledMessage is the fallback English text for API clients that do
 // not localise (curl, scripts, the *arr style integrations). It has to stand
 // on its own, so it says both what did not happen and where to change it.
-const autoGrabDisabledMessage = "automatic grabbing is disabled, so no search was run. Turn on Settings > General > Enable automatic grabbing, or search this book on its own page to pick a release by hand."
+const autoGrabDisabledMessage = "automatic grabbing is disabled, so no search was run. Turn on Settings > Metadata Profiles > Enable automatic grabbing, or search this book on its own page to pick a release by hand."
 
 // refuseSearchWhenAutoGrabDisabled reports whether a user initiated bulk
 // search must be refused outright. It reads the same key, with the same fail
