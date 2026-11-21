@@ -645,7 +645,7 @@ describe('status colour tokens (#3994)', () => {
     let checked = 0
     const resolveBg = (cls: string, theme: Theme, card: string): string | undefined => {
       const [base, alpha] = cls.split('/')
-      const m = base.match(/^bg-((?:danger|warning|success|info)-(?:subtle|fill|fill-hover|marker)|accent-fill|accent-fill-hover)$/)
+      const m = base.match(/^bg-((?:danger|warning|success|info)-(?:subtle|border|fill|fill-hover|marker)|accent-fill|accent-fill-hover)$/)
       const hex = m ? tok(m[1], theme) : TAILWIND.get(base.replace(/^bg-/, ''))
       return hex ? (alpha ? mix(hex, card, Number(alpha) / 100) : hex) : undefined
     }

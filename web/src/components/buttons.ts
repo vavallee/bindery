@@ -16,10 +16,11 @@
 // uses it, and so do the primary buttons that keep their own padding and shape:
 // those used to set the colours themselves, and most set no text colour, so in
 // the dark theme they took the page's zinc-100 at 3.3:1 (#3265). The colour of
-// every primary button is set here and nowhere else. White on emerald-700 is
+// every primary button is set here and nowhere else (the accent-fill tokens,
+// emerald-700 and -800 today, in src/index.css). White on emerald-700 is
 // 5.4:1, and the hover goes darker, to emerald-800 at 7.6:1, rather than
 // lighter: emerald-600 and -500 left white at 3.7:1 and 2.5:1.
-export const primaryFill = 'bg-emerald-700 hover:bg-emerald-800 text-white'
+export const primaryFill = 'bg-accent-fill hover:bg-accent-fill-hover text-on-fill'
 
 const base =
   'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors ' +
@@ -29,7 +30,7 @@ const base =
 
 export const btn = {
   // Primary action (grab, save, add an entity).
-  primary: `${base} ${primaryFill} focus-visible:ring-emerald-500`,
+  primary: `${base} ${primaryFill} focus-visible:ring-accent-ring`,
   // Secondary action (filled neutral, lower weight than primary).
   secondary: `${base} bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 text-slate-800 dark:text-zinc-200 focus-visible:ring-slate-400`,
   // Tertiary action (ghost, lowest emphasis — e.g. row "Refresh").
@@ -37,12 +38,12 @@ export const btn = {
   // Destructive action: ghost-danger button (outlined + tinted hover). AA-safe
   // in both themes. Pair with a confirmation at the call site — this is styling,
   // not a guard.
-  danger: `${base} border border-red-300 dark:border-red-900/70 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/40 focus-visible:ring-red-500`,
+  danger: `${base} border border-danger-border text-danger hover:bg-danger-subtle focus-visible:ring-danger-marker`,
   // Irreversible destructive action — solid red, the loudest control we have.
   // Reserve it for actions with no undo (delete a book and its files, delete an
   // author). A reversible destructive action gets `danger` above; when both
   // appear on one page, solid red must mark the one you can't take back.
-  dangerSolid: `${base} bg-red-600 hover:bg-red-700 text-white focus-visible:ring-red-500`,
+  dangerSolid: `${base} bg-danger-fill hover:bg-danger-fill-hover text-on-fill focus-visible:ring-danger-marker`,
 } as const
 
 export const btnSize = {
@@ -62,4 +63,4 @@ export const slateFill = 'bg-slate-700 hover:bg-slate-600 text-white'
 // too heavy. Properly paired for light + dark — use this instead of a bare
 // `text-red-400`, which is invisible-to-low-contrast on light surfaces.
 export const dangerLink =
-  'text-red-700 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors'
+  'text-danger hover:text-danger-strong transition-colors'

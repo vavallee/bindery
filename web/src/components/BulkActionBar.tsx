@@ -39,9 +39,9 @@ const PHONE_INLINE_ACTIONS = 2
 const actionClass = (variant: BulkAction['variant']) =>
   `touch-target px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
     variant === 'danger'
-      ? 'bg-red-600 hover:bg-red-700 text-white'
+      ? 'bg-danger-fill hover:bg-danger-fill-hover text-on-fill'
       : variant === 'caution'
-        ? 'bg-amber-700 hover:bg-amber-800 text-white'
+        ? 'bg-warning-fill hover:bg-warning-fill-hover text-on-fill'
         : 'bg-slate-600 hover:bg-slate-500 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-white'
   }`
 

@@ -110,7 +110,7 @@ describe('BulkActionBar', () => {
     const list: BulkAction[] = [...actions().slice(0, 2), { label: 'Set both', onClick: vi.fn(), variant: 'caution' }]
     render(<BulkActionBar count={2} actions={list} onClear={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: /bulkActionBar\.more/ }))
-    expect(screen.getByRole('menuitem', { name: 'Set both' }).className).toContain('text-amber-700')
+    expect(screen.getByRole('menuitem', { name: 'Set both' }).className).toContain('text-warning')
   })
 
   it('disables the More menu items while busy', () => {
