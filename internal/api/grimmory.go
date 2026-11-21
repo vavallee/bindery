@@ -123,6 +123,7 @@ func (h *GrimmoryHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	storedBaseURL := LoadGrimmoryConfig(h.settings).BaseURL
 	set := func(key, val string) {
 		if err := h.settings.Set(ctx, key, val); err != nil {
 			// The handler returns the re-read config either way, so a failed
@@ -145,6 +146,17 @@ func (h *GrimmoryHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		set(SettingGrimmoryBaseURL, u)
+		// Stored credentials belong to the server they were issued for. When
+		// the URL moves and no replacement came with it, drop them rather
+		// than send them to the new address.
+		if !sameServiceURL(u, storedBaseURL) {
+			if req.APIKey == nil || strings.TrimSpace(*req.APIKey) == "" {
+				set(SettingGrimmoryAPIKey, "")
+			}
+			if req.Password == nil || *req.Password == "" {
+				set(SettingGrimmoryPassword, "")
+			}
+		}
 	}
 	if req.APIKey != nil {
 		k, err := httpsec.NormalizeAPIKey(*req.APIKey)
@@ -188,16 +200,19 @@ func (h *GrimmoryHandler) Test(w http.ResponseWriter, r *http.Request) {
 	if baseURL == "" {
 		baseURL = cfg.BaseURL
 	}
+	// Saved credentials are only offered to the saved server. A probe aimed at
+	// a different address has to carry its own.
+	sameServer := sameServiceURL(baseURL, cfg.BaseURL)
 	apiKey := req.APIKey
-	if apiKey == "" {
+	if apiKey == "" && sameServer {
 		apiKey = cfg.APIKey
 	}
 	username := req.Username
-	if username == "" {
+	if username == "" && sameServer {
 		username = cfg.Username
 	}
 	password := req.Password
-	if password == "" {
+	if password == "" && sameServer {
 		password = cfg.Password
 	}
 

@@ -811,6 +811,12 @@ func (h *SettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// A credential belongs to the server it was issued for: moving the URL
+	// through this route clears it instead of sending it to the new address.
+	if err := clearCredentialsOnURLChange(r.Context(), h.settings, key, value); err != nil {
+		writeServerError(w, r, err)
+		return
+	}
 	if err := h.settings.Set(r.Context(), key, value); err != nil {
 		writeServerError(w, r, err)
 		return
