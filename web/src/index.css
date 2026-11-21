@@ -11,14 +11,160 @@
      - fg-muted:    secondary text — slate-600 (light) / zinc-400 (dark)
      - accent-text: green text/links on a surface — emerald-700 (light) /
        emerald-400 (dark); the bare emerald-400 was ~1.76:1 on light. */
+/* Status colour tokens (#3994). Components say what a colour means, not which
+   palette shade it is: text-danger, bg-success-subtle, border-warning-border,
+   bg-info-fill with text-on-fill. Six roles, each with these parts:
+     --<role>:            text on a surface (page or card)
+     --<role>-strong:     text on the role's own tint
+     --<role>-subtle:     the tint for alerts and banners (dark: 900 at 30%)
+     --<role>-chip:       the solid tint of a status chip (dark: 950)
+     --<role>-border:     the border of a tint
+     --<role>-fill:       a solid fill, with text-on-fill on it
+     --<role>-fill-hover: the fill while hovered
+     --<role>-marker:     dots, bars and rings, and a translucent wash
+                          (bg-<role>-marker/20); never text
+   Roles: danger (red), warning (amber), success (emerald), info (sky),
+   progress (blue, an in-flight download or import) and caution (orange, the
+   Queue's import failed chip: a download that arrived but could not be
+   imported, so it can be retried).
+   Two notes on the word caution. The `caution` variant of MoreMenu and
+   BulkActionBar items is amber and uses the warning role; it is an older use
+   of the word and a different colour. And History shows its import failed
+   event in red (danger) where the Queue chip is orange: that difference was
+   there before the tokens (the Queue's orange dates from #2377, History never
+   had it) and was kept, not decided here.
+   Also: accent-fill, accent-fill-hover and accent-ring, the brand green for
+   primary buttons, selected pills and focus rings; link, link-fill and
+   link-fill-hover, the blue of text links and the sign in and setup buttons
+   (not the progress role); row-selected and row-selected-hover, the selected
+   table row.
+   Each value is the Tailwind shade named beside it, pinned and measured in both
+   themes by src/theme/contrast.test.ts. Category colours (media badges, the
+   cover palette) stay raw on purpose; src/theme/rawStatusAllowlist.ts lists
+   them and a guard test bars any other raw colour. To change a status colour,
+   edit it here and nowhere else. */
 @layer base {
   :root {
     --fg-muted: #475569;     /* slate-600 */
     --accent-text: #047857;  /* emerald-700 */
+    --danger: #c10007;                /* red-700 */
+    --danger-strong: #9f0712;         /* red-800 */
+    --danger-subtle: #ffe2e2;         /* red-100 */
+    --danger-border: #ffa2a2;         /* red-300 */
+    --danger-fill: #e7000b;           /* red-600 */
+    --danger-fill-hover: #c10007;     /* red-700 */
+    --danger-marker: #fb2c36;         /* red-500 */
+    --warning: #bb4d00;               /* amber-700 */
+    --warning-strong: #973c00;        /* amber-800 */
+    --warning-subtle: #fef3c6;        /* amber-100 */
+    --warning-border: #ffd230;        /* amber-300 */
+    --warning-fill: #bb4d00;          /* amber-700 */
+    --warning-fill-hover: #973c00;    /* amber-800 */
+    --warning-marker: #fe9a00;        /* amber-500 */
+    --success: #007a55;               /* emerald-700 */
+    --success-strong: #006045;        /* emerald-800 */
+    --success-subtle: #d0fae5;        /* emerald-100 */
+    --success-border: #5ee9b5;        /* emerald-300 */
+    --success-fill: #007a55;          /* emerald-700 */
+    --success-fill-hover: #006045;    /* emerald-800 */
+    --success-marker: #00bc7d;        /* emerald-500 */
+    --info: #0069a8;                  /* sky-700 */
+    --info-strong: #00598a;           /* sky-800 */
+    --info-subtle: #dff2fe;           /* sky-100 */
+    --info-border: #74d4ff;           /* sky-300 */
+    --info-fill: #0069a8;             /* sky-700 */
+    --info-fill-hover: #00598a;       /* sky-800 */
+    --info-marker: #00a6f4;           /* sky-500 */
+    --progress: #1447e6;              /* blue-700 */
+    --progress-strong: #193cb8;       /* blue-800 */
+    --progress-subtle: #dbeafe;       /* blue-100 */
+    --progress-border: #8ec5ff;       /* blue-300 */
+    --progress-fill: #1447e6;         /* blue-700 */
+    --progress-fill-hover: #193cb8;   /* blue-800 */
+    --progress-marker: #2b7fff;       /* blue-500 */
+    --on-fill: #ffffff;
+    --accent-fill: #007a55;  /* emerald-700 */
+    --accent-fill-hover: #006045;  /* emerald-800 */
+    --accent-ring: #009966;  /* emerald-600 */
+    --caution:                   #ca3500;  /* orange-700 */
+    --caution-strong:            #9f2d00;  /* orange-800 */
+    --caution-subtle:            #ffedd4;  /* orange-100 */
+    --caution-border:            #ffb86a;  /* orange-300 */
+    --caution-fill:              #ca3500;  /* orange-700 */
+    --caution-fill-hover:        #9f2d00;  /* orange-800 */
+    --caution-marker:            #ff6900;  /* orange-500 */
+    --danger-chip:               #ffe2e2;  /* red-100 */
+    --warning-chip:              #fef3c6;  /* amber-100 */
+    --success-chip:              #d0fae5;  /* emerald-100 */
+    --info-chip:                 #dff2fe;  /* sky-100 */
+    --progress-chip:             #dbeafe;  /* blue-100 */
+    --caution-chip:              #ffedd4;  /* orange-100 */
+    --link:                      #155dfc;  /* blue-600 */
+    --link-fill:                 #155dfc;  /* blue-600 */
+    --link-fill-hover:           #1447e6;  /* blue-700 */
+    --row-selected:              #ecfdf5;  /* emerald-50 */
+    --row-selected-hover:        #d0fae5;  /* emerald-100 */
   }
   html.dark {
     --fg-muted: #a1a1aa;     /* zinc-400 */
     --accent-text: #34d399;  /* emerald-400 */
+    --danger: #ff6467;                /* red-400 */
+    --danger-strong: #ffa2a2;         /* red-300 */
+    --danger-subtle: #38181b;         /* red-900 at 30% over zinc-900 */
+    --danger-border: #82181a;         /* red-900 */
+    --danger-fill: #e7000b;           /* red-600 */
+    --danger-fill-hover: #c10007;     /* red-700 */
+    --danger-marker: #fb2c36;         /* red-500 */
+    --warning: #ffb900;               /* amber-400 */
+    --warning-strong: #ffd230;        /* amber-300 */
+    --warning-subtle: #362015;        /* amber-900 at 30% over zinc-900 */
+    --warning-border: #7b3306;        /* amber-900 */
+    --warning-fill: #bb4d00;          /* amber-700 */
+    --warning-fill-hover: #973c00;    /* amber-800 */
+    --warning-marker: #fe9a00;        /* amber-500 */
+    --success: #00d492;               /* emerald-400 */
+    --success-strong: #5ee9b5;        /* emerald-300 */
+    --success-subtle: #112925;        /* emerald-900 at 30% over zinc-900 */
+    --success-border: #004f3b;        /* emerald-900 */
+    --success-fill: #007a55;          /* emerald-700 */
+    --success-fill-hover: #006045;    /* emerald-800 */
+    --success-marker: #00bc7d;        /* emerald-500 */
+    --info: #00bcff;                  /* sky-400 */
+    --info-strong: #74d4ff;           /* sky-300 */
+    --info-subtle: #112735;           /* sky-900 at 30% over zinc-900 */
+    --info-border: #024a70;           /* sky-900 */
+    --info-fill: #0069a8;             /* sky-700 */
+    --info-fill-hover: #00598a;       /* sky-800 */
+    --info-marker: #00a6f4;           /* sky-500 */
+    --progress: #51a2ff;              /* blue-400 */
+    --progress-strong: #8ec5ff;       /* blue-300 */
+    --progress-subtle: #19223e;       /* blue-900 at 30% over zinc-900 */
+    --progress-border: #1c398e;       /* blue-900 */
+    --progress-fill: #1447e6;         /* blue-700 */
+    --progress-fill-hover: #193cb8;   /* blue-800 */
+    --progress-marker: #2b7fff;       /* blue-500 */
+    --on-fill: #ffffff;
+    --accent-fill: #007a55;  /* emerald-700 */
+    --accent-fill-hover: #006045;  /* emerald-800 */
+    --accent-ring: #00bc7d;  /* emerald-500 */
+    --caution:                   #ff8904;  /* orange-400 */
+    --caution-strong:            #ffb86a;  /* orange-300 */
+    --caution-subtle:            #371d17;  /* orange-900 at 30% over zinc-900 */
+    --caution-border:            #7e2a0c;  /* orange-900 */
+    --caution-fill:              #ca3500;  /* orange-700 */
+    --caution-fill-hover:        #9f2d00;  /* orange-800 */
+    --caution-marker:            #ff6900;  /* orange-500 */
+    --danger-chip:               #460809;  /* red-950 */
+    --warning-chip:              #461901;  /* amber-950 */
+    --success-chip:              #002c22;  /* emerald-950 */
+    --info-chip:                 #052f4a;  /* sky-950 */
+    --progress-chip:             #162456;  /* blue-950 */
+    --caution-chip:              #441306;  /* orange-950 */
+    --link:                      #51a2ff;  /* blue-400 */
+    --link-fill:                 #155dfc;  /* blue-600 */
+    --link-fill-hover:           #1447e6;  /* blue-700 */
+    --row-selected:              #002c22;  /* emerald-950 */
+    --row-selected-hover:        #023a2d;  /* selected row hover, was dark:hover:bg-[#023a2d] */
   }
   html { background-color: rgb(248 250 252); } /* slate-50 */
   html.dark { background-color: rgb(9 9 11); } /* zinc-950 */
@@ -27,6 +173,63 @@
 @theme inline {
   --color-fg-muted: var(--fg-muted);
   --color-accent-text: var(--accent-text);
+  --color-danger: var(--danger);
+  --color-danger-strong: var(--danger-strong);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-danger-border: var(--danger-border);
+  --color-danger-fill: var(--danger-fill);
+  --color-danger-fill-hover: var(--danger-fill-hover);
+  --color-danger-marker: var(--danger-marker);
+  --color-warning: var(--warning);
+  --color-warning-strong: var(--warning-strong);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-border: var(--warning-border);
+  --color-warning-fill: var(--warning-fill);
+  --color-warning-fill-hover: var(--warning-fill-hover);
+  --color-warning-marker: var(--warning-marker);
+  --color-success: var(--success);
+  --color-success-strong: var(--success-strong);
+  --color-success-subtle: var(--success-subtle);
+  --color-success-border: var(--success-border);
+  --color-success-fill: var(--success-fill);
+  --color-success-fill-hover: var(--success-fill-hover);
+  --color-success-marker: var(--success-marker);
+  --color-info: var(--info);
+  --color-info-strong: var(--info-strong);
+  --color-info-subtle: var(--info-subtle);
+  --color-info-border: var(--info-border);
+  --color-info-fill: var(--info-fill);
+  --color-info-fill-hover: var(--info-fill-hover);
+  --color-info-marker: var(--info-marker);
+  --color-progress: var(--progress);
+  --color-progress-strong: var(--progress-strong);
+  --color-progress-subtle: var(--progress-subtle);
+  --color-progress-border: var(--progress-border);
+  --color-progress-fill: var(--progress-fill);
+  --color-progress-fill-hover: var(--progress-fill-hover);
+  --color-progress-marker: var(--progress-marker);
+  --color-on-fill: var(--on-fill);
+  --color-accent-fill: var(--accent-fill);
+  --color-accent-fill-hover: var(--accent-fill-hover);
+  --color-accent-ring: var(--accent-ring);
+  --color-caution: var(--caution);
+  --color-caution-strong: var(--caution-strong);
+  --color-caution-subtle: var(--caution-subtle);
+  --color-caution-border: var(--caution-border);
+  --color-caution-fill: var(--caution-fill);
+  --color-caution-fill-hover: var(--caution-fill-hover);
+  --color-caution-marker: var(--caution-marker);
+  --color-danger-chip: var(--danger-chip);
+  --color-warning-chip: var(--warning-chip);
+  --color-success-chip: var(--success-chip);
+  --color-info-chip: var(--info-chip);
+  --color-progress-chip: var(--progress-chip);
+  --color-caution-chip: var(--caution-chip);
+  --color-link: var(--link);
+  --color-link-fill: var(--link-fill);
+  --color-link-fill-hover: var(--link-fill-hover);
+  --color-row-selected: var(--row-selected);
+  --color-row-selected-hover: var(--row-selected-hover);
 }
 
 /* Modal sizing on phones. `vh` is measured with the mobile browser toolbar

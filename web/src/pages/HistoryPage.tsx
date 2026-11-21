@@ -13,19 +13,19 @@ import RejectImportDialog from '../components/RejectImportDialog'
 import { humanizeEventType, isHeldEvent, parseEventData } from '../util/historyEvents'
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
-  grabbed: 'bg-blue-500/20 text-blue-700 dark:text-blue-400',
-  bookImported: 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400',
-  imported: 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400',
-  downloadFailed: 'bg-red-500/20 text-red-800 dark:text-red-400',
-  importFailed: 'bg-red-500/20 text-red-800 dark:text-red-400',
-  deleted: 'bg-red-500/20 text-red-800 dark:text-red-400',
+  grabbed: 'bg-progress-marker/20 text-progress-strong',
+  bookImported: 'bg-success-marker/20 text-success-strong',
+  imported: 'bg-success-marker/20 text-success-strong',
+  downloadFailed: 'bg-danger-marker/20 text-danger-strong',
+  importFailed: 'bg-danger-marker/20 text-danger-strong',
+  deleted: 'bg-danger-marker/20 text-danger-strong',
   renamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   ignored: 'bg-slate-300 dark:bg-zinc-700 text-fg-muted dark:text-zinc-300',
   bookFileRenamed: 'bg-purple-500/20 text-purple-700 dark:text-purple-400',
   // Amber rather than green: the import worked, but the file turned out not to
   // be the edition the catalogue described, which is worth a second look.
-  bookLanguageCorrected: 'bg-amber-500/20 text-amber-800 dark:text-amber-400',
-  importRejected: 'bg-red-500/20 text-red-800 dark:text-red-400',
+  bookLanguageCorrected: 'bg-warning-marker/20 text-warning-strong',
+  importRejected: 'bg-danger-marker/20 text-danger-strong',
 }
 
 function formatDate(s: string) {
@@ -238,12 +238,12 @@ export default function HistoryPage() {
   return (
     <div>
       {toast && (
-        <div role="alert" className="fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 bg-red-600 text-white rounded-lg shadow-lg text-sm font-medium animate-fade-in">
+        <div role="alert" className="fixed bottom-safe-6 right-safe-6 z-50 px-4 py-2.5 bg-danger-fill text-on-fill rounded-lg shadow-lg text-sm font-medium animate-fade-in">
           {toast}
         </div>
       )}
       {notice && (
-        <div role="status" className="mb-4 px-3 py-2 bg-emerald-100 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-900 rounded text-sm text-emerald-800 dark:text-emerald-300">
+        <div role="status" className="mb-4 px-3 py-2 bg-success-subtle border border-success-border rounded text-sm text-success-strong">
           {notice}
         </div>
       )}
@@ -323,7 +323,7 @@ export default function HistoryPage() {
                           </div>
                           <BookAuthorLink book={event.book} />
                           {detail && (
-                            <div className={`mt-1 text-xs break-words ${isError ? 'text-red-700 dark:text-red-400' : 'text-fg-muted'}`}>
+                            <div className={`mt-1 text-xs break-words ${isError ? 'text-danger' : 'text-fg-muted'}`}>
                               {detail}
                             </div>
                           )}
@@ -332,7 +332,7 @@ export default function HistoryPage() {
                           {mt === 'audiobook' ? (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 text-[10px] font-medium">🎧 {t('common.audiobook', 'Audiobook')}</span>
                           ) : mt === 'ebook' ? (
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-medium">📖 {t('common.ebook', 'Ebook')}</span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-success-chip text-success-strong text-[10px] font-medium">📖 {t('common.ebook', 'Ebook')}</span>
                           ) : (
                             <span className="text-fg-muted">—</span>
                           )}
@@ -347,7 +347,7 @@ export default function HistoryPage() {
                           {BLOCKLISTABLE.has(event.eventType) && (
                             <button
                               onClick={() => handleBlocklist(event.id)}
-                              className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors mr-3"
+                              className="text-xs text-warning hover:text-warning-strong transition-colors mr-3"
                               title={t('history.blocklistHint', 'Add to blocklist — prevents this release from being grabbed again')}
                             >
                               {t('history.blocklist')}
@@ -356,7 +356,7 @@ export default function HistoryPage() {
                           {canReject(event) && (
                             <button
                               onClick={() => setRejectTarget(event)}
-                              className="text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors mr-3"
+                              className="text-xs text-warning hover:text-warning-strong transition-colors mr-3"
                               title={t('history.rejectImportHint')}
                             >
                               {t('history.rejectImport')}
@@ -396,7 +396,7 @@ export default function HistoryPage() {
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 text-[10px] font-medium">🎧</span>
                       )}
                       {mt === 'ebook' && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 text-[10px] font-medium">📖</span>
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-success-chip text-success-strong text-[10px] font-medium">📖</span>
                       )}
                       {size > 0 && (
                         <span className="text-[10px] text-fg-muted font-mono">{formatBytes(size)}</span>
@@ -409,7 +409,7 @@ export default function HistoryPage() {
                   </p>
                   <BookAuthorLink book={event.book} />
                   {detail && (
-                    <p className={`text-xs break-words mb-2 ${isError ? 'text-red-700 dark:text-red-400' : 'text-fg-muted'}`}>
+                    <p className={`text-xs break-words mb-2 ${isError ? 'text-danger' : 'text-fg-muted'}`}>
                       {detail}
                     </p>
                   )}
@@ -417,7 +417,7 @@ export default function HistoryPage() {
                     {BLOCKLISTABLE.has(event.eventType) && (
                       <button
                         onClick={() => handleBlocklist(event.id)}
-                        className="touch-target text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors py-1"
+                        className="touch-target text-xs text-warning hover:text-warning-strong transition-colors py-1"
                       >
                         {t('history.blocklist')}
                       </button>
@@ -425,7 +425,7 @@ export default function HistoryPage() {
                     {canReject(event) && (
                       <button
                         onClick={() => setRejectTarget(event)}
-                        className="touch-target text-xs text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 transition-colors py-1"
+                        className="touch-target text-xs text-warning hover:text-warning-strong transition-colors py-1"
                       >
                         {t('history.rejectImport')}
                       </button>

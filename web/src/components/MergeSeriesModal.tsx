@@ -127,7 +127,7 @@ export default function MergeSeriesModal({ target, series, onClose, onMerged, in
                     {t('series.merge.sourceSummary', { title: src.title, moved: src.moved.length, kept: src.kept.length })}
                   </p>
                   {src.conflicts.map(c => (
-                    <p key={c.bookId} className="text-amber-700 dark:text-amber-300">
+                    <p key={c.bookId} className="text-warning">
                       {t('series.merge.conflict', { book: c.title, kept: c.targetPosition, dropped: c.sourcePosition })}
                     </p>
                   ))}
@@ -141,7 +141,7 @@ export default function MergeSeriesModal({ target, series, onClose, onMerged, in
             </div>
           )}
 
-          {error && <p className="text-xs text-red-700 dark:text-red-400" role="alert">{error}</p>}
+          {error && <p className="text-xs text-danger" role="alert">{error}</p>}
         </div>
 
         <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">

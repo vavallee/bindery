@@ -64,7 +64,7 @@ export default function RejectImportDialog({ event, onClose, onRejected, onAlrea
           {shown.length > 0 && (
             <p className="font-mono text-xs break-all text-slate-700 dark:text-zinc-300">{shown.join(' ')}</p>
           )}
-          {error && <p role="alert" className="text-red-700 dark:text-red-400">{error}</p>}
+          {error && <p role="alert" className="text-danger">{error}</p>}
         </div>
       }
       acknowledgeLabel={t('rejectImport.acknowledge')}

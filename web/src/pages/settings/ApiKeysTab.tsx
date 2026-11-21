@@ -175,12 +175,12 @@ export default function ApiKeysTab() {
 
           <div className="border-t border-slate-200 dark:border-zinc-800 pt-4 space-y-3">
             {systemStatus?.hardcoverPausedUntil && Date.parse(systemStatus.hardcoverPausedUntil) > Date.now() && (
-              <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+              <p role="status" className="text-sm text-warning">
                 {t('settings.general.hardcoverPausedUntil', { time: new Date(systemStatus.hardcoverPausedUntil).toLocaleString() })}
               </p>
             )}
             {systemStatus?.hardcoverTokenRejected && (
-              <p role="alert" className="text-sm text-red-700 dark:text-red-400">
+              <p role="alert" className="text-sm text-danger">
                 {t('settings.general.hardcoverTokenRejected')}
               </p>
             )}
@@ -244,7 +244,7 @@ export default function ApiKeysTab() {
                 {t('settings.general.hardcoverApiTokenLink', 'Create or copy a Hardcover API token')}
               </a>
               {hardcoverTestResult && !hardcoverTestResult.testing && (
-                <p className={`mt-1 text-xs ${hardcoverTestResult.ok ? 'text-accent-text' : 'text-rose-700 dark:text-rose-400'}`}>
+                <p className={`mt-1 text-xs ${hardcoverTestResult.ok ? 'text-accent-text' : 'text-danger'}`}>
                   {hardcoverTestResult.ok
                     ? (hardcoverTestResult.message || t('settings.general.hardcoverTestOk', 'Hardcover API connected.'))
                     : (hardcoverTestResult.error || t('settings.general.hardcoverTestFailed', 'Hardcover API test failed.'))}

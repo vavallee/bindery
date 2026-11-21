@@ -25,13 +25,13 @@ interface Props {
 }
 
 const statusStyles: Record<string, string> = {
-  move: 'text-sky-700 dark:text-sky-400',
+  move: 'text-info',
   moved: 'text-accent-text',
   noop: 'text-fg-muted',
-  collision: 'text-amber-700 dark:text-amber-400',
-  missing: 'text-amber-700 dark:text-amber-400',
-  error: 'text-red-700 dark:text-red-400',
-  failed: 'text-red-700 dark:text-red-400',
+  collision: 'text-warning',
+  missing: 'text-warning',
+  error: 'text-danger',
+  failed: 'text-danger',
 }
 
 // knownFormats keeps the media formats the dialog can name, in the order the
@@ -169,7 +169,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
         </p>
 
         {externalMode && !applied && (
-          <div role="alert" className="mb-3 p-3 rounded border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/40 text-xs text-amber-900 dark:text-amber-200">
+          <div role="alert" className="mb-3 p-3 rounded border border-warning-marker bg-warning-subtle text-xs text-warning-strong">
             <p>{externalWarning}</p>
             <label className="mt-2 flex items-start gap-2">
               <input
@@ -186,7 +186,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
         {loading ? (
           <p className="text-sm text-fg-muted">{t('renameFiles.computing', 'Computing changes…')}</p>
         ) : error && !moves.length ? (
-          <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+          <p className="text-sm text-danger">{error}</p>
         ) : moves.length === 0 ? (
           <p className="text-sm text-fg-muted">{t('renameFiles.none', 'No tracked files to rename.')}</p>
         ) : (
@@ -200,7 +200,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
         )}
 
         {error && moves.length > 0 && (
-          <p className="mt-3 text-sm text-red-700 dark:text-red-400">{error}</p>
+          <p className="mt-3 text-sm text-danger">{error}</p>
         )}
 
         <div className="mt-4 pt-4 border-t border-slate-200 dark:border-zinc-800 flex items-center gap-2">
@@ -223,7 +223,7 @@ export default function RenameFilesModal({ scope, id, label, onClose, onApplied 
                 type="button"
                 onClick={apply}
                 disabled={applying || actionable === 0 || (externalMode && !confirmExternal)}
-                className="px-4 py-1.5 text-sm rounded bg-sky-700 hover:bg-sky-800 disabled:opacity-40 font-medium text-white"
+                className="px-4 py-1.5 text-sm rounded bg-info-fill hover:bg-info-fill-hover disabled:opacity-40 font-medium text-on-fill"
               >
                 {applying
                   ? t('renameFiles.renaming', 'Renaming…')
@@ -271,7 +271,7 @@ function MoveRow({ move }: { move: ReorganizeMove }) {
           </div>
         )}
         {move.message && (
-          <div className="text-amber-700 dark:text-amber-400 not-italic">{move.message}</div>
+          <div className="text-warning not-italic">{move.message}</div>
         )}
       </div>
     </li>

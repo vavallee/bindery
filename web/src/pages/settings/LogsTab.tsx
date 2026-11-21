@@ -174,8 +174,8 @@ export default function LogsTab() {
               // advertise) the previously selected level.
               onClick={() => { setLogFilter(f); fetchLogs(0, { ...filterParams(), level: f !== 'all' ? f : undefined }) }}
               className={`px-2.5 py-1 rounded font-medium transition-colors ${logFilter === f
-                ? f === 'error' ? 'bg-red-600 text-white'
-                  : f === 'warn' ? 'bg-amber-700 text-white'
+                ? f === 'error' ? 'bg-danger-fill text-on-fill'
+                  : f === 'warn' ? 'bg-warning-fill text-on-fill'
                   : 'bg-slate-700 dark:bg-zinc-600 text-white'
                 : 'bg-slate-200 dark:bg-zinc-800 text-fg-muted hover:text-slate-900 dark:hover:text-white'}`}
             >
@@ -211,7 +211,7 @@ export default function LogsTab() {
         <button
           onClick={() => setLogAutoRefresh(v => !v)}
           className={`text-xs px-2.5 py-1 rounded border transition-colors ${logAutoRefresh
-            ? 'border-emerald-500 text-accent-text'
+            ? 'border-accent-ring text-accent-text'
             : 'border-slate-300 dark:border-zinc-700 text-fg-muted'}`}
         >
           {logAutoRefresh ? `⏸ ${t('settings.logs.autoRefresh')}` : `▶ ${t('settings.logs.autoRefresh')}`}
@@ -293,7 +293,7 @@ export default function LogsTab() {
       </div>
 
       {/* Log output */}
-      <div role="region" aria-label={t('settings.logs.heading')} tabIndex={0} className="focus-visible:outline-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-500 -outline-offset-2 font-mono text-xs bg-slate-50 dark:bg-black rounded-lg border border-slate-200 dark:border-zinc-900 overflow-auto max-h-[60dvh]">
+      <div role="region" aria-label={t('settings.logs.heading')} tabIndex={0} className="focus-visible:outline-2 focus-visible:outline-accent-ring -outline-offset-2 font-mono text-xs bg-slate-50 dark:bg-black rounded-lg border border-slate-200 dark:border-zinc-900 overflow-auto max-h-[60dvh]">
         {(() => {
           const formatAttr = (k: string, v: unknown) => {
             const s = String(v)
@@ -304,8 +304,8 @@ export default function LogsTab() {
           }
           const rows = logEntries.map((e, i) => {
             const levelCls =
-              e.level === 'ERROR' ? 'text-red-700 dark:text-red-400' :
-              e.level === 'WARN'  ? 'text-amber-700 dark:text-amber-400' :
+              e.level === 'ERROR' ? 'text-danger' :
+              e.level === 'WARN'  ? 'text-warning' :
               e.level === 'DEBUG' ? 'text-fg-muted' :
               'text-accent-text'
             // Support both ring buffer (time/msg/attrs) and DB (ts/message/fields) shapes.
@@ -459,7 +459,7 @@ export default function LogsTab() {
               meant to. Saying so here is the honest minimum: the realistic
               exposure is an operator attaching a backup to a bug report or
               syncing it offsite without knowing what is in it (#2269). */}
-          <p className="text-xs text-amber-700 dark:text-amber-500/90 border-t border-slate-200 dark:border-zinc-800 pt-3">
+          <p className="text-xs text-warning border-t border-slate-200 dark:border-zinc-800 pt-3">
             {t('settings.general.backupSecretsNote')}
           </p>
           {backups.length > 0 && (
@@ -475,7 +475,7 @@ export default function LogsTab() {
                     <button
                       onClick={() => handleDeleteBackup(b.name)}
                       disabled={deletingBackup === b.name}
-                      className="ml-4 text-red-700 dark:text-red-400 hover:underline disabled:opacity-50"
+                      className="ml-4 text-danger hover:underline disabled:opacity-50"
                     >
                       {deletingBackup === b.name ? '…' : t('common.delete')}
                     </button>

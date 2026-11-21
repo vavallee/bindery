@@ -142,13 +142,13 @@ export default function SearchPage() {
       </form>
 
       {error && (
-        <div className="mb-4 px-3 py-2 bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 rounded text-sm">
+        <div className="mb-4 px-3 py-2 bg-danger-subtle text-danger-strong rounded text-sm">
           {error}
         </div>
       )}
 
       {needsClient && (
-        <div className="mb-4 px-4 py-3 bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-900/50 rounded-lg text-sm">
+        <div className="mb-4 px-4 py-3 bg-warning-subtle text-warning-strong border border-warning-border rounded-lg text-sm">
           <p className="mb-2">{t('search.noClient.body')}</p>
           <Link
             to="/settings?tab=clients"
@@ -160,7 +160,7 @@ export default function SearchPage() {
       )}
 
       {needsEligibleClient && (
-        <div className="mb-4 px-4 py-3 bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-900/50 rounded-lg text-sm">
+        <div className="mb-4 px-4 py-3 bg-warning-subtle text-warning-strong border border-warning-border rounded-lg text-sm">
           <p className="mb-2">{t(needsEligibleClient === 'audiobook' ? 'search.noEligibleClient.bodyAudiobooks' : 'search.noEligibleClient.bodyBooks')}</p>
           <Link
             to="/settings?tab=clients"

@@ -130,12 +130,12 @@ export default function LoginPage() {
           {t('login.rememberMe')}
         </label>
         {error && (
-          <div className="text-sm text-red-700 dark:text-red-400 py-1">{error}</div>
+          <div className="text-sm text-danger py-1">{error}</div>
         )}
         <button
           type="submit"
           disabled={submitting}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-md py-2 text-sm transition-colors"
+          className="w-full bg-link-fill hover:bg-link-fill-hover disabled:opacity-50 disabled:cursor-not-allowed text-on-fill font-medium rounded-md py-2 text-sm transition-colors"
         >
           {submitting ? t('login.submitting') : t('login.submit')}
         </button>
@@ -175,7 +175,7 @@ export function CardShell({ title, subtitle, children }: { title: string; subtit
 function HostNotAllowedNotice({ mode, host }: { mode: string; host: string }) {
   const { t } = useTranslation()
   return (
-    <div role="alert" className="mb-4 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+    <div role="alert" className="mb-4 rounded-md border border-warning-border bg-warning-subtle px-3 py-2 text-sm text-warning-strong">
       <p className="font-medium">{t('login.hostNotAllowedTitle')}</p>
       <p className="mt-1">{t('login.hostNotAllowed', { mode, host })}</p>
       <a

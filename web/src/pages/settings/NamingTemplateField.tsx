@@ -109,7 +109,7 @@ export default function NamingTemplateField({
               className={
                 greyed
                   ? 'px-2 py-0.5 rounded text-[11px] font-mono border border-slate-200 dark:border-zinc-800 text-slate-400 dark:text-zinc-600 cursor-not-allowed line-through'
-                  : 'px-2 py-0.5 rounded text-[11px] font-mono border border-slate-300 dark:border-zinc-700 text-slate-700 dark:text-zinc-300 hover:bg-emerald-700 hover:border-emerald-700 hover:text-white dark:hover:text-white transition-colors'
+                  : 'px-2 py-0.5 rounded text-[11px] font-mono border border-slate-300 dark:border-zinc-700 text-slate-700 dark:text-zinc-300 hover:bg-success-fill hover:border-accent-ring hover:text-white dark:hover:text-white transition-colors'
               }
             >
               {tok.token}
@@ -169,22 +169,22 @@ export default function NamingTemplateField({
         </p>
       )}
       {validation.traversal && (
-        <p className="text-xs text-red-700 dark:text-red-400 mt-1.5" role="alert">
+        <p className="text-xs text-danger mt-1.5" role="alert">
           {t('settings.general.naming.errorTraversal')}
         </p>
       )}
       {validation.extInAudiobook && (
-        <p className="text-xs text-red-700 dark:text-red-400 mt-1.5" role="alert">
+        <p className="text-xs text-danger mt-1.5" role="alert">
           {t('settings.general.naming.errorExtInAudiobook')}
         </p>
       )}
       {validation.extNeedsDot && (
-        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1.5" role="alert">
+        <p className="text-xs text-warning mt-1.5" role="alert">
           {t('settings.general.naming.warnExtNeedsDot')}
         </p>
       )}
       {validation.unknownTokens.length > 0 && (
-        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1.5" role="alert">
+        <p className="text-xs text-warning mt-1.5" role="alert">
           {t('settings.general.naming.errorUnknownTokens', {
             tokens: validation.unknownTokens.join(', '),
           })}

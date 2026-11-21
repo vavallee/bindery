@@ -194,12 +194,12 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
     <>
       <div className="p-4 flex-1 overflow-y-auto">
         <div className="rounded-md border border-slate-300 dark:border-zinc-700 bg-slate-200/50 dark:bg-zinc-800/50 p-3">
-          <div ref={headingRef} tabIndex={-1} className="font-medium rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500">{author.authorName}</div>
+          <div ref={headingRef} tabIndex={-1} className="font-medium rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent-ring">{author.authorName}</div>
           {author.disambiguation && <div className="mt-0.5 text-sm text-fg-muted">{author.disambiguation}</div>}
         </div>
 
         {mismatchedProvider && (
-          <p role="alert" className="mt-3 px-3 py-2 rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 text-xs text-amber-900 dark:text-amber-200">
+          <p role="alert" className="mt-3 px-3 py-2 rounded bg-warning-subtle border border-warning-border text-xs text-warning-strong">
             {t('addToLibrary.author.providerMismatchNotice', {
               linked: providerDisplayName(mismatchedProvider),
               primary: providerDisplayName(primaryProvider),
@@ -311,7 +311,7 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
               </span>
             </label>
             {searchOnAdd && needsAny && (
-              <p className="mt-2 px-3 py-2 rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 text-xs text-amber-900 dark:text-amber-200">
+              <p className="mt-2 px-3 py-2 rounded bg-warning-subtle border border-warning-border text-xs text-warning-strong">
                 {needsClient
                   ? t('addToLibrary.author.autoGrabNoClient')
                   : t('addToLibrary.author.autoGrabNoIndexer')}
@@ -321,7 +321,7 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
         </section>
 
         {addError && (
-          <div role="alert" className="mt-3 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+          <div role="alert" className="mt-3 px-3 py-2 bg-danger-subtle border border-danger-border rounded text-sm text-danger-strong">
             <div>{addError}</div>
             {addConflict?.canonicalAuthorId && (
               <div className="mt-2 flex flex-wrap gap-3 text-xs font-medium">

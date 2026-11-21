@@ -13,7 +13,7 @@ export default function ReleaseSwarm({ seeders, peers }: { seeders?: number; pee
       {seeders != null && (
         <>
           {' · '}
-          <span className={seeders === 0 ? 'text-red-700 dark:text-red-400' : undefined}>
+          <span className={seeders === 0 ? 'text-danger' : undefined}>
             {t('search.seeders', { count: seeders })}
           </span>
         </>

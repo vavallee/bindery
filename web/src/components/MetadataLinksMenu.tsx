@@ -61,7 +61,7 @@ export default function MetadataLinksMenu({ links }: { links: MetadataSourceLink
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setExpanded(value => !value)}
-        className="inline-flex items-center gap-1 rounded border border-slate-300 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-800 px-2 py-1 font-medium text-slate-600 dark:text-zinc-300 hover:border-slate-400 dark:hover:border-zinc-600 hover:text-slate-900 dark:hover:text-white focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500"
+        className="inline-flex items-center gap-1 rounded border border-slate-300 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-800 px-2 py-1 font-medium text-slate-600 dark:text-zinc-300 hover:border-slate-400 dark:hover:border-zinc-600 hover:text-slate-900 dark:hover:text-white focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent-ring"
       >
         <ExternalLinkIcon className="w-3.5 h-3.5" />
         {t('common.links')}

@@ -12,8 +12,8 @@
 // (3.99 and 4.20), so light uses the -800 step; zinc-400 on zinc-700 is 4.07,
 // so dark muted uses zinc-300. See bookStatus.test.ts.
 const statusColors: Record<string, string> = {
-  wanted: 'bg-amber-500/20 text-amber-800 dark:text-amber-400',
-  imported: 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-400',
+  wanted: 'bg-warning-marker/20 text-warning-strong',
+  imported: 'bg-success-marker/20 text-success-strong',
   skipped: 'bg-slate-300 dark:bg-zinc-700 text-slate-600 dark:text-zinc-300',
 }
 

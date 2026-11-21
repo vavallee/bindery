@@ -17,11 +17,11 @@ function IndexerTestResultBanner({ r }: { r: IndexerTestResult }) {
   const { t } = useTranslation()
   const warn = r.ok && r.searchResults === 0
   const colorCls = !r.ok
-    ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+    ? 'bg-danger-subtle text-danger-strong'
     : warn
-      ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
-      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300'
-  const dotCls = !r.ok ? 'bg-red-500' : warn ? 'bg-amber-500' : 'bg-emerald-500'
+      ? 'bg-warning-subtle text-warning-strong'
+      : 'bg-success-subtle text-success-strong'
+  const dotCls = !r.ok ? 'bg-danger-marker' : warn ? 'bg-warning-marker' : 'bg-success-marker'
   return (
     <div role="status" className={`px-3 py-2 rounded text-xs flex items-center gap-2 ${colorCls}`}>
       <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${dotCls}`} />
@@ -88,7 +88,7 @@ function SeedRatioField({ value, onChange, source }: { value: number | null | un
         </label>
       </div>
       {source === 'prowlarr' && (
-        <p className="text-xs text-amber-700 dark:text-amber-500 mt-1">{t('settings.indexers.form.seedRatioFromProwlarr')}</p>
+        <p className="text-xs text-warning mt-1">{t('settings.indexers.form.seedRatioFromProwlarr')}</p>
       )}
       <p className="text-xs text-fg-muted mt-1">{t('settings.indexers.form.seedRatioHint')}</p>
     </div>
@@ -166,7 +166,7 @@ function SeedTimeFields({ seedTime, onSeedTime, inactive, onInactive, source }: 
         />
       </div>
       {source === 'prowlarr' && (
-        <p className="text-xs text-amber-700 dark:text-amber-500 mt-1">{t('settings.indexers.form.seedTimeFromProwlarr')}</p>
+        <p className="text-xs text-warning mt-1">{t('settings.indexers.form.seedTimeFromProwlarr')}</p>
       )}
       <p className="text-xs text-fg-muted mt-1">{t('settings.indexers.form.seedTimeHint')}</p>
     </div>
@@ -438,9 +438,9 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                 return (
                   <div
                     role="status"
-                    className="mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                    className="mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 bg-warning-subtle text-warning-strong"
                   >
-                    <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-amber-500" />
+                    <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-warning-marker" />
                     <span>
                       {!pinned
                         ? t('settings.indexers.pinnedClientMissing')
@@ -464,11 +464,11 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                     role="status"
                     className={`mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 ${
                       cap.reached
-                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                        ? 'bg-warning-subtle text-warning-strong'
                         : 'text-fg-muted'
                     }`}
                   >
-                    {cap.reached && <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-amber-500" />}
+                    {cap.reached && <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-warning-marker" />}
                     <span>
                       {cap.reached
                         ? t('settings.indexers.quotaReached', { limit: cap.limit })
@@ -489,9 +489,9 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
               {idx.cooldownUntil ? (
                 <div
                   role="status"
-                  className="mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                  className="mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 bg-warning-subtle text-warning-strong"
                 >
-                  <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-amber-500" />
+                  <span className="inline-block w-2 h-2 rounded-full flex-shrink-0 bg-warning-marker" />
                   <span>
                     {t('settings.indexers.cooldown', {
                       until: new Date(idx.cooldownUntil).toLocaleString(),
@@ -504,11 +504,11 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                   role="status"
                   className={`mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 ${
                     indexerNeedsAttention(idx)
-                      ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
-                      : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                      ? 'bg-danger-subtle text-danger-strong'
+                      : 'bg-warning-subtle text-warning-strong'
                   }`}
                 >
-                  <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${indexerNeedsAttention(idx) ? 'bg-red-500' : 'bg-amber-500'}`} />
+                  <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${indexerNeedsAttention(idx) ? 'bg-danger-marker' : 'bg-warning-marker'}`} />
                   <span>
                     {indexerNeedsAttention(idx)
                       ? t('settings.indexers.healthAuthFail', { error: idx.lastError })
@@ -521,11 +521,11 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                 const r = indexerTestResults[idx.id]
                 const warn = r.ok && r.searchResults === 0
                 const colorCls = !r.ok
-                  ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+                  ? 'bg-danger-subtle text-danger-strong'
                   : warn
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
-                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300'
-                const dotCls = !r.ok ? 'bg-red-500' : warn ? 'bg-amber-500' : 'bg-emerald-500'
+                    ? 'bg-warning-subtle text-warning-strong'
+                    : 'bg-success-subtle text-success-strong'
+                const dotCls = !r.ok ? 'bg-danger-marker' : warn ? 'bg-warning-marker' : 'bg-success-marker'
                 return (
                   <div role="status" className={`mt-2 px-3 py-2 rounded text-xs flex items-center gap-2 ${colorCls}`}>
                     <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${dotCls}`} />
@@ -591,7 +591,7 @@ export default function IndexersTab({ indexers, setIndexers, prowlarrInstances, 
                     <p className="text-xs text-accent-text mt-0.5">{prowlarrSyncResult[p.id]}</p>
                   )}
                   {prowlarrTestResult[p.id] && (
-                    <p className={`text-xs mt-0.5 ${prowlarrTestResult[p.id].ok ? 'text-accent-text' : 'text-red-700 dark:text-red-400'}`}>{prowlarrTestResult[p.id].msg}</p>
+                    <p className={`text-xs mt-0.5 ${prowlarrTestResult[p.id].ok ? 'text-accent-text' : 'text-danger'}`}>{prowlarrTestResult[p.id].msg}</p>
                   )}
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0 flex-wrap">
@@ -900,7 +900,7 @@ function EditProwlarrForm({ instance, onClose, onSaved }: { instance: ProwlarrIn
         <label htmlFor={`${fid}-2`} className={labelCls}>{t('settings.indexers.form.url')}</label>
         <input id={`${fid}-2`} {...urlInputAttrs} value={url} onChange={e => setUrl(e.target.value)} placeholder={t('settings.prowlarr.urlPlaceholder')} className={inputCls} />
         {urlChanged && (
-          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">{t('settings.prowlarr.urlChangeWarning')}</p>
+          <p className="text-xs text-warning mt-1">{t('settings.prowlarr.urlChangeWarning')}</p>
         )}
       </div>
       <div>
@@ -913,7 +913,7 @@ function EditProwlarrForm({ instance, onClose, onSaved }: { instance: ProwlarrIn
         <span className="text-xs text-fg-muted">{t('settings.prowlarr.syncOnStartup')}</span>
       </div>
       {error && (
-        <div className="text-xs text-red-700 dark:text-red-400 break-words">{error}</div>
+        <div className="text-xs text-danger break-words">{error}</div>
       )}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel')}</button>
@@ -982,7 +982,7 @@ function AddProwlarrForm({ onClose, onAdded }: { onClose: () => void; onAdded: (
         <span className="text-xs text-fg-muted">{t('settings.prowlarr.syncOnStartup')}</span>
       </div>
       {error && (
-        <div className="text-xs text-red-700 dark:text-red-400 break-words">{error}</div>
+        <div className="text-xs text-danger break-words">{error}</div>
       )}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-sm text-fg-muted">{t('common.cancel')}</button>

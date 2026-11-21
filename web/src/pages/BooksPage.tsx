@@ -327,7 +327,7 @@ export default function BooksPage() {
       cell: book => book.author ? (
         <Link
           to={`/author/${book.authorId}`}
-          className="text-fg-muted hover:text-emerald-700 dark:hover:text-emerald-400"
+          className="text-fg-muted hover:text-success"
           onClick={e => e.stopPropagation()}
         >
           {book.author.authorName}
@@ -518,7 +518,7 @@ export default function BooksPage() {
           {books.map((book, i) => (
             <div
               key={book.id}
-              className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group text-left transition-colors ${selectedIds.has(book.id) ? 'border-emerald-500' : 'border-slate-200 dark:border-zinc-800 hover:border-emerald-500'}`}
+              className={`border rounded-lg bg-slate-100 dark:bg-zinc-900 overflow-hidden group text-left transition-colors ${selectedIds.has(book.id) ? 'border-accent-ring' : 'border-slate-200 dark:border-zinc-800 hover:border-accent-ring'}`}
             >
               <div className="aspect-[2/3] bg-slate-200 dark:bg-zinc-800 relative">
                 {/* The label is the tap area: 32px round the box, 44px on a
@@ -560,12 +560,12 @@ export default function BooksPage() {
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">{t('books.audioLabel')}</span>
                   )}
                   {book.mediaType === 'both' && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">{t('common.ebook')}</span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-chip text-warning-strong">{t('common.ebook')}</span>
                   )}
                   {/* Was a bare "?" with no legend entry. It says what it means now. */}
                   {!book.language && (
                     <span
-                      className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-200 text-amber-900 dark:bg-amber-900/50 dark:text-amber-300"
+                      className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning-subtle text-warning-strong"
                       title={t('books.languageUnknown', 'Metadata source did not report a language for this book.')}
                     >
                       {t('books.languageUnknownBadge', 'No language')}

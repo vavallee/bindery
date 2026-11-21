@@ -558,14 +558,14 @@ function AudiobookshelfSection() {
             {t('settings.abs.intro', 'Configure one ABS source, test API-key auth, pick book libraries, then import ABS metadata into the Bindery catalog.')}
           </p>
           {draft.enabled && (
-            <p className="text-[11px] text-sky-700 dark:text-sky-300 mt-1 max-w-xl">
+            <p className="text-[11px] text-info mt-1 max-w-xl">
               {t('settings.abs.matchingTip', 'For better initial matching, it helps to review the selected ABS libraries first and match audiobooks to Audible sources so ASINs are already present before import.')}
             </p>
           )}
         </div>
         <button
           onClick={() => setDraft(prev => ({ ...prev, enabled: !prev.enabled }))}
-          className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${draft.enabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-zinc-700'}`}
+          className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${draft.enabled ? 'bg-accent-fill' : 'bg-slate-300 dark:bg-zinc-700'}`}
           title={draft.enabled ? t('settings.abs.disableSource', 'Disable Audiobookshelf source') : t('settings.abs.enableSource', 'Enable Audiobookshelf source')}
           aria-label={draft.enabled ? t('settings.abs.disableSource', 'Disable Audiobookshelf source') : t('settings.abs.enableSource', 'Enable Audiobookshelf source')}
         >
@@ -594,7 +594,7 @@ function AudiobookshelfSection() {
                   key={lib.id}
                   className={`flex items-center gap-3 rounded border px-3 py-2 text-sm cursor-pointer transition-colors ${
                     checked
-                      ? 'border-emerald-500/70 bg-emerald-500/10 text-slate-900 dark:text-zinc-100'
+                      ? 'border-success-marker/70 bg-success-marker/10 text-slate-900 dark:text-zinc-100'
                       : 'border-slate-200 dark:border-zinc-800 bg-slate-100 dark:bg-zinc-900 text-slate-700 dark:text-zinc-300'
                   }`}
                 >
@@ -626,7 +626,7 @@ function AudiobookshelfSection() {
             {t('settings.abs.libraries.none', 'No libraries selected. Use Test connection or List libraries to discover accessible book libraries.')}
           </p>
         )}
-        {libraryError && <div className="mt-2 text-sm text-red-700 dark:text-red-400">{libraryError}</div>}
+        {libraryError && <div className="mt-2 text-sm text-danger">{libraryError}</div>}
       </div>
 
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
@@ -670,15 +670,15 @@ function AudiobookshelfSection() {
         </div>
 
         {testResult && (
-          <div className="px-3 py-2 rounded border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 text-sm text-emerald-800 dark:text-emerald-300">
+          <div className="px-3 py-2 rounded border border-success-border bg-success-subtle text-sm text-success-strong">
             {t('settings.abs.test.connectedAs', 'Connected as')} <span className="font-medium">{testResult.username}</span>
             {testResult.serverVersion ? ' ' + t('settings.abs.test.serverVersion', { version: testResult.serverVersion, defaultValue: 'on ABS {{version}}' }) : ''}
             {testResult.defaultLibraryId ? ' · ' + t('settings.abs.test.defaultLibrary', { id: testResult.defaultLibraryId, defaultValue: 'default library {{id}}' }) : ''}
           </div>
         )}
-        {saveError && <div className="text-sm text-red-700 dark:text-red-400">{saveError}</div>}
-        {testError && <div className="text-sm text-red-700 dark:text-red-400">{testError}</div>}
-        {libraryError && <div className="text-sm text-red-700 dark:text-red-400">{libraryError}</div>}
+        {saveError && <div className="text-sm text-danger">{saveError}</div>}
+        {testError && <div className="text-sm text-danger">{testError}</div>}
+        {libraryError && <div className="text-sm text-danger">{libraryError}</div>}
 
         <PathRemapField
           id="abs-path-remap"
@@ -743,7 +743,7 @@ function AudiobookshelfSection() {
                   onClick={() => startImport(importDryRun)}
                   disabled={!canStartImport}
                   title={hasUnsavedABSConfig ? t('settings.abs.import.saveFirst', 'Save Audiobookshelf settings before starting an import') : undefined}
-                  className="px-4 py-2 bg-sky-700 hover:bg-sky-800 text-white rounded text-sm font-medium disabled:opacity-50"
+                  className="px-4 py-2 bg-info-fill hover:bg-info-fill-hover text-on-fill rounded text-sm font-medium disabled:opacity-50"
                 >
                   {importProgress?.running ? t('settings.abs.import.running', 'Running…') : importDryRun ? t('settings.abs.import.runSelected', 'Run selected mode') : t('settings.abs.import.run', 'Import libraries')}
                 </button>
@@ -752,17 +752,17 @@ function AudiobookshelfSection() {
           </div>
 
           {hasUnsavedABSConfig && (
-            <p className="text-[11px] text-amber-700 dark:text-amber-300">
+            <p className="text-[11px] text-warning">
               {t('settings.abs.import.saveFirstHint', 'Save Audiobookshelf settings before starting an import so the run uses the stored source configuration.')}
             </p>
           )}
           {!hasUnsavedABSConfig && effectiveLibraryIds.length === 0 && hasImportCredentials && (
-            <p className="text-[11px] text-amber-700 dark:text-amber-300">
+            <p className="text-[11px] text-warning">
               {t('settings.abs.import.chooseLibraryHint', 'Choose at least one library or use "Test connection" or "List libraries" to load accessible book libraries before starting an import.')}
             </p>
           )}
 
-          {importError && <div className="text-sm text-red-700 dark:text-red-400">{importError}</div>}
+          {importError && <div className="text-sm text-danger">{importError}</div>}
 
           {importProgress && (importProgress.running || importProgress.stats || importProgress.error) && (
             <div className="rounded border border-slate-200 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-950 px-3 py-2 space-y-2">
@@ -773,14 +773,14 @@ function AudiobookshelfSection() {
                 </div>
               )}
               {importProgress.running && importProgress.resumedFromCheckpoint && importProgress.checkpoint && (
-                <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                <p className="text-[11px] text-warning">
                   {importProgress.checkpoint.lastItemId
                     ? t('settings.abs.import.resumedAfter', { page: importProgress.checkpoint.page, item: importProgress.checkpoint.lastItemId, defaultValue: 'Resumed from page {{page}} after {{item}}.' })
                     : t('settings.abs.import.resumed', { page: importProgress.checkpoint.page, defaultValue: 'Resumed from page {{page}}.' })}
                 </p>
               )}
               {!importProgress.running && importProgress.error && (
-                <p className="text-xs text-red-700 dark:text-red-400">{importProgress.dryRun ? t('settings.abs.import.dryRunFailed', { error: importProgress.error, defaultValue: 'Dry-run failed: {{error}}' }) : t('settings.abs.import.failed', { error: importProgress.error, defaultValue: 'Import failed: {{error}}' })}</p>
+                <p className="text-xs text-danger">{importProgress.dryRun ? t('settings.abs.import.dryRunFailed', { error: importProgress.error, defaultValue: 'Dry-run failed: {{error}}' }) : t('settings.abs.import.failed', { error: importProgress.error, defaultValue: 'Import failed: {{error}}' })}</p>
               )}
               {!importProgress.running && importProgress.stats && (
                 <p className="text-xs text-slate-700 dark:text-zinc-300">
@@ -904,7 +904,7 @@ function AudiobookshelfSection() {
                       <button
                         onClick={() => applyRollback(run.id)}
                         disabled={rolledBack || rollbackApplyingRunId === run.id || rollbackPreviewingRunId === run.id}
-                        className={`px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50 ${rolledBack ? 'bg-slate-500 text-white cursor-not-allowed' : 'bg-amber-700 hover:bg-amber-800 text-white'}`}
+                        className={`px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50 ${rolledBack ? 'bg-slate-500 text-on-fill cursor-not-allowed' : 'bg-warning-fill hover:bg-warning-fill-hover text-on-fill'}`}
                       >
                         {rolledBack ? t('settings.abs.rollback.rolledBack', 'Rolled back') : rollbackApplyingRunId === run.id ? t('settings.abs.rollback.applying', 'Rolling back…') : t('settings.abs.rollback.apply', 'Apply rollback')}
                       </button>
@@ -919,14 +919,14 @@ function AudiobookshelfSection() {
                   )}
                 </p>
                 {run.checkpoint && (
-                  <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                  <p className="text-[11px] text-warning">
                     {run.checkpoint.lastItemId
                       ? t('settings.abs.runs.checkpointAfter', { page: run.checkpoint.page, item: run.checkpoint.lastItemId, defaultValue: 'Last checkpoint: page {{page}} after {{item}}.' })
                       : t('settings.abs.runs.checkpoint', { page: run.checkpoint.page, defaultValue: 'Last checkpoint: page {{page}}.' })}
                   </p>
                 )}
                 {rollbackResult?.runId === run.id && (
-                  <div className="rounded border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20 px-3 py-3 space-y-3">
+                  <div className="rounded border border-warning-border bg-warning-subtle px-3 py-3 space-y-3">
                     <div>
                       <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">
                         {rollbackResult.preview ? t('settings.abs.rollback.previewHeading', 'Rollback preview') : t('settings.abs.rollback.resultHeading', 'Rollback result')}
@@ -938,7 +938,7 @@ function AudiobookshelfSection() {
 
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-warning-strong">
                           {rollbackResult.preview ? t('settings.abs.rollback.wouldChange', 'Would delete or change') : t('settings.abs.rollback.changed', 'Deleted or changed')}
                         </p>
                         {rollbackPreviewChanges.length === 0 ? (
@@ -979,7 +979,7 @@ function AudiobookshelfSection() {
               )
             })}
 
-            {rollbackError && <div className="text-sm text-red-700 dark:text-red-400">{rollbackError}</div>}
+            {rollbackError && <div className="text-sm text-danger">{rollbackError}</div>}
           </div>
         </div>
 
@@ -1049,7 +1049,7 @@ function AudiobookshelfSection() {
                         type="button"
                         onClick={() => dismissReviewRun(group.runId as number, group.items.length)}
                         disabled={dismissingRunId === group.runId || reviewActionId !== null}
-                        className="px-2 py-1 bg-amber-700 hover:bg-amber-800 text-white rounded text-[11px] font-medium disabled:opacity-50"
+                        className="px-2 py-1 bg-warning-fill hover:bg-warning-fill-hover text-on-fill rounded text-[11px] font-medium disabled:opacity-50"
                       >
                         {dismissingRunId === group.runId
                           ? t('settings.abs.review.dismissingRun', { defaultValue: 'Dismissing…' })
@@ -1064,24 +1064,24 @@ function AudiobookshelfSection() {
                       <p className="text-sm font-medium text-slate-800 dark:text-zinc-200 truncate">{item.title || item.itemId}</p>
                       <p className="text-xs text-fg-muted truncate">{item.primaryAuthor || t('settings.abs.review.unknownAuthor', 'Unknown author')}</p>
                       {item.resolvedAuthorName && (
-                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300 truncate">{t('settings.abs.review.resolvedAuthor', { name: item.resolvedAuthorName, defaultValue: 'Author: {{name}}' })}</p>
+                        <p className="text-[11px] text-success truncate">{t('settings.abs.review.resolvedAuthor', { name: item.resolvedAuthorName, defaultValue: 'Author: {{name}}' })}</p>
                       )}
                       {item.resolvedBookTitle && (
-                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300 truncate">{t('settings.abs.review.resolvedBook', { title: item.resolvedBookTitle, defaultValue: 'Book: {{title}}' })}</p>
+                        <p className="text-[11px] text-success truncate">{t('settings.abs.review.resolvedBook', { title: item.resolvedBookTitle, defaultValue: 'Book: {{title}}' })}</p>
                       )}
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2 flex-shrink-0">
                       {item.asin && (
-                        <span className="text-[11px] px-2 py-1 rounded bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300">
+                        <span className="text-[11px] px-2 py-1 rounded bg-info-subtle text-info-strong">
                           ASIN {item.asin}
                         </span>
                       )}
                       {item.fileMappingFound && (
-                        <span title={item.fileMappingMessage || undefined} className="text-[11px] px-2 py-1 rounded bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">
+                        <span title={item.fileMappingMessage || undefined} className="text-[11px] px-2 py-1 rounded bg-success-subtle text-success-strong">
                           {t('settings.abs.review.fileMappingFound', 'File Mapping Found')}
                         </span>
                       )}
-                      <span className="text-[11px] px-2 py-1 rounded bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300">
+                      <span className="text-[11px] px-2 py-1 rounded bg-warning-subtle text-warning-strong">
                         {reviewReasonLabel(item.reviewReason)}
                       </span>
                     </div>
@@ -1111,7 +1111,7 @@ function AudiobookshelfSection() {
                               type="button"
                               onClick={() => resolveReviewAuthor(item, author)}
                               disabled={reviewActionId === item.id}
-                              className="w-full text-left rounded border border-slate-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-emerald-400 disabled:opacity-50"
+                              className="w-full text-left rounded border border-slate-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-accent-ring disabled:opacity-50"
                             >
                               <span className="block font-medium text-slate-800 dark:text-zinc-200 truncate">{author.authorName}</span>
                               {author.disambiguation && <span className="block text-[11px] text-fg-muted truncate">{author.disambiguation}</span>}
@@ -1144,7 +1144,7 @@ function AudiobookshelfSection() {
                               type="button"
                               onClick={() => resolveReviewBook(item, book)}
                               disabled={reviewActionId === item.id}
-                              className="w-full text-left rounded border border-slate-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-emerald-400 disabled:opacity-50"
+                              className="w-full text-left rounded border border-slate-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-accent-ring disabled:opacity-50"
                             >
                               <span className="block font-medium text-slate-800 dark:text-zinc-200 truncate">{book.title}</span>
                               {book.author?.authorName && <span className="block text-[11px] text-fg-muted truncate">{book.author.authorName}</span>}
@@ -1158,7 +1158,7 @@ function AudiobookshelfSection() {
                     <button
                       onClick={() => approveReviewItem(item.id)}
                       disabled={reviewActionId === item.id}
-                      className="px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white rounded text-xs font-medium disabled:opacity-50"
+                      className="px-3 py-1.5 bg-info-fill hover:bg-info-fill-hover text-on-fill rounded text-xs font-medium disabled:opacity-50"
                     >
                       {reviewActionId === item.id ? t('settings.abs.review.importing', 'Importing…') : t('settings.abs.review.import', 'Import')}
                     </button>
@@ -1177,7 +1177,7 @@ function AudiobookshelfSection() {
             </>
           )}
 
-          {reviewError && <div className="text-sm text-red-700 dark:text-red-400">{reviewError}</div>}
+          {reviewError && <div className="text-sm text-danger">{reviewError}</div>}
         </div>
 
         <ABSConflictPanel

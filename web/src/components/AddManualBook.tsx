@@ -92,7 +92,7 @@ export default function AddManualBook({ initialTitle, initialAuthor, onBack, onC
         onSubmit={e => { e.preventDefault(); void add() }}
       >
         <div>
-          <h4 ref={headingRef} tabIndex={-1} className="rounded-sm font-semibold focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-500">{t('addToLibrary.manual.heading')}</h4>
+          <h4 ref={headingRef} tabIndex={-1} className="rounded-sm font-semibold focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent-ring">{t('addToLibrary.manual.heading')}</h4>
           <p className="mt-1 text-xs text-fg-muted">{t('addToLibrary.manual.hint')}</p>
         </div>
 
@@ -149,7 +149,7 @@ export default function AddManualBook({ initialTitle, initialAuthor, onBack, onC
         </label>
 
         {addError && (
-          <div id={errorId} role="alert" className="px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+          <div id={errorId} role="alert" className="px-3 py-2 bg-danger-subtle border border-danger-border rounded text-sm text-danger-strong">
             <div>{addError}</div>
             {addConflict?.existingBookId && (
               <div className="mt-2 text-xs font-medium">

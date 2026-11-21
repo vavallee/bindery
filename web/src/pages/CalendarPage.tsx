@@ -168,7 +168,7 @@ export default function CalendarPage() {
                     {day && (
                       <>
                         <div className={`text-xs font-medium mb-1 w-6 h-6 flex items-center justify-center rounded-full ${
-                          isToday ? 'bg-emerald-700 text-white' : 'text-fg-muted'
+                          isToday ? 'bg-success-fill text-on-fill' : 'text-fg-muted'
                         }`}>
                           {day}
                         </div>
@@ -177,7 +177,7 @@ export default function CalendarPage() {
                             <div
                               key={book.id}
                               title={book.title}
-                              className="text-[10px] leading-tight px-1.5 py-1 bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 rounded truncate cursor-default"
+                              className="text-[10px] leading-tight px-1.5 py-1 bg-success-marker/20 text-success-strong rounded truncate cursor-default"
                             >
                               {book.title}
                             </div>
@@ -208,7 +208,7 @@ export default function CalendarPage() {
                 const isSelected = day !== null && day === selectedDay
                 const cellCls = `aspect-square flex flex-col items-center justify-center border-b border-r border-slate-200 dark:border-zinc-800 text-xs ${
                   idx % 7 === 6 ? 'border-r-0' : ''
-                } ${isSelected ? 'bg-emerald-500/15' : day ? 'bg-slate-100/50 dark:bg-zinc-900/50' : 'bg-slate-100/20 dark:bg-zinc-900/20'}`
+                } ${isSelected ? 'bg-success-marker/15' : day ? 'bg-slate-100/50 dark:bg-zinc-900/50' : 'bg-slate-100/20 dark:bg-zinc-900/20'}`
                 // A day with releases is a button: its dot used to be the only
                 // sign of them, and there was nothing to tap to see which.
                 if (day && hasBooks) {
@@ -222,11 +222,11 @@ export default function CalendarPage() {
                       className={`${cellCls} touch-manipulation`}
                     >
                       <span className={`w-6 h-6 flex items-center justify-center rounded-full text-xs ${
-                        isToday ? 'bg-emerald-700 text-white' : 'text-fg-muted'
+                        isToday ? 'bg-success-fill text-on-fill' : 'text-fg-muted'
                       }`}>
                         {day}
                       </span>
-                      <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-emerald-400 mt-0.5" />
+                      <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-success-marker mt-0.5" />
                     </button>
                   )
                 }
@@ -238,7 +238,7 @@ export default function CalendarPage() {
                     {day && (
                       <>
                         <span className={`w-6 h-6 flex items-center justify-center rounded-full text-xs ${
-                          isToday ? 'bg-emerald-700 text-white' : 'text-fg-muted'
+                          isToday ? 'bg-success-fill text-on-fill' : 'text-fg-muted'
                         }`}>
                           {day}
                         </span>
