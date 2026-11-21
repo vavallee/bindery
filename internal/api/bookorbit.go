@@ -219,7 +219,7 @@ func (h *BookOrbitHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	// A saved key belongs to the server it was issued for. When the URL moves
 	// and no replacement key came with it, drop the saved key rather than
 	// send it to the new address.
-	clearKey := newKey == "" && cfg.BaseURL != savedBaseURL && cfg.APIKey != ""
+	clearKey := newKey == "" && !sameServiceURL(cfg.BaseURL, savedBaseURL) && cfg.APIKey != ""
 	if clearKey {
 		cfg.APIKey = ""
 	}

@@ -2286,7 +2286,7 @@ POST   /api/v1/abs/libraries                      list its libraries (admin)
 POST   /api/v1/abs/import/runs/{runID}/rollback   roll an import run back (admin); POST .../rollback/preview shows what would change first
 GET    /api/v1/abs/review                         items waiting for review (admin); see abs_import.md for the approve, dismiss and resolve routes
 GET    /api/v1/abs/conflicts                      import conflicts (admin); POST /abs/conflicts/{id}/resolve settles one
-GET    /api/v1/grimmory/config                    Grimmory connection (admin); PUT saves it, POST /grimmory/test probes it
+GET    /api/v1/grimmory/config                    Grimmory connection (admin); PUT saves it (changing the base URL without a new API key or password clears the saved ones, so they are never sent to the new address), POST /grimmory/test probes it
 POST   /api/v1/grimmory/sync                      push imported books to Grimmory (admin); GET /grimmory/sync/status shows progress
 GET    /api/v1/calibre/runs                       recorded Calibre import runs (admin); POST /calibre/runs/{runID}/rollback undoes one, GET .../rollback/preview shows it first
 POST   /api/v1/migrate/goodreads/commit           commit a Goodreads import using the token from /migrate/goodreads/preview (admin)

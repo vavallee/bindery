@@ -151,7 +151,7 @@ func (h *ABSHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	// and no replacement key came with it, drop the saved key rather than
 	// send it to the new address.
 	newKeySupplied := req.APIKey != nil && strings.TrimSpace(*req.APIKey) != ""
-	clearKey := !newKeySupplied && baseURL != current.BaseURL && apiKey != ""
+	clearKey := !newKeySupplied && !sameServiceURL(baseURL, current.BaseURL) && apiKey != ""
 	if clearKey {
 		apiKey = ""
 	}

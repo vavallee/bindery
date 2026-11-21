@@ -811,6 +811,13 @@ func (h *SettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// A credential belongs to the server it was issued for: moving the URL
+	// through this route clears it instead of sending it to the new address.
+	cleared, err := clearCredentialsOnURLChange(r.Context(), h.settings, key, value)
+	if err != nil {
+		writeServerError(w, r, err)
+		return
+	}
 	if err := h.settings.Set(r.Context(), key, value); err != nil {
 		writeServerError(w, r, err)
 		return
@@ -824,7 +831,7 @@ func (h *SettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	resp := settingSetResponse{Setting: &models.Setting{Key: key, Value: value}, AppliedLive: appliedLive}
+	resp := settingSetResponse{Setting: &models.Setting{Key: key, Value: value}, AppliedLive: appliedLive, CredentialsCleared: cleared}
 	if s, err := h.settings.Get(r.Context(), key); err == nil && s != nil {
 		resp.Setting = s
 	}
@@ -838,6 +845,9 @@ type settingSetResponse struct {
 	*models.Setting
 	Warning     string `json:"warning,omitempty"`
 	WarningCode string `json:"warningCode,omitempty"`
+	// CredentialsCleared names the settings keys whose saved credential was
+	// dropped because this write moved a service URL. Never their values.
+	CredentialsCleared []string `json:"credentialsCleared,omitempty"`
 	// AppliedLive is present only for a setting something applies at
 	// runtime (today the metadata provider settings, #1771): true when the
 	// change is already in effect, false when it saved but takes effect at
@@ -1404,6 +1414,12 @@ func (h *SettingsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
 	if isSecretSetting(key) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "this secret setting cannot be deleted through the generic settings API"})
+		return
+	}
+	// Deleting a service URL unbinds its credentials, or a later PUT of a new
+	// URL would find the old key still saved and send it there.
+	if _, err := clearCredentialsOnURLChange(r.Context(), h.settings, key, ""); err != nil {
+		writeServerError(w, r, err)
 		return
 	}
 	if err := h.settings.Delete(r.Context(), key); err != nil {
