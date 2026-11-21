@@ -15,10 +15,74 @@
   :root {
     --fg-muted: #475569;     /* slate-600 */
     --accent-text: #047857;  /* emerald-700 */
+    --danger: #c10007;                /* red-700 */
+    --danger-strong: #9f0712;         /* red-800 */
+    --danger-subtle: #ffe2e2;         /* red-100 */
+    --danger-border: #ffa2a2;         /* red-300 */
+    --danger-fill: #e7000b;           /* red-600 */
+    --danger-fill-hover: #c10007;     /* red-700 */
+    --danger-marker: #fb2c36;         /* red-500 */
+    --warning: #bb4d00;               /* amber-700 */
+    --warning-strong: #973c00;        /* amber-800 */
+    --warning-subtle: #fef3c6;        /* amber-100 */
+    --warning-border: #ffd230;        /* amber-300 */
+    --warning-fill: #bb4d00;          /* amber-700 */
+    --warning-fill-hover: #973c00;    /* amber-800 */
+    --warning-marker: #fe9a00;        /* amber-500 */
+    --success: #007a55;               /* emerald-700 */
+    --success-strong: #006045;        /* emerald-800 */
+    --success-subtle: #d0fae5;        /* emerald-100 */
+    --success-border: #5ee9b5;        /* emerald-300 */
+    --success-fill: #007a55;          /* emerald-700 */
+    --success-fill-hover: #006045;    /* emerald-800 */
+    --success-marker: #00bc7d;        /* emerald-500 */
+    --info: #0069a8;                  /* sky-700 */
+    --info-strong: #00598a;           /* sky-800 */
+    --info-subtle: #dff2fe;           /* sky-100 */
+    --info-border: #74d4ff;           /* sky-300 */
+    --info-fill: #0069a8;             /* sky-700 */
+    --info-fill-hover: #00598a;       /* sky-800 */
+    --info-marker: #00a6f4;           /* sky-500 */
+    --on-fill: #ffffff;
+    --accent-fill: #007a55;  /* emerald-700 */
+    --accent-fill-hover: #006045;  /* emerald-800 */
+    --accent-ring: #009966;  /* emerald-600 */
   }
   html.dark {
     --fg-muted: #a1a1aa;     /* zinc-400 */
     --accent-text: #34d399;  /* emerald-400 */
+    --danger: #ff6467;                /* red-400 */
+    --danger-strong: #ffa2a2;         /* red-300 */
+    --danger-subtle: #38181b;         /* red-900 at 30% over zinc-900 */
+    --danger-border: #82181a;         /* red-900 */
+    --danger-fill: #e7000b;           /* red-600 */
+    --danger-fill-hover: #c10007;     /* red-700 */
+    --danger-marker: #fb2c36;         /* red-500 */
+    --warning: #ffb900;               /* amber-400 */
+    --warning-strong: #ffd230;        /* amber-300 */
+    --warning-subtle: #362015;        /* amber-900 at 30% over zinc-900 */
+    --warning-border: #7b3306;        /* amber-900 */
+    --warning-fill: #bb4d00;          /* amber-700 */
+    --warning-fill-hover: #973c00;    /* amber-800 */
+    --warning-marker: #fe9a00;        /* amber-500 */
+    --success: #00d492;               /* emerald-400 */
+    --success-strong: #5ee9b5;        /* emerald-300 */
+    --success-subtle: #112925;        /* emerald-900 at 30% over zinc-900 */
+    --success-border: #004f3b;        /* emerald-900 */
+    --success-fill: #007a55;          /* emerald-700 */
+    --success-fill-hover: #006045;    /* emerald-800 */
+    --success-marker: #00bc7d;        /* emerald-500 */
+    --info: #00bcff;                  /* sky-400 */
+    --info-strong: #74d4ff;           /* sky-300 */
+    --info-subtle: #112735;           /* sky-900 at 30% over zinc-900 */
+    --info-border: #024a70;           /* sky-900 */
+    --info-fill: #0069a8;             /* sky-700 */
+    --info-fill-hover: #00598a;       /* sky-800 */
+    --info-marker: #00a6f4;           /* sky-500 */
+    --on-fill: #ffffff;
+    --accent-fill: #007a55;  /* emerald-700 */
+    --accent-fill-hover: #006045;  /* emerald-800 */
+    --accent-ring: #00bc7d;  /* emerald-500 */
   }
   html { background-color: rgb(248 250 252); } /* slate-50 */
   html.dark { background-color: rgb(9 9 11); } /* zinc-950 */
@@ -27,6 +91,38 @@
 @theme inline {
   --color-fg-muted: var(--fg-muted);
   --color-accent-text: var(--accent-text);
+  --color-danger: var(--danger);
+  --color-danger-strong: var(--danger-strong);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-danger-border: var(--danger-border);
+  --color-danger-fill: var(--danger-fill);
+  --color-danger-fill-hover: var(--danger-fill-hover);
+  --color-danger-marker: var(--danger-marker);
+  --color-warning: var(--warning);
+  --color-warning-strong: var(--warning-strong);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-border: var(--warning-border);
+  --color-warning-fill: var(--warning-fill);
+  --color-warning-fill-hover: var(--warning-fill-hover);
+  --color-warning-marker: var(--warning-marker);
+  --color-success: var(--success);
+  --color-success-strong: var(--success-strong);
+  --color-success-subtle: var(--success-subtle);
+  --color-success-border: var(--success-border);
+  --color-success-fill: var(--success-fill);
+  --color-success-fill-hover: var(--success-fill-hover);
+  --color-success-marker: var(--success-marker);
+  --color-info: var(--info);
+  --color-info-strong: var(--info-strong);
+  --color-info-subtle: var(--info-subtle);
+  --color-info-border: var(--info-border);
+  --color-info-fill: var(--info-fill);
+  --color-info-fill-hover: var(--info-fill-hover);
+  --color-info-marker: var(--info-marker);
+  --color-on-fill: var(--on-fill);
+  --color-accent-fill: var(--accent-fill);
+  --color-accent-fill-hover: var(--accent-fill-hover);
+  --color-accent-ring: var(--accent-ring);
 }
 
 /* Modal sizing on phones. `vh` is measured with the mobile browser toolbar

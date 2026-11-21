@@ -25,14 +25,14 @@ export type AlertTier = 'info' | 'warning' | 'error'
 
 const tierCls: Record<AlertTier, string> = {
   info: 'border-slate-300 dark:border-zinc-700 bg-slate-100 dark:bg-zinc-900 text-slate-700 dark:text-zinc-300',
-  warning: 'border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200',
-  error: 'border-red-300 dark:border-red-800/60 bg-red-50 dark:bg-red-950/40 text-red-900 dark:text-red-200',
+  warning: 'border-warning-border bg-warning-subtle text-warning-strong',
+  error: 'border-danger-border bg-danger-subtle text-danger-strong',
 }
 
 const dismissHoverCls: Record<AlertTier, string> = {
   info: 'hover:bg-slate-200 dark:hover:bg-zinc-800',
-  warning: 'hover:bg-amber-100 dark:hover:bg-amber-900/50',
-  error: 'hover:bg-red-100 dark:hover:bg-red-900/50',
+  warning: 'hover:bg-warning-border/40',
+  error: 'hover:bg-danger-border/40',
 }
 
 // An error is the only tier that interrupts a screen reader. The other two

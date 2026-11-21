@@ -41,6 +41,8 @@ type Token = 'fg-muted' | 'accent-text'
 type Theme = 'light' | 'dark'
 const TOKEN_NAMES: Token[] = ['fg-muted', 'accent-text']
 const TOKENS = new Map<Token, Record<Theme, string>>()
+// Every `--name: #rrggbb` in each theme's block, for the status tokens (#3994).
+const ALL_TOKENS: Record<Theme, Map<string, string>> = { light: new Map(), dark: new Map() }
 const token = (name: Token, theme: Theme) => (theme === 'dark' ? TOKENS.get(name)?.dark : TOKENS.get(name)?.light) ?? ''
 
 beforeAll(async () => {
@@ -48,6 +50,8 @@ beforeAll(async () => {
   const values = (body = '') => new Map([...body.matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})/g)].map(m => [m[1], m[2]]))
   const light = values(css.match(/(?:^|[}\s]):root\s*\{([^}]*)\}/)?.[1])
   const dark = values(css.match(/(?:^|[}\s])html\.dark\s*\{([^}]*)\}/)?.[1])
+  ALL_TOKENS.light = light
+  ALL_TOKENS.dark = dark
   for (const name of TOKEN_NAMES) {
     TOKENS.set(name, { light: light.get(name) ?? '', dark: dark.get(name) ?? '' })
   }
@@ -512,23 +516,168 @@ describe('DataTable selected row hover', () => {
 // the toast's classes used to be split across a ternary where they saw
 // neither, so the fills are named whole in toastBus.ts and measured here.
 describe('Settings save toast', () => {
-  for (const kind of ['success', 'error'] as const) {
-    it(`${kind}: white on its fill is at least ${AA_NORMAL}:1`, () => {
-      const classes = TOAST_FILL[kind].split(/\s+/)
-      const fill = classes.find(c => HUE_BG.test(c))
-      const text = classes.find(c => HUE_TEXT.test(c))
-      expect(fill, TOAST_FILL[kind]).toBeTruthy()
-      expect(text).toBe('text-white')
-      const base = TAILWIND.get(fill!.slice(3))
-      expect(base, fill).toBeTruthy()
-      expect(contrast('#ffffff', base!)).toBeGreaterThanOrEqual(AA_NORMAL)
-    })
+  // The toast now names token classes (#3994), measured in both themes.
+  for (const [kind, status] of [['success', 'success'], ['error', 'danger']] as const) {
+    for (const theme of ['light', 'dark'] as const) {
+      it(`${kind}: on-fill text on its fill is at least ${AA_NORMAL}:1 in ${theme}`, () => {
+        expect(TOAST_FILL[kind].split(/\s+/).sort()).toEqual([`bg-${status}-fill`, 'text-on-fill'])
+        expect(contrast(tok('on-fill', theme), tok(`${status}-fill`, theme))).toBeGreaterThanOrEqual(AA_NORMAL)
+      })
+    }
   }
 
-  it('is reachable by the white-on-fill scanner (one string holds both classes)', () => {
-    for (const kind of ['success', 'error'] as const) {
-      expect(TOAST_FILL[kind]).toMatch(/\btext-white\b/)
-      expect(TOAST_FILL[kind]).toMatch(/\bbg-(?:emerald|red)-\d+\b/)
+  // The fills keep the shades the toast had before the tokens: emerald-700
+  // and red-600, 5.4:1 and 4.8:1 against white (#4070).
+  it('keeps the measured fills', () => {
+    expect(tok('success-fill', 'light')).toBe(TAILWIND.get('emerald-700'))
+    expect(tok('danger-fill', 'light')).toBe(TAILWIND.get('red-600'))
+    expect(contrast('#ffffff', TAILWIND.get('emerald-700')!)).toBeGreaterThanOrEqual(5.3)
+    expect(contrast('#ffffff', TAILWIND.get('red-600')!)).toBeGreaterThanOrEqual(4.7)
+  })
+})
+
+// Status colour tokens (#3994): success, warning, danger and info, each with
+// text on a surface, text on its own tint, the tint and its border, a solid
+// fill and its hover, and a marker for dots and bars. They replace the raw
+// emerald, amber, red and sky classes, so each is pinned to the palette shade
+// it replaced (no visual change) and measured here, in both themes, from the
+// CSS as the build compiles it.
+const STATUSES = { danger: 'red', warning: 'amber', success: 'emerald', info: 'sky' } as const
+type Status = keyof typeof STATUSES
+const STATUS_NAMES = Object.keys(STATUSES) as Status[]
+const tok = (name: string, theme: Theme) => ALL_TOKENS[theme].get(name) ?? ''
+const SURFACE_LIST = (theme: Theme): Array<[string, string]> =>
+  theme === 'dark' ? [['page', SURFACES.darkPage], ['card', SURFACES.darkCard]] : [['page', SURFACES.lightPage], ['card', SURFACES.lightCard]]
+const FILL_SHADE: Record<Status, [number, number]> = { danger: [600, 700], warning: [700, 800], success: [700, 800], info: [700, 800] }
+// What each token's value was before it became a token: the palette shade of
+// the raw class it replaced, per theme. The dark tint is the old
+// dark:bg-red-900/30 mixed over the dark card, as an opaque colour.
+function expectedShade(status: Status, kind: string, theme: Theme): string {
+  const h = STATUSES[status]
+  const light: Record<string, string> = { '': '700', strong: '800', subtle: '100', border: '300', fill: String(FILL_SHADE[status][0]), 'fill-hover': String(FILL_SHADE[status][1]), marker: '500' }
+  const dark: Record<string, string> = { '': '400', strong: '300', border: '900', fill: String(FILL_SHADE[status][0]), 'fill-hover': String(FILL_SHADE[status][1]), marker: '500' }
+  if (theme === 'dark' && kind === 'subtle') return mix(TAILWIND.get(`${h}-900`)!, SURFACES.darkCard, 0.3)
+  return TAILWIND.get(`${h}-${(theme === 'dark' ? dark : light)[kind]}`)!
+}
+const KINDS = ['', 'strong', 'subtle', 'border', 'fill', 'fill-hover', 'marker']
+const nameOf = (status: Status, kind: string) => (kind ? `${status}-${kind}` : status)
+
+describe('status colour tokens (#3994)', () => {
+  it('reads every token for both themes from index.css', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      for (const status of STATUS_NAMES) {
+        for (const kind of KINDS) expect(tok(nameOf(status, kind), theme), `${nameOf(status, kind)} ${theme}`).toMatch(/^#[0-9a-f]{6}$/i)
+      }
+      for (const name of ['on-fill', 'accent-fill', 'accent-fill-hover', 'accent-ring']) expect(tok(name, theme), `${name} ${theme}`).toMatch(/^#[0-9a-f]{6}$/i)
     }
+  })
+
+  it('each equals the palette shade it replaced, so nothing changes on screen', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      for (const status of STATUS_NAMES) {
+        for (const kind of KINDS) {
+          expect(tok(nameOf(status, kind), theme), `${nameOf(status, kind)} ${theme}`).toBe(expectedShade(status, kind, theme))
+        }
+      }
+    }
+    expect(tok('accent-fill', 'light')).toBe(TAILWIND.get('emerald-700'))
+    expect(tok('accent-fill-hover', 'dark')).toBe(TAILWIND.get('emerald-800'))
+    expect(tok('accent-ring', 'light')).toBe(TAILWIND.get('emerald-600'))
+    expect(tok('accent-ring', 'dark')).toBe(TAILWIND.get('emerald-500'))
+  })
+
+  for (const theme of ['light', 'dark'] as const) {
+    for (const status of STATUS_NAMES) {
+      for (const [surface, bg] of SURFACE_LIST(theme)) {
+        for (const kind of ['', 'strong']) {
+          it(`text-${nameOf(status, kind)} ${theme} on the ${surface} >= ${AA_NORMAL}:1`, () => {
+            expect(contrast(tok(nameOf(status, kind), theme), bg)).toBeGreaterThanOrEqual(AA_NORMAL)
+          })
+        }
+        // The tint is also drawn translucent (bg-danger-subtle/40) over the
+        // surface, so the strong text is measured on each mix.
+        for (const alpha of [1, 0.5, 0.4]) {
+          it(`text-${status}-strong ${theme} on ${status}-subtle at ${alpha * 100}% over the ${surface} >= ${AA_NORMAL}:1`, () => {
+            const ground = mix(tok(`${status}-subtle`, theme), bg, alpha)
+            expect(contrast(tok(`${status}-strong`, theme), ground)).toBeGreaterThanOrEqual(AA_NORMAL)
+          })
+        }
+      }
+      for (const fill of ['fill', 'fill-hover']) {
+        it(`on-fill ${theme} on ${status}-${fill} >= ${AA_NORMAL}:1`, () => {
+          expect(contrast(tok('on-fill', theme), tok(`${status}-${fill}`, theme))).toBeGreaterThanOrEqual(AA_NORMAL)
+        })
+      }
+    }
+    for (const fill of ['accent-fill', 'accent-fill-hover']) {
+      it(`on-fill ${theme} on ${fill} >= ${AA_NORMAL}:1`, () => {
+        expect(contrast(tok('on-fill', theme), tok(fill, theme))).toBeGreaterThanOrEqual(AA_NORMAL)
+      })
+    }
+    for (const [surface, bg] of SURFACE_LIST(theme)) {
+      it(`accent-ring ${theme} on the ${surface} is a visible focus ring (>= ${AA_NON_TEXT}:1)`, () => {
+        expect(contrast(tok('accent-ring', theme), bg)).toBeGreaterThanOrEqual(AA_NON_TEXT)
+      })
+    }
+  }
+
+  // Dots, bars and rings carry no text, and the colour is repeated in a
+  // label beside them. They keep the contrast of the 500 shades they were, so
+  // this pins them at that floor rather than at 3:1, which amber misses.
+  it('markers keep at least the contrast of the 500 shades they replaced', () => {
+    for (const theme of ['light', 'dark'] as const) {
+      for (const status of STATUS_NAMES) {
+        for (const [, bg] of SURFACE_LIST(theme)) {
+          const old = contrast(TAILWIND.get(`${STATUSES[status]}-500`)!, bg)
+          expect(contrast(tok(`${status}-marker`, theme), bg)).toBeGreaterThanOrEqual(old)
+        }
+      }
+    }
+  })
+
+  // The class strings in the source. A token text colour is measured against
+  // the token or palette background in the same string (a translucent one
+  // mixed over the card), resting and hovered, in each theme: the pairing the
+  // checks above cannot see, such as text-danger on bg-danger-subtle.
+  it('token text stays AA on the background in the same string', () => {
+    const TEXT = /^(?:hover:)?text-(?:(?:danger|warning|success|info)(?:-strong)?|on-fill)$/
+    const failures: string[] = []
+    let checked = 0
+    const resolveBg = (cls: string, theme: Theme, card: string): string | undefined => {
+      const [base, alpha] = cls.split('/')
+      const m = base.match(/^bg-((?:danger|warning|success|info)-(?:subtle|fill|fill-hover|marker)|accent-fill|accent-fill-hover)$/)
+      const hex = m ? tok(m[1], theme) : TAILWIND.get(base.replace(/^bg-/, ''))
+      return hex ? (alpha ? mix(hex, card, Number(alpha) / 100) : hex) : undefined
+    }
+    for (const [file, source] of Object.entries(sources)) {
+      if (/\.test\.tsx?$/.test(file)) continue
+      const code = source.replace(/^\s*\/\/.*$/gm, '')
+      for (const [, str] of code.matchAll(/["'`]([^"'`]*\b(?:hover:)?text-(?:danger|warning|success|info|on-fill)[^"'`]*)["'`]/g)) {
+        const classes = str.split(/\s+/)
+        for (const theme of ['light', 'dark'] as const) {
+          const card = theme === 'dark' ? SURFACES.darkCard : SURFACES.lightCard
+          // The dark: background wins in dark mode; else the shared one.
+          const bgFor = (prefix: string) => {
+            const own = theme === 'dark' ? classes.find(c => c.startsWith(`dark:${prefix}bg-`)) : undefined
+            return own ? own.slice(5 + prefix.length) : classes.find(c => c.startsWith(`${prefix}bg-`))?.slice(prefix.length)
+          }
+          const rest = bgFor('')
+          const hover = bgFor('hover:') ?? rest
+          const restText = classes.find(c => TEXT.test(c) && !c.startsWith('hover:'))
+          const hoverText = classes.find(c => TEXT.test(c) && c.startsWith('hover:')) ?? restText
+          for (const [state, bgClass, textClass] of [['rest', rest, restText], ['hover', hover, hoverText]] as const) {
+            if (!bgClass || !textClass) continue
+            const bg = resolveBg(bgClass, theme, card)
+            const fg = tok(textClass.replace(/^hover:text-/, '').replace(/^text-/, ''), theme)
+            if (!bg || !fg) continue
+            checked++
+            const ratio = contrast(fg, bg)
+            if (ratio < AA_NORMAL) failures.push(`${file}: ${theme} ${state} ${textClass} on ${bgClass} is ${ratio.toFixed(2)}:1 in "${str.trim().slice(0, 90)}"`)
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(0)
+    expect(failures, failures.join('\n')).toEqual([])
   })
 })
