@@ -678,6 +678,20 @@ joined name whose first or last part is a language word (for example
 `DutchOven` or `FrenchPress`) is treated like its spaced form, so an English
 only profile drops those as well.
 
+**A profile that restricts languages also prefers them.** The filter above can
+only reject a release that is tagged with a language the profile does not
+allow; an untagged release always passes. So that the untagged English file
+does not beat the tagged German ones for a German library, a release whose name
+is tagged with an allowed language is ranked well above an untagged one, enough
+to outweigh a better format and a RETAIL tag. A release with no detectable
+language ranks as before, and a profile that allows any language ranks exactly
+as before. The wanted book's own title and author never count as a tag, so a
+German book called "English Lessons" is not read as English. The order of the
+languages in the profile makes no difference: every allowed language counts the
+same. A tag Bindery does not recognise, such as a bare `DE` placed before the
+format word (`Title.DE.2020.ABook.MP3-GRP`), is not seen by the filter or by
+this preference.
+
 **The file's language is checked at import.** The language filter at grab
 time can only read the release name, so a release that does not say its
 language gets through it. When the download arrives, Bindery reads the

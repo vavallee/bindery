@@ -1,0 +1,2 @@
+### Changed
+- **Releases in your profile's language now rank higher** (#4130). When a metadata profile restricts the allowed languages, a release whose name is tagged with one of them is ranked above an untagged release, enough to outweigh a better format or a RETAIL tag. Before, the language setting could only drop wrong language releases, so an untagged English release often won over the tagged German ones for a German library. Profiles that allow any language rank exactly as before. Thanks to BraynArts for the report.

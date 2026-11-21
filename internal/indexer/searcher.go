@@ -82,8 +82,9 @@ func NewSearcher() *Searcher {
 // incomplete category mapping but are often noisy.
 // AllowedLanguages is the author's metadata-profile language list; callers
 // apply it to results via FilterByAllowedLanguages (releases tagged with a
-// language outside the set are dropped). Recorded here so search debug
-// output shows which set was in force.
+// language outside the set are dropped). scoreResult also gives a release
+// tagged with an allowed language a bonus (#4130). Recorded here so search
+// debug output shows which set was in force.
 type MatchCriteria struct {
 	Title            string
 	Author           string
@@ -1446,6 +1447,10 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria, ranks *profileRanks) f
 		}
 	}
 
+	// Language term (#4130): the positive half of the profile's language
+	// filter. Zero unless the profile restricts languages.
+	score += languageScore(r.Title, c)
+
 	switch {
 	case p.Retail:
 		score += 50
@@ -1973,19 +1978,9 @@ func FilterByAllowedLanguages(results []newznab.SearchResult, allowed []string) 
 // results it removed, in their original order, so the interactive search can
 // offer them for a deliberate grab (#2334). It is the one implementation.
 func SplitByAllowedLanguages(results []newznab.SearchResult, allowed []string) (kept, dropped []newznab.SearchResult) {
-	if len(allowed) == 0 {
+	set, restricted := allowedLanguageSet(allowed)
+	if !restricted {
 		return results, nil
-	}
-	set := make(map[string]bool, len(allowed))
-	for _, code := range allowed {
-		if strings.ToLower(strings.TrimSpace(code)) == "any" {
-			return results, nil
-		}
-		code = models.NormalizeLanguageCode(code)
-		if code == "" {
-			continue
-		}
-		set[code] = true
 	}
 
 	filtered := make([]newznab.SearchResult, 0, len(results))
