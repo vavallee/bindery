@@ -518,6 +518,13 @@ func (h *IndexerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idx.APIKey = apiKey
+	// A saved key belongs to the server it was issued for. When the URL moves
+	// and no replacement key came with the request, drop the saved key rather
+	// than send it to the new address (the by-id test and every search read it).
+	if idx.APIKey != "" && !rawStringSupplied(raw, "apiKey") && !sameServiceURL(idx.URL, existing.URL) {
+		idx.APIKey = ""
+		logCredentialsCleared("indexer", id, "apiKey")
+	}
 	if idx.URL != "" {
 		if err := httpsec.ValidateOutboundURL(idx.URL, httpsec.PolicyService); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

@@ -442,6 +442,8 @@ slash and the book, or your metadata profile, names a language other than
 English. An English bundle such as "Second Nature / One Summer" is searched
 whole.
 
+**Moving an indexer or Prowlarr to another address.** The API key is write-only, and a blank key field means keep the saved one. The exception is a change of URL: if you edit the URL of an indexer or a Prowlarr connection to a different server and do not type a new key in the same save, Bindery clears the saved key so it is never sent to the new address. Enter the key again. A trailing slash, capital letters in the host or an explicit default port do not count as a different address.
+
 **Daily query limits.** A sweep searches every wanted book against every
 enabled indexer back to back, so on a large library it can be thousands of
 requests in one burst. Private trackers with a daily API allowance do not

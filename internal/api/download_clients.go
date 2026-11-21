@@ -306,6 +306,26 @@ func (h *DownloadClientHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A saved credential belongs to the server it was issued for. When the
+	// endpoint moves and no replacement came with the request, drop the saved
+	// one rather than send it to the new host (the by-id test and every poll
+	// read it). The test-config route applies the same endpoint rule.
+	if downloadClientEndpointMoved(existing, &c) {
+		var cleared []string
+		if c.APIKey != "" && !rawDownloadClientNonEmptyString(raw, "apiKey") {
+			c.APIKey = ""
+			cleared = append(cleared, "apiKey")
+		}
+		if c.Password != "" && !rawDownloadClientNonEmptyString(raw, "password") {
+			c.Password = ""
+			cleared = append(cleared, "password")
+		}
+		if c.ProxyPassword != "" && !rawDownloadClientNonEmptyString(raw, "proxyPassword") {
+			c.ProxyPassword = ""
+			cleared = append(cleared, "proxyPassword")
+		}
+		logCredentialsCleared("download_client", id, cleared...)
+	}
 	c.ID = id
 	if err := h.clients.Update(r.Context(), &c); err != nil {
 		writeServerError(w, r, err)
@@ -609,6 +629,13 @@ func (h *DownloadClientHandler) TestConfig(w http.ResponseWriter, r *http.Reques
 	}{Message: "Connection verified", PathVisibility: pathVisibilityForResponse(pathVis)})
 }
 
+// downloadClientEndpointMoved reports whether c names a different server than
+// the saved row: type, host, port, TLS or URL base differ.
+func downloadClientEndpointMoved(stored, c *models.DownloadClient) bool {
+	return stored.Type != c.Type || !strings.EqualFold(stored.Host, c.Host) || stored.Port != c.Port ||
+		stored.UseSSL != c.UseSSL || strings.TrimSpace(stored.URLBase) != strings.TrimSpace(c.URLBase)
+}
+
 // hydrateTestConfigCredentials fills a blank credential on a test-a-config
 // request from the saved row it belongs to. The edit form no longer receives
 // the stored password or API key (#2213), so without this the "Test" button
@@ -629,8 +656,7 @@ func (h *DownloadClientHandler) hydrateTestConfigCredentials(ctx context.Context
 	if err != nil || stored == nil {
 		return
 	}
-	if stored.Type != c.Type || stored.Host != c.Host || stored.Port != c.Port ||
-		stored.UseSSL != c.UseSSL || strings.TrimSpace(stored.URLBase) != strings.TrimSpace(c.URLBase) {
+	if downloadClientEndpointMoved(stored, c) {
 		return
 	}
 	if c.APIKey == "" {

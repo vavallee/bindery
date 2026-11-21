@@ -617,7 +617,7 @@ Not every seedbox 401 is a proxy login. Up to v1.50.0 Bindery's login also sent 
 
 Open the qBittorrent client form, expand **Proxy login (optional)** and fill in **Proxy username** and **Proxy password**. Bindery then sends them as an `Authorization: Basic` header on every request to that client (login, status polling, add, delete and the connection test). They are separate from the qBittorrent Username and Password, which are still used for qBittorrent's own login form.
 
-The proxy password is stored like the other client passwords and is never sent back to the browser. Leave it blank when editing to keep the stored one, or empty the proxy username to remove the proxy login. The header is only sent to the scheme and host you configured, never to a redirect target on another host or from `https` down to `http`, and `user:pass@` in the Host field still does not work. The section only exists for qBittorrent.
+The proxy password is stored like the other client passwords and is never sent back to the browser. Leave it blank when editing to keep the stored one, or empty the proxy username to remove the proxy login. Changing the client type, host, port, TLS setting or URL base clears the saved API key, password and proxy password unless you enter new ones in the same save, so they are never sent to the new address. The header is only sent to the scheme and host you configured, never to a redirect target on another host or from `https` down to `http`, and `user:pass@` in the Host field still does not work. The section only exists for qBittorrent.
 
 ### slskd (Soulseek)
 
