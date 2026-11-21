@@ -144,6 +144,23 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		slog.Info("skipping a file too small to be a book", "file", f, "minBytes", MinPlausibleEbookBytes)
 	}
 
+	// A usenet job that holds only a ZIP (#4131): SABnzbd and NZBGet leave a zip
+	// alone. Unpack it here, under the guards in zip_extract.go, and look again.
+	var zipNote string
+	if len(bookFiles) == 0 && len(tooSmallFiles) == 0 {
+		extracted, note, zerr := s.unpackZipForImport(ctx, dl, downloadPath, cleanupClientType, explicitFiles)
+		if zerr != nil {
+			slog.Warn("could not extract the ZIP of a usenet download", "path", downloadPath, "error", zerr)
+			s.failImport(ctx, dl, models.StateImportFailed,
+				fmt.Sprintf("waiting for a ZIP to be extracted: this download holds only an archive, and Bindery could not extract it (%v). Nothing was written to the folder. Extract it yourself, then use Retry import on the Queue page.", zerr))
+			return
+		}
+		zipNote = note
+		if extracted {
+			bookFiles, tooSmallFiles = discoverBookFilesSized(downloadPath, explicitFiles, !isManualImport(ctx))
+		}
+	}
+
 	if len(bookFiles) == 0 && escapesDownloadRoot(downloadPath, explicitFiles) {
 		// Every file the client listed resolves outside the download through a
 		// symlink. Retrying cannot change that, so block rather than fail.
@@ -201,13 +218,13 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		if archive := archiveAwaitingExtraction(downloadPath); archive != "" {
-			// A RAR-packed release (#3203). The retries that follow wait for an
-			// unpacker without spending attempts (importSourcePresent), and the
-			// message says what the download is waiting for.
+			// A RAR, 7z or ZIP packed release (#3203, #4131). The retries that
+			// follow wait for an unpacker without spending attempts
+			// (importSourcePresent), and the message says what the download is
+			// waiting for.
 			slog.Info("download holds only an archive; waiting for it to be extracted",
 				"path", downloadPath, "archive", filepath.Base(archive))
-			s.failImport(ctx, dl, models.StateImportFailed,
-				fmt.Sprintf("waiting for %s to be extracted: this download holds only an archive, and Bindery does not unpack archives. An unpacker such as unpackerr has to extract it into %q; the import runs once the files are there.", filepath.Base(archive), downloadPath))
+			s.failImport(ctx, dl, models.StateImportFailed, archiveWaitMessage(archive, downloadPath, zipNote))
 			return
 		}
 		slog.Warn("no book files found in download", "path", downloadPath)

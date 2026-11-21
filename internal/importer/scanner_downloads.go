@@ -165,6 +165,10 @@ func importContentMissingReason(savePath string) string {
 // written, waiting is precisely what has already failed importSkipLimit times.
 func importSourceGoneReason(downloadPath string) string {
 	if archive := archiveAwaitingExtraction(downloadPath); archive != "" {
+		if kind := archiveKind(archive); kind != "RAR" {
+			return fmt.Sprintf("this download holds only an archive (%s, %s), and nothing extracted it in the %d checks Bindery waited. An unpacker such as unpackerr has to extract it into %s, or extract it yourself. Once the files are there, use Retry import on the Queue page.",
+				filepath.Base(archive), kind, importSkipLimit, downloadPath)
+		}
 		return fmt.Sprintf("this download holds only an archive (%s), and nothing extracted it in the %d checks Bindery waited. Bindery does not unpack archives: an unpacker such as unpackerr has to extract it into %s (see Storage and Hardlinks, RAR-packed torrent releases). Once the files are there, use Retry import on the Queue page.",
 			filepath.Base(archive), importSkipLimit, downloadPath)
 	}

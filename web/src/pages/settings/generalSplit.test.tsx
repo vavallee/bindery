@@ -54,6 +54,10 @@ const LEGACY_GENERAL_KEYS = [
   'hardcover.sync_interval', 'library.scan_interval', 'authors.discovery.interval', 'series.monitoring.interval',
 ]
 
+// Settings added to the tab after the split. They are held to the same rule as the legacy keys.
+const ADDED_GENERAL_KEYS = ['import.extract_zip']
+const CHECKED_GENERAL_KEYS = [...LEGACY_GENERAL_KEYS, ...ADDED_GENERAL_KEYS]
+
 // The legacy section headings, by the i18n key the old tab rendered them with.
 const LEGACY_HEADINGS = [
   'settings.general.appearance', 'settings.general.security', 'settings.general.fileNaming',
@@ -94,7 +98,7 @@ async function placement(settings: Record<string, string>) {
   for (const name of Object.keys(TABS) as (keyof typeof TABS)[]) {
     seed(settings)
     const { container } = await mount(name)
-    for (const key of LEGACY_GENERAL_KEYS) {
+    for (const key of CHECKED_GENERAL_KEYS) {
       if (container.querySelector(`[id="${key}"]`)) (found[key] ??= []).push(name)
     }
     cleanup()
@@ -112,7 +116,7 @@ describe('General settings split (#3990)', () => {
       for (const [key, where] of Object.entries(found)) expect(where, `${key} rendered on ${where.join(', ')}`).toHaveLength(1)
     }
     const seen = new Set([...Object.keys(ebookExternal), ...Object.keys(audiobookExternal)])
-    expect(LEGACY_GENERAL_KEYS.filter(k => !seen.has(k))).toEqual([])
+    expect(CHECKED_GENERAL_KEYS.filter(k => !seen.has(k))).toEqual([])
   })
 
   it('points the field index at the tab that renders each setting', async () => {
@@ -120,7 +124,7 @@ describe('General settings split (#3990)', () => {
     for (const settings of [{ 'import.mode': 'external', 'import.audiobook.mode': 'copy' }, { 'import.mode': 'copy', 'import.audiobook.mode': 'external' }]) {
       for (const [key, where] of Object.entries(await placement(settings))) hits[key] = where[0]
     }
-    const wrong = LEGACY_GENERAL_KEYS.filter(k => FIELDS.find(f => f.key === k)?.tab !== hits[k])
+    const wrong = CHECKED_GENERAL_KEYS.filter(k => FIELDS.find(f => f.key === k)?.tab !== hits[k])
     expect(wrong).toEqual([])
   })
 

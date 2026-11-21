@@ -43,6 +43,7 @@ export const FIELDS: FieldEntry[] = [
   { key: 'import.drop_link_mode', tab: 'naming', adminOnly: true, label: G + 'dropLinkMode' },
   { key: 'import.source_folders', tab: 'naming', adminOnly: true, label: G + 'importSources', help: G + 'importSourcesHint' },
   { key: 'import.write_opf_sidecar', tab: 'naming', adminOnly: true, label: G + 'writeOPFSidecar', help: G + 'writeOPFSidecarHint' },
+  { key: 'import.extract_zip', tab: 'naming', adminOnly: true, label: G + 'extractZip', help: G + 'extractZipHint' },
   { key: 'naming.bookTemplate', tab: 'naming', adminOnly: true, label: G + 'bookTemplate' },
   { key: 'naming_template_audiobook', tab: 'naming', adminOnly: true, label: G + 'audiobookTemplate', help: G + 'audiobookTemplateHint' },
   { key: 'naming.audiobook_file_template', tab: 'naming', adminOnly: true, label: G + 'audiobookFileTemplate', help: G + 'audiobookFileTemplateHint' },

@@ -233,6 +233,13 @@ const (
 	// string literal to avoid an import cycle; keep the literal in sync with
 	// this constant.
 	SettingImportWriteOPFSidecar = "import.write_opf_sidecar"
+	// SettingImportExtractZip lets the importer unpack the .zip a usenet job
+	// leaves behind (#4131), inside Bindery's own download folders and under
+	// size, count and path guards. Unset or "true" is on (default); "false"
+	// leaves the zip and says the download is waiting for it to be extracted.
+	// The importer reads this key as a string literal to avoid an import cycle;
+	// keep the literal in sync with this constant.
+	SettingImportExtractZip = "import.extract_zip"
 )
 
 // SettingLibraryLastScan is the KV key holding the JSON summary of the most
@@ -1142,6 +1149,13 @@ func validateSettingValue(key, value string) error {
 			return nil
 		}
 		return fmt.Errorf("import.write_opf_sidecar %q is not one of: true, false", value)
+	case SettingImportExtractZip:
+		// Boolean flag; empty or "true" = on (default). Only the two canonical
+		// values, so a typo cannot silently leave extraction on or off.
+		if value == "" || value == "true" || value == "false" {
+			return nil
+		}
+		return fmt.Errorf("import.extract_zip %q is not one of: true, false", value)
 	case SettingImportDropPairGatingTimeoutHours:
 		// Empty falls back to the 72h default; a non-empty value must be a
 		// positive integer number of hours so a typo fails loudly here rather

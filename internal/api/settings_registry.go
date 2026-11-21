@@ -339,6 +339,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingImportExtractZip, Type: SettingTypeBool, Default: "true",
+		Description: "Unpack the .zip a SABnzbd or NZBGet job leaves behind, inside Bindery's download folders only, then import the book. RAR and 7z are not unpacked.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: "naming.bookTemplate", Type: SettingTypeString, Default: "",
 		Description: "Path template for imported ebooks. Empty uses the built in default.",
 		State:       SettingStateActive,

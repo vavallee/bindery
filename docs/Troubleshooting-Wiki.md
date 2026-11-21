@@ -494,7 +494,20 @@ If the files never appear, it does not wait forever: after about 30 minutes of f
 
 ### "Waiting for … to be extracted"
 
-The download is a RAR-packed release: its folder holds an archive (`Title.part1.rar`, or `Title.rar` and `Title.r00`…) and no book file yet. Bindery does not unpack archives, so it waits, without spending import retries, for an unpacker such as unpackerr to extract the files into the download's folder, and imports them as soon as they appear. If nothing extracts it within about 30 minutes, the download is blocked with *this download holds only an archive*. Set up an unpacker as described in [Storage and Hardlinks, RAR-packed torrent releases](Storage-And-Hardlinks-Wiki.md#rar-packed-torrent-releases), or extract the archive into the folder yourself, then use **Retry import**.
+The download's folder holds an archive (`Title.part1.rar`, or `Title.rar` and `Title.r00`…, a `.7z`, or a `.zip`) and no book file yet. Bindery waits, without spending import retries, for the files to be extracted into the download's folder, and imports them as soon as they appear. If nothing extracts it within about 30 minutes, the download is blocked with *this download holds only an archive*. The message names the archive and its type.
+
+- **RAR and 7z** are never unpacked by Bindery. Usenet clients unpack them before they report a job complete. For torrents, or a client that does not, set up an unpacker as described in [Storage and Hardlinks, RAR-packed torrent releases](Storage-And-Hardlinks-Wiki.md#rar-packed-torrent-releases), such as unpackerr, or extract the archive into the folder yourself, then use **Retry import**.
+- **ZIP** is the container SABnzbd and NZBGet leave alone, and scene ebook releases, German ones especially, are often a zip that holds a rar that holds the EPUB. Since 1.53.1 Bindery unpacks the zip itself, with no external tool, when the setting **Extract ZIP archives of usenet downloads** (`import.extract_zip`, Settings, File Naming) is on, which is the default. It extracts one level: a zip that comes out of a zip is left alone, and so is a RAR that comes out of it, which then waits for an unpacker as above. The zip stays in the folder, and goes with the folder once the import succeeds in move mode.
+
+Bindery extracts a ZIP only when all of this holds, and otherwise says why in the Queue message and leaves the folder as it was:
+
+- the download came from SABnzbd or NZBGet, never a torrent or a Soulseek folder, and the import is not a manual one;
+- the folder sits inside `BINDERY_DOWNLOAD_DIR`, `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`, or the Bindery side of the client's path remap (or `BINDERY_DOWNLOAD_PATH_REMAP`), after symlinks are resolved. A path the client reports outside those folders is never written to, and neither is the download folder itself;
+- the folder holds no book file yet, and the zip is directly in it.
+
+Limits, checked before anything is written and again while copying: at most 2000 entries in all the zips of a folder, 4 GiB unpacked in total, 2 GiB for one file, and a compression ratio of at most 100 to 1, so a zip bomb is refused. An entry whose name is absolute, contains `..` or a drive letter (a backslash counts as a separator) refuses the whole archive. Password protected entries, links and special files are skipped, and the message says how many. A file that is already in the folder is never overwritten. A failed extraction removes what it wrote. Files are created with mode 0644 and folders with 0755.
+
+If a zip is refused, extract it yourself, then use **Retry import**. To turn the feature off, untick the setting; the download then waits for an unpacker, as a RAR does.
 
 ### "Already grabbed" when re-grabbing a release
 

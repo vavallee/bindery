@@ -402,6 +402,10 @@ func TestValidateSettingValue_KnownKeysUnchanged(t *testing.T) {
 		{"opf sidecar accepts false", SettingImportWriteOPFSidecar, "false", false},
 		{"opf sidecar accepts empty", SettingImportWriteOPFSidecar, "", false},
 		{"opf sidecar rejects other", SettingImportWriteOPFSidecar, "yes", true},
+		{"extract zip accepts true", SettingImportExtractZip, "true", false},
+		{"extract zip accepts false", SettingImportExtractZip, "false", false},
+		{"extract zip accepts empty", SettingImportExtractZip, "", false},
+		{"extract zip rejects other", SettingImportExtractZip, "yes", true},
 
 		{"abs enabled accepts false", SettingABSEnabled, "false", false},
 		{"abs enabled accepts empty", SettingABSEnabled, "", false},
@@ -497,6 +501,7 @@ var webSettingKeys = []string{
 	"import.drop_layout",
 	"import.drop_link_mode",
 	"import.ebook.content_check",
+	"import.extract_zip",
 	"import.mode",
 	"import.source_folders",
 	"import.write_opf_sidecar",

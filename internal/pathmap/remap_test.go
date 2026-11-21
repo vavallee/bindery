@@ -358,3 +358,20 @@ func TestApplyMatchedReportsIdentityRules(t *testing.T) {
 		t.Errorf("nil remapper = %q, %v", got, ok)
 	}
 }
+
+func TestRemapperTargets(t *testing.T) {
+	var nilRemapper *Remapper
+	if got := nilRemapper.Targets(); got != nil {
+		t.Errorf("nil remapper targets = %v, want none", got)
+	}
+	got := Parse("/media/downloads:/books/downloads,/srv/sab:/mnt/sab").Targets()
+	want := map[string]bool{"/books/downloads": true, "/mnt/sab": true}
+	if len(got) != len(want) {
+		t.Fatalf("targets = %v, want %v", got, want)
+	}
+	for _, g := range got {
+		if !want[g] {
+			t.Errorf("unexpected target %q", g)
+		}
+	}
+}
