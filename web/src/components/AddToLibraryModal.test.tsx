@@ -54,6 +54,10 @@ vi.mock('react-i18next', () => ({
         'addToLibrary.book.autoSearchLabel': 'Search indexers after adding',
         'addToLibrary.book.alreadyInLibrary': 'Already in your library',
         'addToLibrary.book.openExisting': 'Open existing book',
+        'addToLibrary.manual.open': 'Add by hand',
+        'addToLibrary.manual.heading': 'Add a book by hand',
+        'addToLibrary.manual.titleLabel': 'Title',
+        'addToLibrary.manual.authorLabel': 'Author',
         'common.search': 'Search',
         'common.cancel': 'Cancel',
       }
@@ -84,7 +88,15 @@ vi.mock('../api/client', () => ({
     lookupASIN: vi.fn(),
     addAuthor: vi.fn(),
     addBook: vi.fn(),
+    addManualBook: vi.fn(),
   },
+}))
+
+// A requester asks for books instead of adding them; flipped per test.
+const authState = vi.hoisted(() => ({ requester: false }))
+vi.mock('../auth/AuthContext', async importOriginal => ({
+  ...await importOriginal<typeof import('../auth/AuthContext')>(),
+  useIsRequester: () => authState.requester,
 }))
 
 import { api } from '../api/client'
@@ -931,5 +943,56 @@ describe('AddToLibraryModal - result filter', () => {
     searchIn('Search by author name...', '9780441478125')
     await waitFor(() => expect(screen.getByText('Dune')).toBeInTheDocument())
     expect(filterButton(/^Books/)).toHaveAttribute('aria-pressed', 'true')
+  })
+})
+
+describe('AddToLibraryModal - add by hand (#3840)', () => {
+  const onClose = vi.fn()
+  const onAdded = vi.fn()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    authState.requester = false
+    vi.mocked(api.getSetting).mockRejectedValue(new Error('HTTP 404'))
+  })
+
+  it('opens the form with the query as the title and reports the added book', async () => {
+    const added = book({ id: 9, foreignBookId: 'manual:book:1', title: 'The Last Church' })
+    vi.mocked(api.addManualBook).mockResolvedValue(added)
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} mode="book" />)
+    fireEvent.change(screen.getByPlaceholderText('Title, ISBN, or ASIN'), { target: { value: 'The Last Church' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add by hand' }))
+
+    expect(screen.getByRole('heading', { name: 'Add a book by hand' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Title')).toHaveValue('The Last Church')
+    fireEvent.change(screen.getByLabelText('Author'), { target: { value: 'Graham McNeill' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add book' }))
+
+    await waitFor(() => expect(onAdded).toHaveBeenCalledWith({ kind: 'book', book: added }))
+    expect(onClose).toHaveBeenCalled()
+    expect(api.searchBooks).not.toHaveBeenCalled()
+  })
+
+  it('takes an author search as the author, and goes back to the search', () => {
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} mode="author" />)
+    fireEvent.change(screen.getByPlaceholderText('Search by author name...'), { target: { value: 'Graham McNeill' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add by hand' }))
+    expect(screen.getByLabelText('Title')).toHaveValue('')
+    expect(screen.getByLabelText('Author')).toHaveValue('Graham McNeill')
+    fireEvent.click(screen.getByRole('button', { name: 'Back to results' }))
+    expect(screen.getByPlaceholderText('Search by author name...')).toHaveValue('Graham McNeill')
+  })
+
+  it('does not take an ISBN as the title', () => {
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} mode="book" />)
+    fireEvent.change(screen.getByPlaceholderText('Title, ISBN, or ASIN'), { target: { value: '9780441478125' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add by hand' }))
+    expect(screen.getByLabelText('Title')).toHaveValue('')
+  })
+
+  it('is not offered to a requester', () => {
+    authState.requester = true
+    render(<AddToLibraryModal onClose={onClose} onAdded={onAdded} />)
+    expect(screen.queryByRole('button', { name: 'Add by hand' })).not.toBeInTheDocument()
   })
 })

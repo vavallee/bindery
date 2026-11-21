@@ -105,6 +105,7 @@ export function providerFromBookForeignId(foreignId: string | undefined | null):
   if (id.startsWith('bnf:')) return 'bnf'
   if (id.startsWith('calibre:')) return 'calibre'
   if (id.startsWith('abs:')) return 'audiobookshelf'
+  if (id.startsWith('manual:')) return 'manual'
   return 'openlibrary'
 }
 

@@ -30,6 +30,8 @@ import { useAuth } from '../../auth/AuthContext'
 import { inputCls } from './formStyles'
 import SaveButton from './SaveButton'
 import Toggle from './Toggle'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 
 // A row is either a descriptor (known key) or a stored key with no descriptor.
 // The second case is kept rather than hidden: a row written by an older or
@@ -256,6 +258,7 @@ export default function AdvancedTab() {
         return (
           <Toggle
             id={controlId(d.key)}
+            describedBy={fieldValueId(controlId(d.key))}
             checked={checked}
             title={d.key}
             disabled={busy}
@@ -267,6 +270,7 @@ export default function AdvancedTab() {
         return (
           <select
             id={id}
+            aria-describedby={fieldValueId(id)}
             className={inputCls}
             value={value}
             onChange={e => setEdits(prev => ({ ...prev, [d.key]: e.target.value }))}
@@ -286,6 +290,7 @@ export default function AdvancedTab() {
         return (
           <input
             id={id}
+            aria-describedby={fieldValueId(id)}
             type="number"
             className={inputCls}
             min={d.min || undefined}
@@ -304,6 +309,7 @@ export default function AdvancedTab() {
         return (
           <input
             id={id}
+            aria-describedby={fieldValueId(id)}
             type="text"
             className={inputCls}
             value={value}
@@ -314,6 +320,8 @@ export default function AdvancedTab() {
         )
     }
   }
+
+  const onOff = (on: boolean) => on ? t('settings.currentValue.enabled', 'On') : t('settings.currentValue.disabled', 'Off')
 
   function renderRow(d: SettingDescriptor) {
     const editable = isEditable(d)
@@ -342,6 +350,14 @@ export default function AdvancedTab() {
         </div>
 
         <p className="text-xs text-fg-muted mb-2">{d.description}</p>
+
+        {editable && !d.secret && (
+          <FieldValue
+            for={controlId(d.key)}
+            value={d.type === 'bool' && storedValue(d) ? onOff(storedValue(d).toLowerCase() === 'true') : storedValue(d)}
+            defaultValue={d.type === 'bool' && d.default ? onOff(d.default.toLowerCase() === 'true') : d.default}
+          />
+        )}
 
         {editable ? (
           <div className="flex flex-wrap items-center gap-2">

@@ -1909,6 +1909,13 @@ func (r *BookRepo) FindByAuthorAndDedupKeyVisibleTo(ctx context.Context, authorI
 	return &books[0], nil
 }
 
+// FindAllByAuthorAndDedupKeyVisibleTo is FindByAuthorAndDedupKeyVisibleTo
+// returning every candidate, for a caller that wants to pick among them (the
+// hand-made add accepts only an exact key match, #3840).
+func (r *BookRepo) FindAllByAuthorAndDedupKeyVisibleTo(ctx context.Context, authorID int64, title string, userID int64) ([]models.Book, error) {
+	return r.dedupCandidates(ctx, authorID, title, userID)
+}
+
 // FindAllByAuthorAndDedupKey returns every book under authorID that describes
 // the same work as `title`. The ABS importer uses it to detect the *ambiguous*
 // case (more than one local row qualifies) and route to review instead of

@@ -273,6 +273,7 @@ monitored.
 |---|---|
 | **Add to library → an author row** (the **Add Author** button on Authors) | The author **plus their full catalogue** (up to 2,000 titles, after deduplication and the metadata profile's filters), monitored per the monitor mode you pick |
 | **Add to library → a book row** (the **Add Book** button on Books or Authors) | One book, and only that book, silently creating its author if needed. Select a search result to review its cover and identifiers before confirming; ISBN lookups show the searched ISBN separately from identifiers reported by the metadata source |
+| **Add to library → Add by hand** | One book exactly as you type it, for a book no metadata source knows. See [Adding a book by hand](#adding-a-book-by-hand) |
 | **Discover → Add to Wanted** | One recommended book |
 | **Series → Fill gaps** | The missing books of a linked series, wanted + monitored |
 | **Import lists** (Settings → Import / Migrate, Hardcover reading lists) | Every list item, re-synced on the Hardcover list sync interval (Settings → General, 24h by default). Whether the items are also marked wanted is the per-list **Download books from this list** checkbox: on (the default) creates them monitored and queues downloads; off catalogues them unmonitored, so you can browse a Want to Read shelf in Bindery and fetch books one at a time. Authors created by a list never pull their back-catalogue in — only the listed books are added. **Sync now** starts the sync in the background and the row reports its progress, so a large shelf isn't cut short by a request timeout |
@@ -307,6 +308,44 @@ still lets another provider's record through.
 Searches run against the metadata providers only
 when you press Enter or Search, never as you type; the header library search is
 the one that reacts to keystrokes, because it only reads your own catalogue.
+
+#### Adding a book by hand
+
+Some books have no usable record anywhere: short stories, anthology pieces, fan
+translations, self published work. **Add by hand**, at the bottom of the Add to
+library dialog, adds one anyway without asking any metadata source. Type the
+title (what you searched for is filled in) and the author, and optionally a
+series with the book's position in it, the format, and whether to search
+indexers straight away (off by default, since a book like this is usually one
+you already have the file for).
+
+- **Author.** An author already in your library with that name is reused.
+  Any other name becomes a new author with no metadata, unmonitored like any
+  author Add Book brings in. **Link metadata** on that author's page, or adding
+  the real author with Add Author, connects it to a metadata source later and
+  keeps its books.
+- **Series.** The book joins the series of that title its author is already
+  in, otherwise any series of that title in your library, so a story added to
+  *The Horus Heresy* lands in the series the other books are in. If there is
+  none, a new series is made.
+- **Files.** A file already in your library that matches the title and author
+  is attached right away, the same as for any added book, and the indexer
+  search is then skipped. Otherwise import or hardlink the file as usual;
+  Manual Import and **Fix match** find the book by its title.
+- **Refreshes and imports leave it alone.** The book has no metadata source, so
+  a metadata refresh never changes it, and when an author refresh finds a work
+  with the same title it does not attach that record to your book or add a
+  second copy. Its title is locked, so an Audiobookshelf or Calibre import that
+  matches the book by title keeps the title you typed, and an Audiobookshelf
+  import does not relink it to a provider record.
+  Edit the book as usual to fill in the rest. To link it to a real record
+  later, use **Re-bind** on the book page.
+
+If the author already has a book with that exact title (ignoring case,
+spacing and a bracketed suffix such as "(Unabridged)"), the add is refused with
+a link to the existing one. A title with a subtitle, such as "Mistborn: Secret
+History" beside "Mistborn", counts as a different book. The same title at a different position in the same
+series counts as a different book.
 
 Two settings decide whether an author add stays a trickle or becomes a flood:
 
@@ -1881,6 +1920,26 @@ wanted books never uses it.
 - The title and the author's last name leave your machine as search text on the
   Soulseek network. See the privacy note in the
   [deployment guide](DEPLOYMENT.md#slskd-soulseek).
+
+## Reading a setting without opening it
+
+Under the label of each setting that holds a choice, a switch or a value, a
+quiet line starts with "Current:" and shows what is set right now, for example
+"Current: Hardlink" under Import Mode or "Current: Default (12 hours)" under the
+wanted search interval. You can read your setup down the page without touching
+a control. The line is the same state the control shows, so it changes the
+moment a save lands and goes back with the control if a save fails. When
+nothing is stored it says "Not set", or "Default (...)" with the value Bindery
+uses instead. Choices show their name and not the stored key, a long folder
+path is cut to one line (hover it to read the whole path), and a secret such as
+an API key or token never shows its value, only "Set" or "Not set". Fields with
+their own Save button are left out on purpose, because what you have typed is
+not saved yet and the line would otherwise show something that is not true. A saved
+URL never shows a user name or password, only its host and path. The Edit Author
+dialog has the same line under its profile, root folder and monitor fields, but
+it shows what is saved for that author, not what you are picking: it stays put
+while you change a field and shows the new value the next time you open the
+dialog after pressing Save.
 
 ## Finding a setting when you do not know its tab
 
