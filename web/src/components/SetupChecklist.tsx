@@ -61,7 +61,7 @@ const PIPELINE_STEPS: Step[] = [
 // sends an English blockedReason; the text here is what gets translated.
 const blockedAreas: Record<string, { to: string; actionKey: string; actionFallback: string; messageKey: string; messageFallback: string }> = {
   storage: {
-    to: '/settings?tab=general',
+    to: '/settings?tab=storage',
     actionKey: 'setupChecklist.blocked.storageAction',
     actionFallback: 'Check storage',
     messageKey: 'setupChecklist.blocked.storage',

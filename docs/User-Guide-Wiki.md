@@ -53,7 +53,7 @@ an arbitrary release is unreliable. The escape hatches:
   the toggle is on, so a rescan cannot drop it twice. It is offered again once
   the drop fails or is blocked, or its Queue row is removed.
   The folder browser starts at your root folders, the download directories and
-  any **import source folders** an admin lists under Settings, General, Import
+  any **import source folders** an admin lists under Settings, File Naming, Import
   (`import.source_folders`, one absolute path per line). A source folder is a
   place to import from, for example an old library: it is not a root folder, no
   author is filed there and it is never scanned as a library. Bindery never
@@ -99,8 +99,8 @@ Almost every "why is Bindery doing that?" question comes down to one of these.
 
 ### 1. Library Scan is a reconciler, not an importer
 
-**Scan Library** (Settings → General → Library, and automatically every 6
-hours by default; change that under Settings → General → Library scan, from 15
+**Scan Library** (Settings → Storage → Library, and automatically every 6
+hours by default; change that under Settings → Schedules → Library scan, from 15
 minutes to 7 days, applied after a restart) matches files already on disk to books **already in your catalogue**.
 It never creates authors or books from files on its own. If you point a fresh
 install at a folder of 3,000 epubs and hit Scan, you get a long list of
@@ -212,7 +212,7 @@ Consequences:
 
 ### 4. Naming templates are for output, not input
 
-The templates in Settings → General → File Naming control how Bindery names
+The templates in Settings → File Naming control how Bindery names
 and organises files **it imports itself**. The Library Scan does **not** use
 them — it reads existing files with a fixed parser that prefers an
 `{Author}/{Book Title}/` folder structure and reads a bare `X - Y` filename as
@@ -276,7 +276,7 @@ monitored.
 | **Add to library → Add by hand** | One book exactly as you type it, for a book no metadata source knows. See [Adding a book by hand](#adding-a-book-by-hand) |
 | **Discover → Add to Wanted** | One recommended book |
 | **Series → Fill gaps** | The missing books of a linked series, wanted + monitored |
-| **Import lists** (Settings → Import / Migrate, Hardcover reading lists) | Every list item, re-synced on the Hardcover list sync interval (Settings → General, 24h by default). Whether the items are also marked wanted is the per-list **Download books from this list** checkbox: on (the default) creates them monitored and queues downloads; off catalogues them unmonitored, so you can browse a Want to Read shelf in Bindery and fetch books one at a time. Authors created by a list never pull their back-catalogue in — only the listed books are added. **Sync now** starts the sync in the background and the row reports its progress, so a large shelf isn't cut short by a request timeout |
+| **Import lists** (Settings → Import / Migrate, Hardcover reading lists) | Every list item, re-synced on the Hardcover list sync interval (Settings → Schedules, 24h by default). Whether the items are also marked wanted is the per-list **Download books from this list** checkbox: on (the default) creates them monitored and queues downloads; off catalogues them unmonitored, so you can browse a Want to Read shelf in Bindery and fetch books one at a time. Authors created by a list never pull their back-catalogue in — only the listed books are added. **Sync now** starts the sync in the background and the row reports its progress, so a large shelf isn't cut short by a request timeout |
 | **Library imports** (Calibre, Readarr, ABS, Goodreads CSV, author list) | Your existing catalogue — see the next section |
 
 **Add Author** and **Add Book** open the same dialog. Type an author name, a
@@ -387,8 +387,8 @@ to correct one that is wrong.
 
 ## From Wanted to your library
 
-**Search.** A scheduled sweep (default every 12 hours; interval in Settings →
-General, restart required) searches your indexers for every book on the
+**Search.** A scheduled sweep (default every 12 hours; interval in Settings → Schedules,
+restart required) searches your indexers for every book on the
 Wanted page and auto-grabs the best release. The **Auto-grab** toggle in
 Settings → Metadata Profiles → Library Defaults turns grabbing off entirely if you prefer to grab by hand
 from the Wanted page. It covers every path that can start a download: the
@@ -815,7 +815,7 @@ than 20 EPUBs is not judged (a verdict on a prefix could condemn the right book)
 and the `contentCheck` note says `truncated`. The object lists at most 10
 mismatches and says how many more there were.
 
-What happens next is set by **Check ebook contents** under Settings, General,
+What happens next is set by **Check ebook contents** under Settings,
 File Naming (`import.ebook.content_check`, admin only):
 
 - **Warn** (the default): the file imports as before, and the History row and the
@@ -915,7 +915,7 @@ a library scan, manual import or **Match to book**, and it does not change the
 files or their tags.
 
 If the library app downstream reads sidecar metadata, turn on **Write a
-metadata.opf sidecar** in Settings → General (off by default). Bindery then
+metadata.opf sidecar** in Settings → File Naming (off by default). Bindery then
 writes a Calibre style `metadata.opf` next to each imported ebook and
 audiobook with its own title, author, series and identifiers. The book file
 itself is never modified.
@@ -1017,7 +1017,7 @@ matches where your metadata lives, then scan:
 | Just a list of authors | Settings → Import / Migrate → **Upload CSV**, one author name per line |
 | Only folders of files | Scan the library, then adopt on **Import → In your library**; or use **Import → From a folder** for files outside the library |
 
-Then run **Settings → General → Library → Scan Library** to attach your files
+Then run **Settings → Storage → Library → Scan Library** to attach your files
 to the records. Things worth knowing before you judge the results:
 
 - Library imports create **records only** — no covers, no descriptions, no
@@ -1396,7 +1396,7 @@ Three scopes, all the same preview:
 |---|---|
 | One book | the book page, **More** → Rename files |
 | One author | the author page, **More** → Rename files |
-| Your whole library | Settings → General → Library → **Reorganize Library** (#2296) |
+| Your whole library | Settings → Storage → Library → **Reorganize Library** (#2296) |
 
 **External import mode.** If ebooks or audiobooks are in External import mode, another
 tool owns that layout, so the dialog shows a warning and the Rename button stays off
@@ -1617,7 +1617,7 @@ same sync as **Refresh metadata**, so the same rules apply: the author must be m
 take new items, the metadata profile's language and junk filters still run,
 and each new book is monitored or not according to the author's monitor mode.
 
-- **Turning it on and how often:** Settings → General → **New release
+- **Turning it on and how often:** Settings → Schedules → **New release
   discovery**. It starts on Off; choose Daily, Weekly or Monthly to turn it
   on, and Off again to stop it. The change applies within the hour, no
   restart.
@@ -1830,7 +1830,7 @@ agree.
 ## Rejecting releases by words in the title
 
 If you never want a kind of release, such as Graphic Audio or full cast
-recordings, list the words in **Settings, General, Downloads, Reject releases by
+recordings, list the words in **Settings, Schedules, Downloads, Reject releases by
 title words** (admins only). Put one word or phrase per entry, separated by
 commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
 `search.rejectWords` and it is empty by default, which rejects nothing.
@@ -1859,6 +1859,23 @@ commas or new lines: `Graphic Audio, Full Cast, abridged`. The key is
   book page with the reason `release title contains the rejected word "..."`,
   and you can still grab it by hand. The same reason appears in the search debug
   view.
+
+## Where settings live
+
+General used to be one long page. It is now four, each with a one line
+description under it:
+
+| Tab | What is on it | Who sees it |
+|---|---|---|
+| **General** | Appearance (theme and language) and Security (sign in mode, API key, password, OIDC) | Everyone |
+| **File Naming** | Import mode, content checks, drop folders, import source folders, the metadata.opf sidecar and the naming templates | Admins |
+| **Storage** | The download and library folders and their health, the database check, Scan Library, Reorganize Library and the pointer to Root Folders | Admins |
+| **Schedules** | Reject releases by title words, preferred language, the search, Hardcover sync, library scan, release discovery and series check intervals | Admins |
+
+File Naming and Storage sit under Library in the sidebar, Schedules under
+System. An old link such as `/settings?tab=general#import.mode` still works:
+the setting key in the link decides the tab, so it opens File Naming and lands
+on that field.
 
 ## How Settings save
 
@@ -1969,7 +1986,7 @@ Import and Notifications tabs, which save through their own forms rather than as
 stored settings, and rows you created yourself (individual indexers, download
 clients, notification targets). Those are found through their tab or section.
 Non admins are only offered the tabs, sections and settings they can see: the
-admin sections of General, such as File Naming and Downloads, are left out for
+admin tabs that used to be sections of General (File Naming, Storage and Schedules) are left out for
 them, and a link to an admin setting does nothing for them.
 
 ## Settings most people never touch

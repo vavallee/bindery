@@ -347,7 +347,7 @@ env:
 
 > **Don't point a library/download dir at an unmounted path.** `BINDERY_LIBRARY_DIR` / `BINDERY_DOWNLOAD_DIR` / `BINDERY_AUDIOBOOK_DIR` must resolve *inside* a mounted volume. A dir that isn't backed by a volume writes to ephemeral container storage and is lost on restart. The chart's stock defaults (`/downloads`, `/books`) are placeholders — override them to subpaths of your real mount.
 
-> **Importing from somewhere else.** To import from a folder that is neither a library root nor a download dir (an old library, an archive disk), mount it into the container and add it under Settings, General, Import source folders (`import.source_folders`). It is not a root folder, never a destination for authors and never scanned as a library, and Bindery never writes new files into it. Importing in move mode (`import.mode=move`) does remove the imported files from it, and an imported audiobook folder is removed whole, so picking the source root as that folder deletes the root. Mount the folder read only if you want a move to fail instead of delete, or use copy or hardlink mode. Admin only, the path must exist inside the container, at most 32 paths, and a path that resolves to `/` or to Bindery's own data or database folder is refused.
+> **Importing from somewhere else.** To import from a folder that is neither a library root nor a download dir (an old library, an archive disk), mount it into the container and add it under Settings, File Naming, Import source folders (`import.source_folders`). It is not a root folder, never a destination for authors and never scanned as a library, and Bindery never writes new files into it. Importing in move mode (`import.mode=move`) does remove the imported files from it, and an imported audiobook folder is removed whole, so picking the source root as that folder deletes the root. Mount the folder read only if you want a move to fail instead of delete, or use copy or hardlink mode. Admin only, the path must exist inside the container, at most 32 paths, and a path that resolves to `/` or to Bindery's own data or database folder is refused.
 
 If you genuinely can't use a single mount (the download client mounts the share at a different path than Bindery), keep them separate and use [path remapping](#path-remapping-multi-container--multi-pod-setups) below — but note imports will then **`copy`**, not hardlink.
 
@@ -404,7 +404,7 @@ downloads. Import paths come from the **download client's API, per job**: when
 SABnzbd or qBittorrent reports a job complete, it also reports where the files
 are, and Bindery imports from that reported path. The env var is used for:
 
-- startup validation and the Settings → General storage-health panel,
+- startup validation and the Settings → Storage storage-health panel,
 - the hardlink probe (whether imports can link instead of copy),
 - the save path Bindery submits with qBittorrent grabs (and the category
   save-path warning in Settings),
@@ -513,7 +513,7 @@ Covers are one extra mount. When the bridge supports them Bindery sends a cover 
 
 **2. Bindery owns the library, mirror a copy to CWA.** Bindery places the imported file in its library *and* additionally copies it into a Calibre-Web-Automated ingest folder, always a copy under the flat file name, ebooks only. Set **Settings, Calibre tab, Calibre-Web-Automated (CWA), Ingest folder path** (`cwa.ingest_path`). Use this when Bindery keeps its own library and you just want CWA to also see new ebooks. It is independent of topology 1 and does not run in `External` import mode.
 
-**3. An external tool owns the library (drop folder).** Bindery does *not* write into the library; instead it renames the finished download into a drop folder and lets the other tool ingest it and produce the managed copy. This is the right setup for "Bindery, then `/cwa-book-ingest`, then CWA writes `/books`", for Calibre auto ingest, and for Storyteller's watched folder. Configure under **Settings, General tab, File Naming**, with **Import Mode** set to `External`; the drop folder fields appear underneath:
+**3. An external tool owns the library (drop folder).** Bindery does *not* write into the library; instead it renames the finished download into a drop folder and lets the other tool ingest it and produce the managed copy. This is the right setup for "Bindery, then `/cwa-book-ingest`, then CWA writes `/books`", for Calibre auto ingest, and for Storyteller's watched folder. Configure under **Settings, File Naming tab**, with **Import Mode** set to `External`; the drop folder fields appear underneath:
 
 - **Drop folder**: the watch folder the other tool ingests from (e.g. `/cwa-book-ingest`). Empty disables the drop and Bindery just hands off in place (the file stays in the download dir).
 - **Layout**: `flat` (each book file the download carries, sanely named, in the folder root, what most watch folder tools expect) or `templated` (recreate the `{Author}/{Title (Year)}/…` tree inside the drop folder).
@@ -749,7 +749,7 @@ docker run --rm -v bindery-config:/config ghcr.io/vavallee/bindery:latest db-rep
 
 If your platform doesn't let you change the container command (some NAS app UIs), set `BINDERY_DB_FK_CHECK=report` or `BINDERY_DB_FK_CHECK=repair` instead, start the container once, read the log, then unset the variable.
 
-**Checking from the web UI.** Settings, General has a "Check database" button (admin only) that counts the orphan rows per relationship and shows what the schema says should have happened to them. It is read only and runs only when you press it, because it reads the whole database. The check runs on its own read only connection, so Bindery keeps answering while it runs.
+**Checking from the web UI.** Settings, Storage has a "Check database" button (admin only) that counts the orphan rows per relationship and shows what the schema says should have happened to them. It is read only and runs only when you press it, because it reads the whole database. The check runs on its own read only connection, so Bindery keeps answering while it runs.
 
 **Cleaning up from the web UI.** When the check finds orphan rows, "Preview cleanup" lists, per relationship, what a cleanup would do: delete the rows (`ON DELETE CASCADE`), clear the reference and keep the rows (`ON DELETE SET NULL`), or leave them alone (anything else). Nothing changes until you press the confirm button, and the confirmation is tied to the preview you were shown: if the data changed in between, or the preview is older than 15 minutes, it is refused and you preview again. Then:
 

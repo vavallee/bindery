@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import DatabaseCheckSection from './DatabaseCheckSection'
-import GeneralTab from './GeneralTab'
+import GeneralTab from '../../test/allGeneralSections'
 import { api, type DBIntegrityReport, type DBCleanupPreview, type DBCleanupResult } from '../../api/client'
 
 const auth = vi.hoisted(() => ({ isAdmin: true }))

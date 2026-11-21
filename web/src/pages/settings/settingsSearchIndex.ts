@@ -12,7 +12,7 @@
 import { FIELDS } from './settingsFieldIndex'
 
 export type SettingsTabId =
-  | 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general'
+  | 'indexers' | 'clients' | 'notifications' | 'quality' | 'metadata' | 'general' | 'naming' | 'storage' | 'schedules'
   | 'import' | 'rootfolders' | 'logs' | 'blocklist' | 'calibre' | 'abs' | 'bookorbit' | 'grimmory'
   | 'api-keys' | 'advanced' | 'about'
 
@@ -29,21 +29,21 @@ export interface HeadingEntry {
 }
 
 export const HEADINGS: HeadingEntry[] = [
-  // General: Appearance and Security are visible to everyone. GeneralTab wraps
-  // everything from file naming down in an isAdmin block, so those are
-  // adminOnly: offering them to a non admin would be a dead end.
+  // General is Appearance and Security, visible to everyone. File Naming,
+  // Storage and Schedules were sections of it (#3990) and are admin only, so
+  // offering them to a non admin would be a dead end.
   { tab: 'general', key: 'settings.general.appearance' },
-  { tab: 'general', key: 'settings.general.fileNaming', adminOnly: true },
-  { tab: 'general', key: 'settings.general.downloads', adminOnly: true },
-  { tab: 'general', key: 'settings.general.storage', adminOnly: true },
-  { tab: 'general', key: 'settings.general.dbCheck', adminOnly: true },
-  { tab: 'general', key: 'settings.general.library', adminOnly: true },
-  { tab: 'general', key: 'settings.general.search', adminOnly: true },
-  { tab: 'general', key: 'settings.general.hardcoverSync', fallback: 'Hardcover list sync', adminOnly: true },
-  { tab: 'general', key: 'settings.general.libraryScan', fallback: 'Library scan', adminOnly: true },
-  { tab: 'general', key: 'settings.general.discovery', adminOnly: true },
-  { tab: 'general', key: 'settings.general.seriesCheck', adminOnly: true },
-  { tab: 'general', key: 'settings.general.defaultLibraryLocation', adminOnly: true },
+  { tab: 'naming', key: 'settings.general.fileNaming', adminOnly: true },
+  { tab: 'schedules', key: 'settings.general.downloads', adminOnly: true },
+  { tab: 'storage', key: 'settings.general.storage', adminOnly: true },
+  { tab: 'storage', key: 'settings.general.dbCheck', adminOnly: true },
+  { tab: 'storage', key: 'settings.general.library', adminOnly: true },
+  { tab: 'schedules', key: 'settings.general.search', adminOnly: true },
+  { tab: 'schedules', key: 'settings.general.hardcoverSync', fallback: 'Hardcover list sync', adminOnly: true },
+  { tab: 'schedules', key: 'settings.general.libraryScan', fallback: 'Library scan', adminOnly: true },
+  { tab: 'schedules', key: 'settings.general.discovery', adminOnly: true },
+  { tab: 'schedules', key: 'settings.general.seriesCheck', adminOnly: true },
+  { tab: 'storage', key: 'settings.general.defaultLibraryLocation', adminOnly: true },
   { tab: 'general', key: 'settings.general.security' },
   { tab: 'indexers', key: 'settings.indexers.heading' },
   { tab: 'indexers', key: 'settings.prowlarr.heading' },

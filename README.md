@@ -144,7 +144,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 <summary><strong>Following authors and finding books</strong></summary>
 
 - Author monitoring with per install and per author modes (all, future, latest, none, or only the series you pick), per book monitor toggles, and a wanted to imported workflow with live download progress.
-- Unattended release discovery: monitored authors are checked for new books daily, weekly or monthly. It ships off; turn it on in **Settings, General, New release discovery**.
+- Unattended release discovery: monitored authors are checked for new books daily, weekly or monthly. It ships off; turn it on in **Settings, Schedules, New release discovery**.
 - Series pages with positions, gap detection against Hardcover, Fill gaps, and adding a whole Hardcover series in one step.
 - Hardcover list sync on an interval, Goodreads CSV import, and a Discover page with recommendations from your library: next in series, new from monitored authors, genre similarity and your Hardcover wishlist.
 - A release calendar of upcoming books.
@@ -230,6 +230,9 @@ All public APIs, no scraping. Audible's catalogue endpoint and Audnex are open b
 | [Audnex](https://api.audnex.us) | None | Audiobook narrator, duration and cover by ASIN |
 | [Audible](https://audible.com) | None | Audiobook ASINs the others miss |
 | [Wikidata](https://www.wikidata.org) | None | Author photos and bios, found by authority ID; off by default |
+| [RanobeDB](https://ranobedb.org) | None | Official English titles for light novels, for books added after it is switched on (existing books keep their titles); off by default. Data under the ODbL, API for non commercial use ([credit and terms](docs/third-party-data.md#ranobedb)) |
+
+Contains information from [RanobeDB](https://ranobedb.org), which is made available here under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/). (Only when the opt in RanobeDB setting is on: it can give a light novel its official English title.)
 
 Each enricher can be switched off in **Settings, Metadata**. Covers are fetched and cached by the server, so your browser never contacts third party image hosts, and a book no provider has a cover for takes one from its own file.
 

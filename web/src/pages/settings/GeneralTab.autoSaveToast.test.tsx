@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import GeneralTab from './GeneralTab'
+import GeneralTab from '../../test/allGeneralSections'
 import { SettingsToastHost } from './autoSave'
 import { api } from '../../api/client'
 

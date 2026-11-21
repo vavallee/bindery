@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
-import GeneralTab from './GeneralTab'
+import GeneralTab from '../../test/allGeneralSections'
 import { api, ApiError } from '../../api/client'
 
 // AuthProvider starts with status null (isAdmin false, loading true) and only

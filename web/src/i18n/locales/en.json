@@ -1365,6 +1365,9 @@
       "rootfolders": "Root Folders",
       "logs": "Logs",
       "general": "General",
+      "naming": "File Naming",
+      "storage": "Storage",
+      "schedules": "Schedules",
       "calibre": "Calibre",
       "abs": "Audiobookshelf",
       "grimmory": "Grimmory",
@@ -1721,7 +1724,7 @@
         "calibredbUnreachable": "✗ calibredb unreachable",
         "button": "Test connection"
       },
-      "intro": "Calibre only knows about books recorded in its <code>metadata.db</code>; a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over: register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below), or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, under File Naming on the General tab). Neither the write integration nor the CWA mirror runs in External import mode. The <guide>Calibre integration guide</guide> compares them.",
+      "intro": "Calibre only knows about books recorded in its <code>metadata.db</code>; a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over: register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below), or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, on the File Naming tab). Neither the write integration nor the CWA mirror runs in External import mode. The <guide>Calibre integration guide</guide> compares them.",
       "fields": {
         "libraryPath": "Library path",
         "libraryPathHint": "Directory containing <code>metadata.db</code>. Used by both the write integration and library import.",
@@ -1772,7 +1775,7 @@
         }
       },
       "cwa": {
-        "intro": "When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the General tab for that setup. Leave blank to disable.",
+        "intro": "When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the File Naming tab for that setup. Leave blank to disable.",
         "ingestPath": "Ingest folder path",
         "ingestPathHint": "Mount the same path into both containers. CWA’s docs use <code>{{path}}</code>."
       }
@@ -2106,7 +2109,7 @@
       "heading": "Metadata Profiles",
       "newProfile": "+ New Profile",
       "empty": "No metadata profiles configured.",
-      "description": "Books in languages outside the profile's allowed list are filtered out when an author is added or refreshed. Leave the list empty to accept any language. A metadata profile decides which books enter an author's catalogue. It does not filter releases: to stop a search grabbing another language, set Preferred language under General.",
+      "description": "Books in languages outside the profile's allowed list are filtered out when an author is added or refreshed. Leave the list empty to accept any language. A metadata profile decides which books enter an author's catalogue. It does not filter releases: to stop a search grabbing another language, set Preferred language under Schedules.",
       "minPages": "Min pages:",
       "minEditionCount": "Min editions:",
       "languages": "Languages:",
@@ -2186,6 +2189,12 @@
       "runtimeLevelHint": "Controls which log levels are written to the database"
     },
     "general": {
+      "desc": {
+        "general": "Theme, language and who can sign in.",
+        "naming": "How imported books are named and filed, and how Bindery picks up finished downloads.",
+        "storage": "Where Bindery keeps downloads and books, plus library scanning and the database check.",
+        "schedules": "Release filters and how often Bindery searches, syncs and checks for new books."
+      },
       "hardcoverTokenRejected": "Hardcover rejected the API token, so Hardcover requests are paused. Save a working token below, or use Test connection once it is fixed on Hardcover.",
       "hardcoverPausedUntil": "Hardcover is paused until {{time}} because its daily quota was reached. Retry interrupted imports after this time.",
       "appearance": "Appearance",
@@ -2204,7 +2213,7 @@
       "rejectWordsPlaceholder": "Graphic Audio, Full Cast, abridged",
       "autoGrab": "Auto-grab",
       "autoGrabLabel": "Enable automatic grabbing",
-      "autoGrabHint": "When enabled, Bindery searches for wanted books and sends what it finds to the download client. When disabled, Bindery runs no searches of its own and the bulk Search actions on the Authors, Books, author and Wanted pages refuse to run and tell you why, but a single book Search Indexers still runs and lets you grab a release yourself. This is one switch for the whole instance, not a per profile setting. The sweep it controls runs on the Wanted search interval under General.",
+      "autoGrabHint": "When enabled, Bindery searches for wanted books and sends what it finds to the download client. When disabled, Bindery runs no searches of its own and the bulk Search actions on the Authors, Books, author and Wanted pages refuse to run and tell you why, but a single book Search Indexers still runs and lets you grab a release yourself. This is one switch for the whole instance, not a per profile setting. The sweep it controls runs on the Wanted search interval under Schedules.",
       "recommendations": "Recommendations",
       "recommendationsLabel": "Enable book recommendations",
       "recommendationsHint": "Analyse your library to suggest new books on the Discover page. Runs locally every 24 hours — no data leaves your server.",
@@ -2408,6 +2417,8 @@
       "defaultMediaTypeHint": "Applied to new authors, and to books you add on their own, when no explicit choice is made. Existing rows are unaffected: change authors with the Authors page bulk action, and books from the Books page with Set ebook, Set audiobook or Set both, which also covers your wanted list once Books is filtered to Wanted.",
       "authorWikidataLabel": "Author photos and bios from Wikidata",
       "authorWikidataHint": "Fills an author's missing photo and bio from Wikimedia Commons and Wikipedia, found on Wikidata by the author's library authority ID (NORAF, GND, BnF or OpenLibrary), never by name. Lookups ride on the daily author refresh, and each photo and bio is credited on the author's page. While this is off, Wikimedia is sent no request.",
+      "bookRanobeDBLabel": "Light novel titles from RanobeDB",
+      "bookRanobeDBHint": "Gives light novels their official English title from RanobeDB (ranobedb.org, data under the ODbL). A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a title you locked. It applies to books added after you switch it on, and existing books keep their titles. Lookups are paced to RanobeDB's 60 requests a minute. While this is off, RanobeDB is sent no request.",
       "enrichersHeading": "Enrichers",
       "enrichersHint": "These providers fill in what the primary leaves empty. Untick one and Bindery stops using it as an enricher, which means fewer requests but less fill in: DNB also supplies covers through its cover service, and Hardcover also supplies curated genres, series and edition language evidence. Takes effect from the next lookup, with no restart.",
       "enricherPrimaryNote": "This is the primary provider, so it cannot be turned off.",

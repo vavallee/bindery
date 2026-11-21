@@ -134,7 +134,7 @@ func (bc *blockedChecker) cause(ctx context.Context, clients *db.DownloadClientR
 	}
 	switch {
 	case bc.storageBroken(ctx, list):
-		return blockedAreaStorage, "A library or download folder is not available (missing or not accessible), so imports that use it will fail. Check Settings, General, Storage."
+		return blockedAreaStorage, "A library or download folder is not available (missing or not accessible), so imports that use it will fail. Check Settings, Storage."
 	case !state.HasIndexer:
 		return blockedAreaIndexer, "No indexer is enabled, so nothing can be searched. Enable one in Settings, Indexers."
 	case !state.HasClient:
