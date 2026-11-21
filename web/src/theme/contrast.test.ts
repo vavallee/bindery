@@ -542,13 +542,13 @@ describe('Settings save toast', () => {
 // emerald, amber, red and sky classes, so each is pinned to the palette shade
 // it replaced (no visual change) and measured here, in both themes, from the
 // CSS as the build compiles it.
-const STATUSES = { danger: 'red', warning: 'amber', success: 'emerald', info: 'sky' } as const
+const STATUSES = { danger: 'red', warning: 'amber', success: 'emerald', info: 'sky', progress: 'blue' } as const
 type Status = keyof typeof STATUSES
 const STATUS_NAMES = Object.keys(STATUSES) as Status[]
 const tok = (name: string, theme: Theme) => ALL_TOKENS[theme].get(name) ?? ''
 const SURFACE_LIST = (theme: Theme): Array<[string, string]> =>
   theme === 'dark' ? [['page', SURFACES.darkPage], ['card', SURFACES.darkCard]] : [['page', SURFACES.lightPage], ['card', SURFACES.lightCard]]
-const FILL_SHADE: Record<Status, [number, number]> = { danger: [600, 700], warning: [700, 800], success: [700, 800], info: [700, 800] }
+const FILL_SHADE: Record<Status, [number, number]> = { danger: [600, 700], warning: [700, 800], success: [700, 800], info: [700, 800], progress: [700, 800] }
 // What each token's value was before it became a token: the palette shade of
 // the raw class it replaced, per theme. The dark tint is the old
 // dark:bg-red-900/30 mixed over the dark card, as an opaque colour.

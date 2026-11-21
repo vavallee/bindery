@@ -11,6 +11,23 @@
      - fg-muted:    secondary text — slate-600 (light) / zinc-400 (dark)
      - accent-text: green text/links on a surface — emerald-700 (light) /
        emerald-400 (dark); the bare emerald-400 was ~1.76:1 on light. */
+/* Status colour tokens (#3994). Components say what a colour means, not which
+   palette shade it is: text-danger, bg-success-subtle, border-warning-border,
+   bg-info-fill with text-on-fill. Five roles, each with seven parts:
+     --<role>:            text on a surface (page or card)
+     --<role>-strong:     text on the role's own tint
+     --<role>-subtle:     the tint for chips, alerts and banners
+     --<role>-border:     the border of a tint
+     --<role>-fill:       a solid fill, with text-on-fill on it
+     --<role>-fill-hover: the fill while hovered
+     --<role>-marker:     dots, bars and rings, never text
+   Roles: danger (red), warning (amber), success (emerald), info (sky) and
+   progress (blue, an in-flight download or import). accent-fill, accent-fill-hover
+   and accent-ring are the brand green for primary buttons and focus rings.
+   Every value equals the Tailwind shade it replaced and is measured in both
+   themes by src/theme/contrast.test.ts. Brand and category colours (the cover
+   palette, media badges) stay raw on purpose; src/theme/rawStatusAllowlist.ts
+   lists them. To change a status colour, edit it here and nowhere else. */
 @layer base {
   :root {
     --fg-muted: #475569;     /* slate-600 */
@@ -43,6 +60,13 @@
     --info-fill: #0069a8;             /* sky-700 */
     --info-fill-hover: #00598a;       /* sky-800 */
     --info-marker: #00a6f4;           /* sky-500 */
+    --progress: #1447e6;              /* blue-700 */
+    --progress-strong: #193cb8;       /* blue-800 */
+    --progress-subtle: #dbeafe;       /* blue-100 */
+    --progress-border: #8ec5ff;       /* blue-300 */
+    --progress-fill: #1447e6;         /* blue-700 */
+    --progress-fill-hover: #193cb8;   /* blue-800 */
+    --progress-marker: #2b7fff;       /* blue-500 */
     --on-fill: #ffffff;
     --accent-fill: #007a55;  /* emerald-700 */
     --accent-fill-hover: #006045;  /* emerald-800 */
@@ -79,6 +103,13 @@
     --info-fill: #0069a8;             /* sky-700 */
     --info-fill-hover: #00598a;       /* sky-800 */
     --info-marker: #00a6f4;           /* sky-500 */
+    --progress: #51a2ff;              /* blue-400 */
+    --progress-strong: #8ec5ff;       /* blue-300 */
+    --progress-subtle: #19223e;       /* blue-900 at 30% over zinc-900 */
+    --progress-border: #1c398e;       /* blue-900 */
+    --progress-fill: #1447e6;         /* blue-700 */
+    --progress-fill-hover: #193cb8;   /* blue-800 */
+    --progress-marker: #2b7fff;       /* blue-500 */
     --on-fill: #ffffff;
     --accent-fill: #007a55;  /* emerald-700 */
     --accent-fill-hover: #006045;  /* emerald-800 */
@@ -119,6 +150,13 @@
   --color-info-fill: var(--info-fill);
   --color-info-fill-hover: var(--info-fill-hover);
   --color-info-marker: var(--info-marker);
+  --color-progress: var(--progress);
+  --color-progress-strong: var(--progress-strong);
+  --color-progress-subtle: var(--progress-subtle);
+  --color-progress-border: var(--progress-border);
+  --color-progress-fill: var(--progress-fill);
+  --color-progress-fill-hover: var(--progress-fill-hover);
+  --color-progress-marker: var(--progress-marker);
   --color-on-fill: var(--on-fill);
   --color-accent-fill: var(--accent-fill);
   --color-accent-fill-hover: var(--accent-fill-hover);
