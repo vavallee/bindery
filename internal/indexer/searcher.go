@@ -1449,7 +1449,7 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria, ranks *profileRanks) f
 
 	// Language term (#4130): the positive half of the profile's language
 	// filter. Zero unless the profile restricts languages.
-	score += languageScore(r.Title, c)
+	score += languageScore(r.Title, p.ISBN, c)
 
 	switch {
 	case p.Retail:

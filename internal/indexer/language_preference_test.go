@@ -142,14 +142,14 @@ func TestLanguageTermNeutralAndNegative(t *testing.T) {
 		{"one tag outside the list earns nothing", "Colleen Hoover - Verity german french mp3", 0},
 		{"glued name earns it", "Colleen Hoover Verity DeutschUngekürzt", languageMatchBonus},
 	} {
-		if got := languageScore(tc.title, c); got != tc.want {
+		if got := languageScore(tc.title, "", c); got != tc.want {
 			t.Errorf("%s: %q = %v, want %v", tc.name, tc.title, got, tc.want)
 		}
 	}
-	if got := languageScore("Colleen Hoover - Verity deutsch mp3", MatchCriteria{AllowedLanguages: []string{"de"}}); got != languageMatchBonus {
+	if got := languageScore("Colleen Hoover - Verity deutsch mp3", "", MatchCriteria{AllowedLanguages: []string{"de"}}); got != languageMatchBonus {
 		t.Errorf("two letter profile code: %v", got)
 	}
-	if got := languageScore("Verity german english mp3", MatchCriteria{AllowedLanguages: []string{"ger", "eng"}}); got != languageMatchBonus {
+	if got := languageScore("Verity german english mp3", "", MatchCriteria{AllowedLanguages: []string{"ger", "eng"}}); got != languageMatchBonus {
 		t.Errorf("both tags allowed: %v", got)
 	}
 }
@@ -180,7 +180,7 @@ func TestLanguageTermOwnNameIsNotATag(t *testing.T) {
 			"Anna German - Quiet Rooms MP3", 0},
 	}
 	for _, tc := range cases {
-		if got := languageScore(tc.title, tc.c); got != tc.want {
+		if got := languageScore(tc.title, "", tc.c); got != tc.want {
 			t.Errorf("%s: %q = %v, want %v", tc.name, tc.title, got, tc.want)
 		}
 	}
@@ -197,5 +197,37 @@ func TestLanguageBonusMagnitude(t *testing.T) {
 	}
 	if languageMatchBonus >= mismatch {
 		t.Errorf("bonus %v must stay under the media type mismatch penalty %v", languageMatchBonus, mismatch)
+	}
+}
+
+// TestLanguageTermShortOwnNameIsWholeWord: an author called "Man" must not
+// blank the "man" inside a glued "AudiobookGerman" and lose a real tag, while
+// a short name that is a whole word is still masked.
+func TestLanguageTermShortOwnNameIsWholeWord(t *testing.T) {
+	c := MatchCriteria{Title: "Quiet Rooms", Author: "Man", AllowedLanguages: []string{"ger"}}
+	if got := languageScore("Man - Quiet Rooms AudiobookGerman mp3", "", c); got != languageMatchBonus {
+		t.Errorf("glued tag next to a short author name lost: %v", got)
+	}
+	c = MatchCriteria{Title: "Quiet Rooms", Author: "German", AllowedLanguages: []string{"ger"}}
+	if got := languageScore("German - Quiet Rooms mp3", "", c); got != 0 {
+		t.Errorf("whole word short author name must still be masked: %v", got)
+	}
+}
+
+// TestLanguageTermIdentifierMatchOutranksLanguageOnlyMatch: an untagged
+// release carrying the book's ASIN must not lose to a tagged sibling.
+func TestLanguageTermIdentifierMatchOutranksLanguageOnlyMatch(t *testing.T) {
+	c := MatchCriteria{Title: "Verity", Author: "Colleen Hoover", MediaType: models.MediaTypeAudiobook, ASIN: "B0ABCDE123", AllowedLanguages: []string{"ger"}}
+	withASIN := scoreOf("Colleen Hoover - Verity B0ABCDE123 mp3", c)
+	sibling := scoreOf("Colleen Hoover - Verity deutsch mp3", c)
+	if withASIN <= sibling {
+		t.Errorf("ASIN match %v must outrank a language only sibling %v", withASIN, sibling)
+	}
+	if got := languageScore("Colleen Hoover - Verity B0ABCDE123 french mp3", "", c); got != 0 {
+		t.Errorf("identifier match tagged outside the list earned %v", got)
+	}
+	c.AllowedLanguages = nil
+	if got := languageScore("Colleen Hoover - Verity B0ABCDE123 mp3", "", c); got != 0 {
+		t.Errorf("unrestricted earned %v", got)
 	}
 }

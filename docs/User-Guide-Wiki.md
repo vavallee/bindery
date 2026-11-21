@@ -684,8 +684,10 @@ allow; an untagged release always passes. So that the untagged English file
 does not beat the tagged German ones for a German library, a release whose name
 is tagged with an allowed language is ranked well above an untagged one, enough
 to outweigh a better format and a RETAIL tag. A release with no detectable
-language ranks as before, and a profile that allows any language ranks exactly
-as before. The wanted book's own title and author never count as a tag, so a
+language ranks as before, and only a profile that allows any language ranks
+exactly as before. The default profile allows English, so on a default install
+a release tagged English now beats an untagged one of a better format. An exact
+ASIN or ISBN match still outranks a language only match. The wanted book's own title and author never count as a tag, so a
 German book called "English Lessons" is not read as English. The order of the
 languages in the profile makes no difference: every allowed language counts the
 same. A tag Bindery does not recognise, such as a bare `DE` placed before the
