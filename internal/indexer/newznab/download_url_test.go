@@ -12,6 +12,7 @@ func TestRedactDownloadURL(t *testing.T) {
 		{"no apikey untouched", "https://idx.example.com/dl?id=abc", "https://idx.example.com/dl?id=abc"},
 		{"only apikey", "https://idx.example.com/dl?apikey=SECRET", "https://idx.example.com/dl"},
 		{"empty", "", ""},
+		{"soulseek address is not echoed", "slskd://eyJ1IjoicGVlciJ9", "slskd://result"},
 	}
 	for _, tt := range tests {
 		if got := RedactDownloadURL(tt.in); got != tt.want {
