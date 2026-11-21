@@ -63,7 +63,7 @@ export default function DuplicateCandidatesModal({ authorId, authorName, onClose
               {t('duplicateCandidates.loading', 'Scanning the catalogue…')}
             </p>
           ) : error && !result ? (
-            <p className="mt-4 text-sm text-red-700 dark:text-red-400">{error}</p>
+            <p className="mt-4 text-sm text-danger">{error}</p>
           ) : result ? (
             result.count === 0 ? (
               <p className="mt-4 text-sm text-fg-muted">
@@ -84,7 +84,7 @@ export default function DuplicateCandidatesModal({ authorId, authorName, onClose
             )
           ) : null}
 
-          {error && result && <p className="mt-3 text-sm text-red-700 dark:text-red-400">{error}</p>}
+          {error && result && <p className="mt-3 text-sm text-danger">{error}</p>}
 
           <div className="mt-4 flex justify-end gap-2 border-t border-slate-200 pt-4 dark:border-zinc-800">
             <button type="button" onClick={load} disabled={loading} className={`${btn.secondary} ${btnSize.sm}`}>

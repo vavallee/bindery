@@ -164,7 +164,7 @@ export default function DataTable<T, K extends string | number>({
               return (
                 <tr
                   key={key}
-                  className={`${selected ? ROW_SELECTED : ROW} ${onRowClick ? 'cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-500' : ''}`}
+                  className={`${selected ? ROW_SELECTED : ROW} ${onRowClick ? 'cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-ring' : ''}`}
                   onClick={onRowClick ? e => { if (!fromControl(e)) onRowClick(row, i) } : undefined}
                   tabIndex={onRowClick ? 0 : undefined}
                   onKeyDown={onRowClick ? e => {

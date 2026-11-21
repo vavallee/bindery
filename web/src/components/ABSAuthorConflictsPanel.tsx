@@ -113,7 +113,7 @@ export default function ABSConflictPanel({
           )}
 
           {unresolvedGroups.map(group => (
-            <div key={`${group[0].entityType}:${group[0].localId}`} className="rounded border border-amber-300 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20 px-3 py-3 space-y-2 overflow-hidden">
+            <div key={`${group[0].entityType}:${group[0].localId}`} className="rounded border border-warning-border bg-warning-subtle px-3 py-3 space-y-2 overflow-hidden">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-slate-800 dark:text-zinc-200">{group[0].entityName}</p>
@@ -121,11 +121,11 @@ export default function ABSConflictPanel({
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <RelinkButton conflict={group[0]} relinkAction={relinkAction} />
-                  <span className="text-[11px] px-2 py-1 rounded bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300">{t('absConflicts.needsReview', 'Needs review')}</span>
+                  <span className="text-[11px] px-2 py-1 rounded bg-warning-subtle text-warning-strong">{t('absConflicts.needsReview', 'Needs review')}</span>
                 </div>
               </div>
               {group.map(conflict => (
-                <div key={conflict.id} className="rounded border border-amber-200 dark:border-amber-900/60 bg-white/70 dark:bg-zinc-950/30 px-3 py-2 space-y-2 overflow-hidden">
+                <div key={conflict.id} className="rounded border border-warning-border bg-white/70 dark:bg-zinc-950/30 px-3 py-2 space-y-2 overflow-hidden">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-xs font-medium text-slate-700 dark:text-zinc-300 min-w-0">{conflict.fieldLabel}</span>
                     <span className="text-[10px] uppercase tracking-wide text-fg-muted text-right">{t('absConflicts.using', { source: sourceLabel(conflict.appliedSource || 'upstream'), defaultValue: 'Using {{source}}' })}</span>
@@ -151,7 +151,7 @@ export default function ABSConflictPanel({
                     <button
                       onClick={() => onResolveConflict(conflict.id, 'upstream')}
                       disabled={resolvingConflictId === conflict.id}
-                      className="px-3 py-1.5 bg-sky-700 hover:bg-sky-800 text-white rounded text-xs font-medium disabled:opacity-50"
+                      className="px-3 py-1.5 bg-info-fill hover:bg-info-fill-hover text-on-fill rounded text-xs font-medium disabled:opacity-50"
                     >
                       {t('absConflicts.useUpstream', 'Use upstream')}
                     </button>
@@ -183,7 +183,7 @@ export default function ABSConflictPanel({
         </>
       )}
 
-      {conflictError && <div className="text-sm text-red-700 dark:text-red-400">{conflictError}</div>}
+      {conflictError && <div className="text-sm text-danger">{conflictError}</div>}
     </div>
   )
 }

@@ -139,7 +139,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
                       key={book.id}
                       className={`flex items-center gap-3 p-3 rounded-md cursor-pointer ${
                         selected
-                          ? 'bg-emerald-500/10 ring-1 ring-emerald-500/40'
+                          ? 'bg-success-subtle/50 ring-1 ring-success-marker/40'
                           : 'bg-slate-200/50 dark:bg-zinc-800/50 hover:bg-slate-200 dark:hover:bg-zinc-800'
                       }`}
                     >
@@ -185,7 +185,7 @@ export default function AddSeriesBookModal({ series, onClose, onLinked }: Props)
               </label>
             </div>
 
-            {error && <p className="text-sm text-red-700 dark:text-red-400">{error}</p>}
+            {error && <p className="text-sm text-danger">{error}</p>}
           </div>
 
           <div className="p-4 border-t border-slate-200 dark:border-zinc-800 flex justify-end gap-2">

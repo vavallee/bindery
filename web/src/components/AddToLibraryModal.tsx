@@ -225,7 +225,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
             {author.disambiguation && <span>{t('addToLibrary.topWork')} {author.disambiguation}</span>}
             {author.statistics?.bookCount ? <span title={t('addToLibrary.booksTooltip')}>{t('addToLibrary.books', { count: author.statistics.bookCount })}</span> : null}
             {author.ratingsCount ? <span>{t('addToLibrary.ratings', { count: author.ratingsCount })}</span> : null}
-            {mismatch && <span className="text-amber-700 dark:text-amber-400">{t('addToLibrary.resultProvider', { provider: providerDisplayName(mismatch) })}</span>}
+            {mismatch && <span className="text-warning">{t('addToLibrary.resultProvider', { provider: providerDisplayName(mismatch) })}</span>}
           </div>
         </div>
         {author.libraryAuthorId ? (
@@ -371,7 +371,7 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
                   aria-pressed={filter === value}
                   onClick={() => setFilter(value)}
                   className={`touch-target px-3 py-1 rounded-full text-xs font-medium border ${filter === value
-                    ? 'bg-emerald-700 border-emerald-700 text-white'
+                    ? 'bg-success-fill border-success-fill text-on-fill'
                     : 'border-slate-300 dark:border-zinc-700 text-fg-muted hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-zinc-800/60'}`}
                 >
                   {label}{count !== null && ` (${count})`}
@@ -400,10 +400,10 @@ export default function AddToLibraryModal({ onClose, onAdded, initialQuery, mode
                 </button>
               )}
               {partialError && (
-                <p className="text-xs text-amber-700 dark:text-amber-300 text-center py-2">{t('addToLibrary.partialError', { error: partialError })}</p>
+                <p className="text-xs text-warning text-center py-2">{t('addToLibrary.partialError', { error: partialError })}</p>
               )}
               {searchError && (
-                <p role="alert" className="text-sm text-red-700 dark:text-red-300 text-center py-4">{t('addToLibrary.searchError', { error: searchError })}</p>
+                <p role="alert" className="text-sm text-danger text-center py-4">{t('addToLibrary.searchError', { error: searchError })}</p>
               )}
               {searched && !hasRows && hiddenCount === 0 && !searching && !searchError && (
                 <p className="text-sm text-fg-muted text-center py-4">{t('addToLibrary.noResults')}</p>

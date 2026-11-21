@@ -133,7 +133,7 @@ export default function AuthorMetadataLinkModal({ author, onClose, onLinked }: P
           </form>
 
           {error && (
-            <div className="mt-3 px-3 py-2 bg-red-100 dark:bg-red-950/30 border border-red-300 dark:border-red-900 rounded text-sm text-red-800 dark:text-red-300">
+            <div className="mt-3 px-3 py-2 bg-danger-subtle border border-danger-border rounded text-sm text-danger-strong">
               <div>{error}</div>
               {conflict?.canonicalAuthorId && (
                 <a

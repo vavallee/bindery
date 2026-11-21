@@ -141,7 +141,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
 
         <div className="p-4 flex-1 overflow-y-auto space-y-4">
           {currentLink && (
-            <div className="rounded-md border border-sky-500/30 bg-sky-500/10 p-4">
+            <div className="rounded-md border border-info-border bg-info-subtle/50 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-xs uppercase tracking-wide text-fg-muted">{t('series.hardcoverLink.current', 'Currently linked')}</p>
@@ -154,13 +154,13 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                       href={hardcoverSeriesUrl(currentLink.hardcoverSlug)!}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-xs text-sky-700 dark:text-sky-300 hover:underline mt-1 inline-block"
+                      className="text-xs text-info hover:underline mt-1 inline-block"
                     >
                       {t('series.hardcoverLink.view', 'View on Hardcover ↗')}
                     </a>
                   )}
                 </div>
-                <span className="text-xs px-2 py-1 rounded-full border border-sky-500/40 text-sky-700 dark:text-sky-300 flex-shrink-0">
+                <span className="text-xs px-2 py-1 rounded-full border border-info-border text-info flex-shrink-0">
                   {currentLink.linkedBy === 'auto' ? t('series.hardcoverLink.auto', 'Auto') : t('series.hardcoverLink.manual', 'Manual')} {formatConfidence(currentLink.confidence)}
                 </span>
               </div>
@@ -168,7 +168,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                 type="button"
                 onClick={removeLink}
                 disabled={saving}
-                className="mt-3 text-sm text-rose-700 dark:text-rose-400 hover:text-rose-800 dark:hover:text-rose-500 disabled:opacity-50"
+                className="mt-3 text-sm text-danger hover:text-danger-strong disabled:opacity-50"
               >
                 {t('series.hardcoverLink.remove', 'Remove Link')}
               </button>
@@ -185,7 +185,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
             autoFocus
           />
 
-          {error && <p className="text-sm text-rose-700 dark:text-rose-400">{error}</p>}
+          {error && <p className="text-sm text-danger">{error}</p>}
 
           <div className="space-y-2">
             {results.map(result => {
@@ -197,7 +197,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                   key={result.foreignId}
                   className={`rounded-md border transition-colors ${
                     selectedResult
-                      ? 'border-emerald-500 bg-emerald-500/10'
+                      ? 'border-success-marker bg-success-subtle/50'
                       : 'border-slate-300 dark:border-zinc-700 bg-slate-200/50 dark:bg-zinc-800/50 hover:bg-slate-200 dark:hover:bg-zinc-800'
                   }`}
                 >
@@ -207,7 +207,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                     className="w-full text-left p-4 pb-2"
                   >
                     <div className="flex items-start gap-3">
-                      <span className={`mt-1 h-4 w-4 rounded-full border flex-shrink-0 ${selectedResult ? 'border-emerald-500 bg-emerald-500' : 'border-slate-400 dark:border-zinc-500'}`} />
+                      <span className={`mt-1 h-4 w-4 rounded-full border flex-shrink-0 ${selectedResult ? 'border-success-marker bg-success-marker' : 'border-slate-400 dark:border-zinc-500'}`} />
                       <div className="min-w-0 flex-1">
                         <div className="font-semibold truncate">{result.title}</div>
                         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-muted">
@@ -233,7 +233,7 @@ export default function HardcoverSeriesLinkModal({ series, initialResults, onClo
                         href={sourceUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-xs text-sky-700 dark:text-sky-300 hover:underline"
+                        className="text-xs text-info hover:underline"
                       >
                         {t('series.hardcoverLink.view', 'View on Hardcover ↗')}
                       </a>

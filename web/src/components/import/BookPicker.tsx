@@ -80,7 +80,7 @@ const BookPicker = forwardRef<HTMLInputElement, Props>(function BookPicker({ onP
             type="button"
             onClick={() => onPick(b)}
             aria-pressed={selectedId === undefined ? undefined : selectedId === b.id}
-            className={`block w-full text-left py-1.5 px-1 rounded hover:bg-slate-100 dark:hover:bg-zinc-800 ${selectedId === b.id ? 'bg-emerald-500/10' : ''}`}
+            className={`block w-full text-left py-1.5 px-1 rounded hover:bg-slate-100 dark:hover:bg-zinc-800 ${selectedId === b.id ? 'bg-success-subtle/50' : ''}`}
           >
             <span className="text-xs font-medium text-slate-900 dark:text-white">{b.title}</span>
             {b.author?.authorName && (
