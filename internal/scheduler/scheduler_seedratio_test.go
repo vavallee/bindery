@@ -154,7 +154,7 @@ func TestStorePending(t *testing.T) {
 
 	res := newznab.SearchResult{
 		GUID:      "guid-pending-1",
-		IndexerID: 42,
+		IndexerID: idPtr(42),
 		Title:     "Pending Book by Auth EPUB",
 		Size:      123456,
 		PubDate:   "Mon, 02 Jan 2006 15:04:05 +0000",
@@ -195,9 +195,9 @@ func TestStorePending(t *testing.T) {
 		t.Errorf("Reason: want %q, got %q", reason, pr.Reason)
 	}
 	if pr.IndexerID == nil {
-		t.Errorf("IndexerID: want pointer to %d, got nil", res.IndexerID)
-	} else if *pr.IndexerID != res.IndexerID {
-		t.Errorf("IndexerID: want %d, got %d", res.IndexerID, *pr.IndexerID)
+		t.Errorf("IndexerID: want pointer to %d, got nil", *res.IndexerID)
+	} else if *pr.IndexerID != *res.IndexerID {
+		t.Errorf("IndexerID: want %d, got %d", *res.IndexerID, *pr.IndexerID)
 	}
 	if pr.ReleaseJSON == "" {
 		t.Errorf("ReleaseJSON should be persisted, got empty string")

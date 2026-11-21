@@ -1046,6 +1046,8 @@ func main() {
 		r.Get("/author", authorHandler.List)
 		r.Post("/author", authorHandler.Create)
 		r.Post("/author/book", authorHandler.AddBook)
+		// A book no metadata provider knows, typed in by hand (#3840).
+		r.Post("/author/book/manual", authorHandler.AddManualBook)
 		r.Post("/author/bulk", bulkHandler.AuthorsBulk)
 		r.Get("/author/{id}", authorHandler.Get)
 		r.Put("/author/{id}", authorHandler.Update)
@@ -1280,9 +1282,9 @@ func main() {
 		// registerDBIntegrityRoutes).
 		registerDBIntegrityRoutes(r, api.NewDBIntegrityHandler(database, cfg.DBPath, backupHandler))
 
-		// Library. The scan status returns server filesystem paths, so it is
-		// admin only (#2361); see registerLibraryScanStatusRoute.
-		r.Post("/library/scan", libraryHandler.Scan)
+		// Library scan and scan status, admin only: the status returns server
+		// filesystem paths (#2361) and the scan walks the global library; see
+		// registerLibraryScanStatusRoute.
 		registerLibraryScanStatusRoute(r, libraryHandler)
 		// Library adoption, admin only (see registerAdoptionRoutes).
 		registerAdoptionRoutes(r, adoptionHandler)

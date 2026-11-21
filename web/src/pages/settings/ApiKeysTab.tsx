@@ -5,14 +5,18 @@ import ClipboardManualFallback from '../../components/ClipboardManualFallback'
 import { useClipboardCopy } from '../../components/useClipboardCopy'
 import SaveButton from './SaveButton'
 import Toggle from './Toggle'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import { useSaveResult } from './useSaveResult'
 import { secretInputAttrs } from '../../util/inputAttrs'
 import { slateFill } from '../../components/buttons'
 import { errorText } from '../../util/errorText'
+import { restoreSetting, useAutoSave } from './useAutoSave'
 
 export default function ApiKeysTab() {
   const fid = useId()
   const { t } = useTranslation()
+  const autoSave = useAutoSave()
   const opdsClipboard = useClipboardCopy()
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -114,7 +118,12 @@ export default function ApiKeysTab() {
     setSettings(s => ({ ...s, 'hardcover.enhanced_series_enabled': next }))
     setSaving('hardcover.enhanced_series_enabled')
     try {
-      await api.setSetting('hardcover.enhanced_series_enabled', next)
+      await autoSave('hardcover.enhanced_series_enabled', () => api.setSetting('hardcover.enhanced_series_enabled', next), {
+        rethrow: true,
+        previous: settings['hardcover.enhanced_series_enabled'],
+        next,
+        revert: to => restoreSetting(setSettings, 'hardcover.enhanced_series_enabled', to),
+      })
       await refreshSystemStatus()
     } catch (err) {
       console.error(err)
@@ -180,7 +189,7 @@ export default function ApiKeysTab() {
                 <label className="block text-xs text-fg-muted">
                   {t('settings.general.hardcoverApiToken', 'Hardcover API Token')}
                 </label>
-                <span className={`text-[11px] font-medium ${hardcoverTokenConfigured ? 'text-accent-text' : 'text-fg-muted'}`}>
+                <span id={`${fid}-hc-token-state`} className={`text-[11px] font-medium ${hardcoverTokenConfigured ? 'text-accent-text' : 'text-fg-muted'}`}>
                   {hardcoverTokenConfigured
                     ? t('settings.general.hardcoverTokenConfigured', 'Token configured')
                     : t('settings.general.hardcoverTokenNotConfigured', 'No token configured')}
@@ -189,6 +198,8 @@ export default function ApiKeysTab() {
               <div className="flex flex-wrap gap-2">
                 <input
                   {...secretInputAttrs}
+                  id={`${fid}-hc-token`}
+                  aria-describedby={`${fid}-hc-token-state`}
                   value={hardcoverToken}
                   onChange={e => setHardcoverToken(e.target.value)}
                   placeholder={hardcoverTokenConfigured
@@ -246,6 +257,7 @@ export default function ApiKeysTab() {
                 <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">
                   {t('settings.general.enhancedHardcoverSeries', 'Enhanced Hardcover series')}
                 </label>
+                <FieldValue for="enhanced-hardcover-series" value={enhancedHardcoverAdminEnabled ? t('settings.currentValue.enabled', 'On') : t('settings.currentValue.disabled', 'Off')} flush />
                 <p className="text-xs text-fg-muted mt-0.5">
                   {t('settings.general.enhancedHardcoverSeriesHint', 'Use Hardcover-backed series matching, catalog diffs, and missing-book fill.')}
                 </p>
@@ -254,6 +266,7 @@ export default function ApiKeysTab() {
                 </p>
               </div>
               <Toggle
+                describedBy={fieldValueId('enhanced-hardcover-series')}
                 checked={enhancedHardcoverAdminEnabled}
                 onChange={toggleEnhancedHardcover}
                 disabled={saving === 'hardcover.enhanced_series_enabled'}

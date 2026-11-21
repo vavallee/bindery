@@ -120,9 +120,10 @@ afterEach(() => {
 
 // Wait for both visible tabs' open fetches, then one more turn so any
 // rejected admin fetch has had its chance to reach console.error.
-async function settle() {
+async function settle({ security = true }: { security?: boolean } = {}) {
   await waitFor(() => expect(api.listSettings).toHaveBeenCalled())
-  await waitFor(() => expect(api.authConfig).toHaveBeenCalled())
+  // Only the General tab asks for the auth config (#3990).
+  if (security) await waitFor(() => expect(api.authConfig).toHaveBeenCalled())
   await new Promise(r => setTimeout(r, 20))
 }
 
@@ -152,8 +153,10 @@ describe('Settings page requests by role', () => {
 
   it('still loads the cross tab lists and storage for an admin', async () => {
     state.isAdmin = true
-    renderAt('/settings')
-    await settle()
+    // Storage and the scan status belong to the Storage tab since the General
+    // tab was split (#3990).
+    renderAt('/settings?tab=storage')
+    await settle({ security: false })
 
     await waitFor(() => expect(api.listIndexers).toHaveBeenCalled())
     expect(api.listDownloadClients).toHaveBeenCalled()

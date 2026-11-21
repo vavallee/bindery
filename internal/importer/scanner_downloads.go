@@ -74,7 +74,7 @@ const importSkipLimit = 120
 // importer had already emptied.
 func importSourcePresent(downloadPath string, explicitFiles []string) bool {
 	for _, f := range explicitFiles {
-		if importableSourceFile(f) {
+		if importableSourceFileIn(downloadPath, f) {
 			return true
 		}
 	}
@@ -232,6 +232,8 @@ func (s *Scanner) CheckDownloads(ctx context.Context) {
 			s.checkNZBGetDownloads(ctx, client)
 		case "sabnzbd":
 			s.checkSABnzbdDownloads(ctx, client)
+		case "slskd":
+			s.checkSlskdDownloads(ctx, client)
 		default:
 			// An unknown client type must NOT silently fall through to the SABnzbd
 			// poller: it would hit SABnzbd's HTTP endpoints against the wrong host,

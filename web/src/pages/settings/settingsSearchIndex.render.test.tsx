@@ -52,6 +52,9 @@ vi.mock('../../api/client', async importOriginal => {
 const noop = () => {}
 const TABS: Record<SettingsTabId, () => Promise<{ default: ComponentType<Record<string, unknown>> }>> = {
   general: () => import('./GeneralTab'),
+  naming: () => import('./NamingTab'),
+  storage: () => import('./StorageTab'),
+  schedules: () => import('./SchedulesTab'),
   indexers: () => import('./IndexersTab'),
   clients: () => import('./ClientsTab'),
   notifications: () => import('./NotificationsTab'),

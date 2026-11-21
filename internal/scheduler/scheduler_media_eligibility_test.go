@@ -104,7 +104,7 @@ func eligibilityFixture(t *testing.T, clientSpecs []struct {
 	s = &Scheduler{
 		searcher: &fixedResultsSearcher{results: []newznab.SearchResult{{
 			GUID: "g-eligibility", Title: "Eligibility Book.m4b", NZBURL: indexerSrv.URL + "/new.nzb",
-			Protocol: "usenet", IndexerID: idx.ID,
+			Protocol: "usenet", IndexerID: &idx.ID,
 		}}},
 		indexers:  indexers,
 		authors:   authors,
@@ -246,8 +246,8 @@ func TestSearchAndGrabFormat_SkipsProtocolWithoutEligibleClient(t *testing.T) {
 		t.Fatalf("list indexers: %v", err)
 	}
 	s.searcher = &fixedResultsSearcher{results: []newznab.SearchResult{
-		{GUID: "g-usenet", Title: "Eligibility Book.m4b", NZBURL: "https://example.test/a.nzb", Protocol: "usenet", IndexerID: indexers[0].ID},
-		{GUID: "g-torrent", Title: "Eligibility Book.m4b", NZBURL: "magnet:?xt=urn:btih:audio", Protocol: "torrent", IndexerID: indexers[0].ID},
+		{GUID: "g-usenet", Title: "Eligibility Book.m4b", NZBURL: "https://example.test/a.nzb", Protocol: "usenet", IndexerID: &indexers[0].ID},
+		{GUID: "g-torrent", Title: "Eligibility Book.m4b", NZBURL: "magnet:?xt=urn:btih:audio", Protocol: "torrent", IndexerID: &indexers[0].ID},
 	}}
 
 	s.searchAndGrabFormat(ctx, book, models.MediaTypeAudiobook, nil)

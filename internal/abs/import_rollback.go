@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vavallee/bindery/internal/importrollback"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -778,6 +779,19 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 	return result, nil
 }
 
+// restoreTimePtr is importrollback.RestoreTimePtr plus the UTC normalisation
+// ABS always applied to a restored time. The shared clone keeps the zone, so
+// without this a snapshot carrying an offset would write back a differently
+// zoned value than before the extraction. A value left alone (edited after the
+// run) is not touched.
+func restoreTimePtr(target **time.Time, before, after *time.Time, changed *bool) {
+	restored := importrollback.EqualTimePtr(*target, after)
+	importrollback.RestoreTimePtr(target, before, after, changed)
+	if restored {
+		*target = cloneTimePtr(*target)
+	}
+}
+
 func restoreBookFromSnapshot(book *models.Book, before, after *bookRollbackSnapshot) bool {
 	if book == nil || before == nil || after == nil {
 		return false
@@ -789,34 +803,34 @@ func restoreBookFromSnapshot(book *models.Book, before, after *bookRollbackSnaps
 	// and the value is the user's decision. The upstream metadata merge can
 	// still overwrite a locked work field, and rollback is the way back from
 	// that, so those restore as they always did.
-	restoreString(&book.ForeignID, before.ForeignID, after.ForeignID, &changed)
-	restoreInt64(&book.AuthorID, before.AuthorID, after.AuthorID, &changed)
-	restoreString(&book.Title, before.Title, after.Title, &changed)
-	restoreString(&book.SortTitle, before.SortTitle, after.SortTitle, &changed)
-	restoreString(&book.OriginalTitle, before.OriginalTitle, after.OriginalTitle, &changed)
-	restoreString(&book.Description, before.Description, after.Description, &changed)
-	restoreString(&book.ImageURL, before.ImageURL, after.ImageURL, &changed)
+	importrollback.RestoreString(&book.ForeignID, before.ForeignID, after.ForeignID, &changed)
+	importrollback.RestoreInt64(&book.AuthorID, before.AuthorID, after.AuthorID, &changed)
+	importrollback.RestoreString(&book.Title, before.Title, after.Title, &changed)
+	importrollback.RestoreString(&book.SortTitle, before.SortTitle, after.SortTitle, &changed)
+	importrollback.RestoreString(&book.OriginalTitle, before.OriginalTitle, after.OriginalTitle, &changed)
+	importrollback.RestoreString(&book.Description, before.Description, after.Description, &changed)
+	importrollback.RestoreString(&book.ImageURL, before.ImageURL, after.ImageURL, &changed)
 	restoreTimePtr(&book.ReleaseDate, before.ReleaseDate, after.ReleaseDate, &changed)
-	restoreStrings(&book.Genres, before.Genres, after.Genres, &changed)
-	restoreFloat64(&book.AverageRating, before.AverageRating, after.AverageRating, &changed)
-	restoreInt(&book.RatingsCount, before.RatingsCount, after.RatingsCount, &changed)
-	restoreBool(&book.Monitored, before.Monitored, after.Monitored, &changed)
-	restoreString(&book.Status, before.Status, after.Status, &changed)
-	restoreBool(&book.AnyEditionOK, before.AnyEditionOK, after.AnyEditionOK, &changed)
-	restoreInt64Ptr(&book.SelectedEditionID, before.SelectedEditionID, after.SelectedEditionID, &changed)
-	restoreLanguage(&book.Language, before.Language, after.Language, &changed)
-	restoreString(&book.MediaType, before.MediaType, after.MediaType, &changed)
+	importrollback.RestoreStrings(&book.Genres, before.Genres, after.Genres, &changed)
+	importrollback.RestoreFloat64(&book.AverageRating, before.AverageRating, after.AverageRating, &changed)
+	importrollback.RestoreInt(&book.RatingsCount, before.RatingsCount, after.RatingsCount, &changed)
+	importrollback.RestoreBool(&book.Monitored, before.Monitored, after.Monitored, &changed)
+	importrollback.RestoreString(&book.Status, before.Status, after.Status, &changed)
+	importrollback.RestoreBool(&book.AnyEditionOK, before.AnyEditionOK, after.AnyEditionOK, &changed)
+	importrollback.RestoreInt64Ptr(&book.SelectedEditionID, before.SelectedEditionID, after.SelectedEditionID, &changed)
+	importrollback.RestoreLanguage(&book.Language, before.Language, after.Language, &changed)
+	importrollback.RestoreString(&book.MediaType, before.MediaType, after.MediaType, &changed)
 	if book.CanWrite(models.BookFieldNarrator) {
-		restoreString(&book.Narrator, before.Narrator, after.Narrator, &changed)
+		importrollback.RestoreString(&book.Narrator, before.Narrator, after.Narrator, &changed)
 	}
 	if book.CanWrite(models.BookFieldDurationSeconds) {
-		restoreInt(&book.DurationSeconds, before.DurationSeconds, after.DurationSeconds, &changed)
+		importrollback.RestoreInt(&book.DurationSeconds, before.DurationSeconds, after.DurationSeconds, &changed)
 	}
 	if book.CanWrite(models.BookFieldASIN) {
-		restoreString(&book.ASIN, before.ASIN, after.ASIN, &changed)
+		importrollback.RestoreString(&book.ASIN, before.ASIN, after.ASIN, &changed)
 	}
-	restoreInt64Ptr(&book.CalibreID, before.CalibreID, after.CalibreID, &changed)
-	restoreString(&book.MetadataProvider, before.MetadataProvider, after.MetadataProvider, &changed)
+	importrollback.RestoreInt64Ptr(&book.CalibreID, before.CalibreID, after.CalibreID, &changed)
+	importrollback.RestoreString(&book.MetadataProvider, before.MetadataProvider, after.MetadataProvider, &changed)
 	restoreTimePtr(&book.LastMetadataRefreshAt, before.LastMetadataRefreshAt, after.LastMetadataRefreshAt, &changed)
 	return changed
 }
@@ -829,173 +843,31 @@ func restoreAuthorFromSnapshot(author *models.Author, before, after *authorRollb
 		return false
 	}
 	changed := false
-	restoreString(&author.ForeignID, before.ForeignID, after.ForeignID, &changed)
-	restoreString(&author.Name, before.Name, after.Name, &changed)
-	restoreString(&author.SortName, before.SortName, after.SortName, &changed)
-	restoreString(&author.Description, before.Description, after.Description, &changed)
-	restoreString(&author.ImageURL, before.ImageURL, after.ImageURL, &changed)
-	restoreString(&author.Disambiguation, before.Disambiguation, after.Disambiguation, &changed)
-	restoreString(&author.MetadataProvider, before.MetadataProvider, after.MetadataProvider, &changed)
+	importrollback.RestoreString(&author.ForeignID, before.ForeignID, after.ForeignID, &changed)
+	importrollback.RestoreString(&author.Name, before.Name, after.Name, &changed)
+	importrollback.RestoreString(&author.SortName, before.SortName, after.SortName, &changed)
+	importrollback.RestoreString(&author.Description, before.Description, after.Description, &changed)
+	importrollback.RestoreString(&author.ImageURL, before.ImageURL, after.ImageURL, &changed)
+	importrollback.RestoreString(&author.Disambiguation, before.Disambiguation, after.Disambiguation, &changed)
+	importrollback.RestoreString(&author.MetadataProvider, before.MetadataProvider, after.MetadataProvider, &changed)
 	restoreTimePtr(&author.LastMetadataRefreshAt, before.LastMetadataRefreshAt, after.LastMetadataRefreshAt, &changed)
 	return changed
 }
 
 func (i *Importer) rollbackAuthorIdentifiers(ctx context.Context, author *models.Author, before, after *authorRollbackSnapshot) error {
-	if i.authors == nil || author == nil || before == nil || after == nil ||
-		before.IdentifierForeignIDs == nil || after.IdentifierForeignIDs == nil {
+	if i.authors == nil || author == nil || before == nil || after == nil {
 		return nil
 	}
-	beforeSet := make(map[string]struct{}, len(*before.IdentifierForeignIDs))
-	for _, foreignID := range *before.IdentifierForeignIDs {
-		foreignID = strings.TrimSpace(foreignID)
-		if foreignID != "" {
-			beforeSet[foreignID] = struct{}{}
-		}
-	}
-	currentPrimary := strings.TrimSpace(author.ForeignID)
-	for _, foreignID := range *after.IdentifierForeignIDs {
-		foreignID = strings.TrimSpace(foreignID)
-		if foreignID == "" {
-			continue
-		}
-		if _, existedBefore := beforeSet[foreignID]; existedBefore {
-			continue
-		}
-		if strings.EqualFold(foreignID, currentPrimary) {
-			continue
-		}
-		// DeleteAuthorIdentifier is keyed on this author, so it removes only
-		// this author's row and is a no op when the author does not hold the
-		// id. Asking GetAuthorIdentifier who holds it is not enough since
-		// several accounts' authors can hold one id (#3555).
+	// DeleteAuthorIdentifier is keyed on this author, so it removes only
+	// this author's row and is a no op when the author does not hold the
+	// id. Asking GetAuthorIdentifier who holds it is not enough since
+	// several accounts' authors can hold one id (#3555).
+	for _, foreignID := range importrollback.IdentifiersToRemove(before.IdentifierForeignIDs, after.IdentifierForeignIDs, author.ForeignID) {
 		if err := i.authors.DeleteAuthorIdentifier(ctx, author.ID, foreignID); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func restoreString(target *string, before, after string, changed *bool) {
-	if *target != after {
-		return
-	}
-	if *target != before {
-		*changed = true
-	}
-	*target = before
-}
-
-// restoreLanguage is restoreString for a language code. The import run's
-// snapshot can predate the startup backfill that rewrote every stored language
-// into its ISO 639-2/B form (#3086), so "en" recorded by the run and "eng" on
-// the row now are the same value: the row still holds what the run wrote, and
-// is restored. What goes back is normalized too, so a rollback never
-// reintroduces a spelling the backfill removed.
-func restoreLanguage(target *string, before, after string, changed *bool) {
-	if models.NormalizeLanguageCode(*target) != models.NormalizeLanguageCode(after) {
-		return
-	}
-	before = models.NormalizeLanguageCode(before)
-	if *target != before {
-		*changed = true
-	}
-	*target = before
-}
-
-func restoreInt(target *int, before, after int, changed *bool) {
-	if *target != after {
-		return
-	}
-	if *target != before {
-		*changed = true
-	}
-	*target = before
-}
-
-func restoreInt64(target *int64, before, after int64, changed *bool) {
-	if *target != after {
-		return
-	}
-	if *target != before {
-		*changed = true
-	}
-	*target = before
-}
-
-func restoreFloat64(target *float64, before, after float64, changed *bool) {
-	if *target != after {
-		return
-	}
-	if *target != before {
-		*changed = true
-	}
-	*target = before
-}
-
-func restoreBool(target *bool, before, after bool, changed *bool) {
-	if *target != after {
-		return
-	}
-	if *target != before {
-		*changed = true
-	}
-	*target = before
-}
-
-func restoreStrings(target *[]string, before, after []string, changed *bool) {
-	if !equalStrings(*target, after) {
-		return
-	}
-	if !equalStrings(*target, before) {
-		*changed = true
-	}
-	*target = append([]string(nil), before...)
-}
-
-func restoreInt64Ptr(target **int64, before, after *int64, changed *bool) {
-	if !equalInt64Ptr(*target, after) {
-		return
-	}
-	if !equalInt64Ptr(*target, before) {
-		*changed = true
-	}
-	*target = cloneInt64Ptr(before)
-}
-
-func restoreTimePtr(target **time.Time, before, after *time.Time, changed *bool) {
-	if !equalTimePtr(*target, after) {
-		return
-	}
-	if !equalTimePtr(*target, before) {
-		*changed = true
-	}
-	*target = cloneTimePtr(before)
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for idx := range a {
-		if a[idx] != b[idx] {
-			return false
-		}
-	}
-	return true
-}
-
-func equalInt64Ptr(a, b *int64) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-func equalTimePtr(a, b *time.Time) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return a.Equal(*b)
 }
 
 func (i *Importer) rollbackActionDisplayName(ctx context.Context, entity models.ABSImportRunEntity) string {

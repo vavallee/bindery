@@ -2722,3 +2722,35 @@ describe('BookDetailPage failed grab', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Grab' })).toBeEnabled())
   })
 })
+
+describe('SearchResultsSection: Soulseek results', () => {
+  const soulseek = makeResult({
+    guid: 'slskd:1',
+    title: 'Dune [EPUB]',
+    indexerId: null,
+    protocol: 'soulseek',
+    mediaType: 'ebook',
+    soulseek: { username: 'peer1', freeSlot: true, queueLength: 0, uploadSpeed: 1000, fileCount: 1, format: 'epub' },
+  })
+
+  it('shows the badge, the peer and the free slot, with Grab enabled', () => {
+    const onGrab = vi.fn()
+    render(<SearchResultsSection results={[soulseek]} grabbing={null} onGrab={onGrab} />)
+    expect(screen.getByTestId('soulseek-badge')).toBeInTheDocument()
+    expect(screen.getByTestId('soulseek-user')).toHaveTextContent('peer1')
+    expect(screen.getByTestId('soulseek-slot')).toHaveTextContent(en.search.soulseek.freeSlot)
+    const grab = screen.getByRole('button', { name: en.search.grab })
+    expect(grab).not.toBeDisabled()
+    expect(grab).not.toHaveAttribute('aria-disabled')
+    fireEvent.click(grab)
+    expect(onGrab).toHaveBeenCalledWith(soulseek)
+  })
+
+  it('has Grab enabled for a Soulseek and an indexer result side by side', () => {
+    const idx = makeResult({ guid: 'g1', title: 'Dune epub', mediaType: 'ebook' })
+    render(<SearchResultsSection results={[soulseek, idx]} grabbing={null} onGrab={noop} />)
+    const buttons = screen.getAllByRole('button', { name: en.search.grab })
+    expect(buttons).toHaveLength(2)
+    expect(buttons.filter(b => b.getAttribute('aria-disabled') === 'true')).toHaveLength(0)
+  })
+})

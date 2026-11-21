@@ -50,6 +50,8 @@ func ClientTypeName(clientType string) string {
 		return "rTorrent"
 	case "nzbget":
 		return "NZBGet"
+	case ClientTypeSlskd:
+		return "slskd"
 	default:
 		return "SABnzbd"
 	}
@@ -102,9 +104,23 @@ func CompletedPath(ctx context.Context, client *models.DownloadClient) (ClientPa
 			return ClientPathInfo{}, err
 		}
 		return ClientPathInfo{Path: strings.TrimSpace(dir), Source: "the client default"}, nil
+	case ClientTypeSlskd:
+		return slskdDownloadsPath(ctx, client, ClientPathInfo{})
 	default:
 		return ClientPathInfo{}, nil
 	}
+}
+
+// slskdDownloadsPath reports slskd's directories.downloads, the folder it
+// moves finished files into. It has no categories, so the category is left as
+// it was set on info.
+func slskdDownloadsPath(ctx context.Context, client *models.DownloadClient, info ClientPathInfo) (ClientPathInfo, error) {
+	dir, err := SlskdFor(client).DownloadsDir(ctx)
+	if err != nil {
+		return info, err
+	}
+	info.Path, info.Source = dir, "slskd's downloads folder"
+	return info, nil
 }
 
 // GrabSavePath returns the folder a grab of mediaType sent through this client
@@ -187,6 +203,8 @@ func GrabSavePath(ctx context.Context, client *models.DownloadClient, mediaType,
 		}
 		info.Path, info.Source = strings.TrimSpace(dir), source
 		return info, nil
+	case ClientTypeSlskd:
+		return slskdDownloadsPath(ctx, client, info)
 	default:
 		dir, fromCategory, err := SabnzbdFor(client).CompleteDir(ctx, category)
 		if err != nil {
@@ -314,6 +332,8 @@ func qbittorrentCategoryFolder(def, savePath, category string) (string, string) 
 // shown as a connection failure.
 func TestConnection(ctx context.Context, client *models.DownloadClient) error {
 	switch client.Type {
+	case ClientTypeSlskd:
+		return SlskdFor(client).Ping(ctx)
 	case "nzbget":
 		return NzbgetFor(client).Test(ctx)
 	case "qbittorrent", "transmission", "deluge", "rtorrent":
@@ -379,7 +399,7 @@ func CheckCategories(ctx context.Context, client *models.DownloadClient) (Catego
 			return report, nil
 		}
 		existing = labels
-	case "transmission", "rtorrent":
+	case "transmission", "rtorrent", ClientTypeSlskd:
 		return report, nil
 	default:
 		cats, err := SabnzbdFor(client).GetCategories(ctx)

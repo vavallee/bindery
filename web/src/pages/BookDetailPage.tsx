@@ -23,6 +23,7 @@ import { confirmPackGrab, grabErrorText, grabWithForceConfirm } from '../util/fo
 import PackLabel from '../components/PackLabel'
 import ReleaseNarration from '../components/ReleaseNarration'
 import ReleaseSwarm from '../components/ReleaseSwarm'
+import { SoulseekBadge, SoulseekDetail, isSoulseek } from '../components/SoulseekRelease'
 import ClipboardManualFallback from '../components/ClipboardManualFallback'
 import { formatCalendarDate } from '../util/calendarDate'
 import { useClipboardCopy } from '../components/useClipboardCopy'
@@ -231,18 +232,21 @@ function ReleaseRow({
   onGrab: (r: SearchResult) => void
 }) {
   const { t } = useTranslation()
+  const soulseek = isSoulseek(r)
   return (
     <div className={resultRowCls(r.approved)}>
       <div className="min-w-0 mr-3">
         <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
           {fmt && <MediaBadge type={fmt} />}
+          {soulseek && <SoulseekBadge />}
           <PackLabel marker={r.pack} />
           <ReleaseNarration narrators={r.narrators} editionType={r.editionType} />
           <span className="truncate text-slate-800 dark:text-zinc-200">{r.title}</span>
         </div>
         <span className="text-fg-muted truncate block">
-          {r.indexerName} · {formatBytes(r.size)} · {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}
+          {r.indexerName} · {formatBytes(r.size)}{!soulseek && <> · {t('search.grabs', { n: r.grabs, defaultValue: '{{n}} grabs' })}</>}
           <ReleaseSwarm seeders={r.seeders} peers={r.peers} />
+          {soulseek && <SoulseekDetail r={r} />}
           {safeHref(r.infoUrl) && (
             <>
               {' · '}
@@ -806,7 +810,7 @@ function BookDetailPageInner() {
         nzbUrl: r.nzbUrl,
         size: r.size,
         bookId: book.id,
-        indexerId: r.indexerId,
+        indexerId: r.indexerId ?? undefined,
         protocol: r.protocol,
         // The result's own media type, not the book's (#2933). A dual-format
         // book is 'both', which matches no client category, so an audiobook
@@ -1700,7 +1704,9 @@ function BookDetailPageInner() {
             {identityRows.map(row => (
               <li key={`${row.provider}-${row.foreignId}`} className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium min-w-32">
-                  {providerDisplayName(row.provider) || t('bookDetail.metadataSource.unknownProvider', 'Unknown provider')}
+                  {row.provider === 'manual'
+                    ? t('bookDetail.metadataSource.manual', 'Added by hand')
+                    : providerDisplayName(row.provider) || t('bookDetail.metadataSource.unknownProvider', 'Unknown provider')}
                 </span>
                 {row.primary && (
                   <span className="text-xs px-1.5 py-0.5 rounded-full border border-emerald-500/40 text-emerald-700 dark:text-emerald-300">

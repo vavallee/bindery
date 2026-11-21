@@ -29,7 +29,7 @@ Open **Settings > BookOrbit** (admins only) and fill in:
 | Field | What to enter |
 |---|---|
 | Server URL | Where Bindery reaches BookOrbit, for example `http://bookorbit:3000`. A LAN or loopback address is fine. |
-| API key | The `bok_` key. Bindery stores it, never returns it, and shows only whether one is saved. Leave the field blank later to keep the saved key. |
+| API key | The `bok_` key. Bindery stores it, never returns it, and shows only whether one is saved. Leave the field blank later to keep the saved key. If you change the Server URL, the saved key is cleared and you must enter a key for the new server. |
 | BookOrbit address for your browser | Optional. The address your browser uses for BookOrbit, for example `https://books.example.com`, used only for the Open in BookOrbit link on the book page. Set it when your browser reaches BookOrbit at a different address than Bindery does (Bindery on `http://bookorbit:3000` inside Docker, your browser on a public name). Leave it empty and the link uses the Server URL. Only `http://` and `https://` addresses are accepted, trailing slashes are dropped, and a path such as `https://example.com/bookorbit` is kept. |
 | BookOrbit path remap | See below. |
 

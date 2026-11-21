@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import GeneralTab from './GeneralTab'
+import GeneralTab from '../../test/allGeneralSections'
 import { api } from '../../api/client'
 import { reorganizeApi } from '../../api/reorganize'
 

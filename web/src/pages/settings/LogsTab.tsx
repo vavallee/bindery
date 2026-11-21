@@ -1,10 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { restoreSetting, useAutoSave, useMounted } from './useAutoSave'
 import type { TFunction } from 'i18next'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, LogEntry, LogQuery } from '../../api/client'
 import { formatBytesZero } from '../../util/format'
 import SaveButton from './SaveButton'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import Toggle from './Toggle'
 import { useSaveResult } from './useSaveResult'
 import { usePolling } from '../../components/usePolling'
@@ -38,6 +41,8 @@ function formatRelativeTime(t: TFunction, iso: string): string {
 export default function LogsTab() {
   const fid = useId()
   const { t, i18n } = useTranslation()
+  const autoSave = useAutoSave()
+  const mounted = useMounted()
   const narrow = useMediaQuery(BELOW_SM)
   const { confirm, confirmDialog } = useConfirmDialog()
   const [logEntries, setLogEntries] = useState<LogEntry[]>([])
@@ -182,13 +187,16 @@ export default function LogsTab() {
         {/* Runtime log level */}
         <div className="flex items-center gap-2 text-xs">
           <label htmlFor={`${fid}-level`} className="text-fg-muted font-medium">{t('settings.logs.runtimeLevel', 'Runtime level')}</label>
+          <FieldValue for={`${fid}-level`} value={logLevel.toUpperCase()} flush />
           <select
             id={`${fid}-level`}
+            aria-describedby={fieldValueId(`${fid}-level`)}
             value={logLevel}
             onChange={async e => {
               const l = e.target.value
-              await api.setLogLevel(l).catch(console.error)
-              setLogLevel(l)
+              // The select only follows the server: it moves after the save lands.
+              const res = await autoSave('log.level', () => api.setLogLevel(l).then(() => true), { name: t('settings.logs.runtimeLevel', 'Runtime level'), value: l.toUpperCase() })
+              if (res && mounted.current) setLogLevel(l)
             }}
             title={t('settings.logs.runtimeLevelHint', 'Controls which log levels are written to the database')}
             className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded px-2 py-1 text-xs"
@@ -486,15 +494,17 @@ export default function LogsTab() {
           <div id="telemetry.enabled" className="flex items-start justify-between gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.general.telemetryLabel')}</label>
+              <FieldValue for="telemetry-enabled" value={(settings['telemetry.enabled'] ?? 'true') !== 'false' ? t('settings.currentValue.enabled', 'On') : t('settings.currentValue.disabled', 'Off')} flush />
               <p className="text-xs text-fg-muted mt-0.5">{t('settings.general.telemetryHint')}</p>
             </div>
             <Toggle
+              describedBy={fieldValueId('telemetry-enabled')}
               checked={(settings['telemetry.enabled'] ?? 'true') !== 'false'}
               onChange={async () => {
                 const current = (settings['telemetry.enabled'] ?? 'true').toLowerCase()
                 const next = current !== 'false' ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'telemetry.enabled': next }))
-                await api.setSetting('telemetry.enabled', next).catch(console.error)
+                await autoSave('telemetry.enabled', () => api.setSetting('telemetry.enabled', next), { previous: settings['telemetry.enabled'], next, revert: to => restoreSetting(setSettings, 'telemetry.enabled', to) })
               }}
               title={(settings['telemetry.enabled'] ?? 'true') !== 'false' ? t('common.disable') : t('common.enable')}
             />

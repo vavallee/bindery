@@ -10,7 +10,7 @@ import type { SettingsTabId } from './settingsSearchIndex'
 const sources = import.meta.glob('./*.tsx', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
 const TAB_FILE: Record<SettingsTabId, string> = {
-  general: 'GeneralTab', indexers: 'IndexersTab', clients: 'ClientsTab', notifications: 'NotificationsTab',
+  general: 'GeneralTab', naming: 'GeneralTab', storage: 'GeneralTab', schedules: 'GeneralTab', indexers: 'IndexersTab', clients: 'ClientsTab', notifications: 'NotificationsTab',
   quality: 'QualityTab', metadata: 'MetadataTab', import: 'ImportTab', rootfolders: 'RootFoldersTab',
   logs: 'LogsTab', blocklist: 'BlocklistTab', calibre: 'CalibreTab', abs: 'ABSTab', bookorbit: 'BookOrbitTab', grimmory: 'GrimmoryTab',
   'api-keys': 'ApiKeysTab', advanced: 'AdvancedTab', about: 'AboutTab',

@@ -5,6 +5,9 @@ import { scanHeadings } from './scanHeadings'
 
 const ALL: { id: SettingsTabId; label: string }[] = [
   { id: 'general', label: 'General' },
+  { id: 'naming', label: 'File Naming' },
+  { id: 'storage', label: 'Storage' },
+  { id: 'schedules', label: 'Schedules' },
   { id: 'about', label: 'About' },
   { id: 'indexers', label: 'Indexers' },
   { id: 'logs', label: 'Logs' },
@@ -40,7 +43,7 @@ describe('searchSettings ranking', () => {
 
   it('keeps index order within one rank', () => {
     // Both headings are word prefix matches; Zeta is listed first in HEADINGS.
-    expect(ids('dateinamen')).toEqual(['h:general:settings.general.fileNaming', 'h:general:settings.general.downloads'])
+    expect(ids('dateinamen')).toEqual(['h:naming:settings.general.fileNaming', 'h:schedules:settings.general.downloads'])
   })
 
   it('lists tabs and headings before setting keys, even for a better textual key match', () => {
@@ -72,7 +75,7 @@ describe('searchSettings ranking', () => {
   })
 
   it('trims and collapses whitespace in the query', () => {
-    expect(ids('  zeta    dateinamen ')).toEqual(['h:general:settings.general.fileNaming'])
+    expect(ids('  zeta    dateinamen ')).toEqual(['h:naming:settings.general.fileNaming'])
   })
 
   it('returns nothing for a blank query', () => {
@@ -93,7 +96,7 @@ describe('searchSettings ranking', () => {
 
   it('hides adminOnly headings from a non admin even when the tab is open to them', () => {
     expect(ids('speicher', { isAdmin: false })).toEqual([])
-    expect(ids('speicher', { isAdmin: true })).toEqual(['h:general:settings.general.storage'])
+    expect(ids('speicher', { isAdmin: true })).toEqual(['h:storage:settings.general.storage'])
   })
 })
 

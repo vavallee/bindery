@@ -17,7 +17,7 @@ Calibre does not watch its library folder. A file placed under `/calibre-library
 |---|---|---|---|---|---|
 | **1. Register with Calibre** | Bindery owns its library; Calibre owns a separate one | Places the file in the Bindery library, then calls `calibredb add` or POSTs to the Bridge plugin | Settings, Calibre tab, **Write integration** (`calibre.mode`) | Two: Bindery's copy and the one Calibre makes inside its library | Ebooks only. An audiobook import does not hand anything over |
 | **2. Mirror into the CWA ingest folder** | Bindery owns its library; CWA owns a separate one | Places the file in the Bindery library, then copies it into the ingest folder; CWA consumes and deletes that copy | Settings, Calibre tab, **Calibre-Web-Automated (CWA)**, Ingest folder path (`cwa.ingest_path`) | Two: Bindery's copy and the one CWA files into its library. The ingest copy is transient | Ebooks only. Audiobooks are never mirrored |
-| **3. An external tool owns the library** | CWA, Calibre or Storyteller owns the only library | Does not write into the library at all; copies or hardlinks the finished download into a drop folder and waits for the tool to file it | Settings, General tab, File Naming, **Import Mode** set to External, then Drop folder, Layout, Placement | The managed copy the external tool makes, plus a drop folder copy until that tool consumes it (the default `copy` placement), on top of the download, which is never moved | Ebooks and audiobooks |
+| **3. An external tool owns the library** | CWA, Calibre or Storyteller owns the only library | Does not write into the library at all; copies or hardlinks the finished download into a drop folder and waits for the tool to file it | Settings, File Naming tab, **Import Mode** set to External, then Drop folder, Layout, Placement | The managed copy the external tool makes, plus a drop folder copy until that tool consumes it (the default `copy` placement), on top of the download, which is never moved | Ebooks and audiobooks |
 
 Topologies 1 and 2 are independent switches and both run in Auto, Move, Copy and Hardlink import modes. Topology 3 replaces Bindery's own import, and topologies 1 and 2 do not run in it.
 
@@ -130,7 +130,7 @@ This is the topology for "Bindery keeps my library, CWA should also see new eboo
 
 ## Topology 3: an external tool owns the library
 
-Choose this when CWA, Calibre auto ingest or Storyteller should be the only thing writing the library and Bindery should stay out of it. Under Settings, General tab, File Naming, set **Import Mode** to `External`; the drop folder fields appear underneath.
+Choose this when CWA, Calibre auto ingest or Storyteller should be the only thing writing the library and Bindery should stay out of it. Under Settings, File Naming tab, set **Import Mode** to `External`; the drop folder fields appear underneath.
 
 - **Reorganize asks for confirmation.** The other tool owns the layout in this mode, so Reorganize (Rename files, Reorganize Library) shows a warning and the Rename button stays disabled until you tick a confirmation box. Without that confirmation the apply API answers 409 and moves nothing. Only formats in External mode are affected; with **Audiobook import mode** set to `Copy`, audiobooks can still be reorganized freely.
 - **Drop folder** (`import.drop_folder`) is the folder the tool ingests from, for example `/cwa-book-ingest`. Empty means Bindery hands off in place: the download stays in the download directory and nothing is copied anywhere.
