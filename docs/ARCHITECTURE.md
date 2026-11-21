@@ -37,6 +37,20 @@ provider, so a save applies to the next lookup. Because the provider set is part
 of the cache keys, a smaller set never serves answers cached under a larger one;
 the two audiobook sources return before their cache is read while off.
 
+RanobeDB is the one enricher that is opt in rather than opt out:
+`metadata.book_enrichment.ranobedb` adds it after every other enricher
+(#2012). It is also the only enricher that writes a book's title, and only the
+official English title of a match with a clear best score, the same volume
+numbers and a matching author, never over a locked title and never for a book
+with no author name, which it is not even asked about (see
+[third-party-data.md](third-party-data.md#ranobedb)). It runs only where
+enrichment runs: on a freshly fetched book that is missing a description or a
+cover, so it titles books added after it is switched on. Existing books keep
+their titles. Two paths can still bring a RanobeDB title in for a book the
+library did not have: an author refresh that meets a work new to the library,
+and the explicit rebind of a book to another record, which takes that record's
+title wholesale.
+
 `metadata.audnex_region` picks the Audible marketplace audnex is asked (`us` by
 default; `ca`, `uk`, `au`, `fr`, `de`, `jp`, `it`, `in` and `es` are accepted). The
 audnex client is rebuilt for the new region on a save, sharing the old one's

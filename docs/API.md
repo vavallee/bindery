@@ -1978,8 +1978,9 @@ is asked: there is no fallback to the others, so a German ASIN needs `de`. The
 result still goes through the same match against the primary provider as before.
 
 A `PUT` (or `DELETE`) of `metadata.primary_provider`, `metadata.enrichers_disabled`, `metadata.audnex_region`,
-`googlebooks.apiKey`, `google_books_api_key`, `hardcover.api_token` or
-`metadata.author_enrichment.wikidata` (#3287) rebuilds the metadata providers
+`googlebooks.apiKey`, `google_books_api_key`, `hardcover.api_token`,
+`metadata.author_enrichment.wikidata` (#3287) or
+`metadata.book_enrichment.ranobedb` (#2012) rebuilds the metadata providers
 before it answers, so the next lookup already uses the new set, with no restart
 (#1771). The `PUT` response for those keys carries an extra boolean:
 
