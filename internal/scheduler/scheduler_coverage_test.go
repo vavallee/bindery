@@ -165,6 +165,39 @@ func TestRefreshMetadata_SkipsCalibreForeignID(t *testing.T) {
 	s.refreshMetadata()
 }
 
+// TestRefreshMetadata_SkipsManualForeignID is the same guard for an author made
+// by hand (#3840): no provider answers for a "manual:" id, so the reload guard
+// must stop it before any provider call.
+func TestRefreshMetadata_SkipsManualForeignID(t *testing.T) {
+	database, err := db.OpenMemory()
+	if err != nil {
+		t.Fatalf("OpenMemory: %v", err)
+	}
+	defer database.Close()
+
+	repo := db.NewAuthorRepo(database)
+	_ = repo.Create(context.Background(), &models.Author{
+		ForeignID:        "manual:author:dan-abnett",
+		Name:             "Dan Abnett",
+		SortName:         "Abnett, Dan",
+		MetadataProvider: models.ManualMetadataProvider,
+		Monitored:        true,
+	})
+
+	s := &Scheduler{authors: repo, meta: nil}
+	s.refreshMetadata()
+}
+
+func TestHasCalibrePrefix(t *testing.T) {
+	for id, want := range map[string]bool{
+		"calibre:author:1": true, "manual:author:x": true, "MANUAL:author:x": true, "OL1A": false, "": false,
+	} {
+		if got := hasCalibrePrefix(id); got != want {
+			t.Errorf("hasCalibrePrefix(%q) = %v, want %v", id, got, want)
+		}
+	}
+}
+
 // TestHandleStalledDownload_NoBookID exercises the early-exit when a download
 // has no associated book.
 func TestHandleStalledDownload_NoBookID(t *testing.T) {

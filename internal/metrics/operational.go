@@ -58,7 +58,7 @@ const (
 var (
 	mediaTypeLabels = set("ebook", "audiobook")
 
-	downloadClientTypeLabels = set("sabnzbd", "nzbget", "transmission", "qbittorrent", "deluge", "rtorrent")
+	downloadClientTypeLabels = set("sabnzbd", "nzbget", "transmission", "qbittorrent", "deluge", "rtorrent", "slskd")
 
 	indexerTypeLabels = set("newznab", "torznab")
 

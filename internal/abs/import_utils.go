@@ -247,14 +247,8 @@ func ptrInt64(value int64) *int64 {
 	return &value
 }
 
-func cloneInt64Ptr(value *int64) *int64 {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
-}
-
+// cloneTimePtr copies value normalized to UTC. importrollback.CloneTimePtr
+// keeps the zone, so the ABS snapshot path stays on this one.
 func cloneTimePtr(value *time.Time) *time.Time {
 	if value == nil {
 		return nil

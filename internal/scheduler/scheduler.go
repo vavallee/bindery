@@ -1111,14 +1111,35 @@ func (s *Scheduler) resolveAllowedLanguages(ctx context.Context, author *models.
 	return models.ParseAllowedLanguages(p.AllowedLanguages)
 }
 
+// resultIndexerID is the id of the indexer that produced res, or 0 when none
+// did. A result from a search source such as Soulseek has a nil IndexerID, and
+// no indexer has id 0, so 0 is safe as the "none" key in the pin bookkeeping.
+func resultIndexerID(res *newznab.SearchResult) int64 {
+	if res == nil || res.IndexerID == nil {
+		return 0
+	}
+	return *res.IndexerID
+}
+
+// copyIndexerID returns a pointer to a copy of id, nil for nil or 0, so a
+// stored row gets NULL (the downloads.indexer_id foreign key rejects 0) and
+// never aliases the search result.
+func copyIndexerID(id *int64) *int64 {
+	if id == nil || *id == 0 {
+		return nil
+	}
+	v := *id
+	return &v
+}
+
 // pinnedClient returns the download client the release's indexer is pinned to
 // (#3080), or (nil, nil) when the indexer has no pin. A pin that cannot be
 // honoured is a *db.PinnedClientError, never a different client.
 func (s *Scheduler) pinnedClient(ctx context.Context, res *newznab.SearchResult) (*models.DownloadClient, error) {
-	if s.indexers == nil || res.IndexerID == 0 {
+	if s.indexers == nil || res.IndexerID == nil || *res.IndexerID == 0 {
 		return nil, nil
 	}
-	idx, err := s.indexers.GetByID(ctx, res.IndexerID)
+	idx, err := s.indexers.GetByID(ctx, *res.IndexerID)
 	if err != nil {
 		return nil, err
 	}
@@ -1134,7 +1155,7 @@ func (s *Scheduler) pinnedClient(ctx context.Context, res *newznab.SearchResult)
 // first failure for an indexer is logged and recorded; later releases from the
 // same indexer in this sweep are skipped quietly.
 func (s *Scheduler) checkPin(ctx context.Context, book models.Book, res *newznab.SearchResult, skipped map[int64]bool) (*models.DownloadClient, bool, error) {
-	if skipped[res.IndexerID] {
+	if skipped[resultIndexerID(res)] {
 		return nil, true, nil
 	}
 	c, err := s.pinnedClient(ctx, res)
@@ -1147,7 +1168,7 @@ func (s *Scheduler) checkPin(ctx context.Context, book models.Book, res *newznab
 	}
 	slog.Warn("SearchAndGrabBook: the indexer's pinned download client cannot take the grab, skipping that indexer",
 		"book", book.Title, "release", res.Title, "error", perr.Error())
-	skipped[res.IndexerID] = true
+	skipped[resultIndexerID(res)] = true
 	s.recordPinnedFailure(ctx, book.ID, res, perr)
 	return nil, true, nil
 }
@@ -1182,12 +1203,12 @@ func (s *Scheduler) recordPinnedFailure(ctx context.Context, bookID int64, res *
 				Message   string `json:"message"`
 			}
 			if json.Unmarshal([]byte(e.Data), &prior) == nil && prior.Code == pinnedFailureCode &&
-				prior.IndexerID == res.IndexerID && prior.Message == message {
+				prior.IndexerID == resultIndexerID(res) && prior.Message == message {
 				return
 			}
 		}
 	}
-	data, _ := json.Marshal(map[string]any{"guid": res.GUID, "message": message, "code": pinnedFailureCode, "indexerId": res.IndexerID})
+	data, _ := json.Marshal(map[string]any{"guid": res.GUID, "message": message, "code": pinnedFailureCode, "indexerId": resultIndexerID(res)})
 	_ = s.history.Create(ctx, &models.HistoryEvent{
 		BookID:      &bookID,
 		EventType:   models.HistoryEventDownloadFailed,
@@ -1718,7 +1739,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		GUID:             best.GUID,
 		BookID:           &book.ID,
 		OwnerUserID:      book.OwnerUserID, // tenancy (#1457): background grab inherits the book's owner
-		IndexerID:        &best.IndexerID,
+		IndexerID:        copyIndexerID(best.IndexerID),
 		DownloadClientID: &ranked[0].ID,
 		Title:            best.Title,
 		NZBURL:           best.NZBURL,
@@ -1760,7 +1781,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 		DownloadDir:          s.downloadDir,
 		AudiobookDownloadDir: s.audiobookDownloadDir,
 		GlobalRemap:          s.downloadPathRemap,
-	}.WithSeedLimits(s.resolveSeedLimits(ctx, best.IndexerID)))
+	}.WithSeedLimits(s.resolveSeedLimits(ctx, resultIndexerID(best))))
 	if err != nil {
 		slog.Error("SearchAndGrabBook: failed to send to downloader", "client", client.Type, "client_name", client.Name, "indexer", best.IndexerName, "title", best.Title, "error", err)
 		if setErr := s.downloads.SetError(ctx, dl.ID, downloader.SendFailureMessage(err)); setErr != nil {
@@ -1864,9 +1885,8 @@ func (s *Scheduler) storePending(ctx context.Context, bookID int64, mediaType st
 		Reason:      reason,
 		ReleaseJSON: string(blob),
 	}
-	if res.IndexerID != 0 {
-		id := res.IndexerID
-		pr.IndexerID = &id
+	if res.IndexerID != nil && *res.IndexerID != 0 {
+		pr.IndexerID = copyIndexerID(res.IndexerID)
 	}
 	if err := s.pending.Upsert(ctx, pr); err != nil {
 		slog.Warn("failed to store pending release", "guid", res.GUID, "error", err)

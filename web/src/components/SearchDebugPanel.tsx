@@ -121,6 +121,30 @@ export default function SearchDebugPanel({ debug, resultCount, defaultOpen }: Pr
             </div>
           </div>
 
+          {debug.sources && debug.sources.length > 0 && (
+            <div>
+              <h4 className="font-semibold text-slate-700 dark:text-zinc-300 mb-1">
+                Sources ({debug.sources.length})
+              </h4>
+              <div className="border border-slate-200 dark:border-zinc-800 rounded overflow-hidden divide-y divide-slate-200 dark:divide-zinc-800">
+                {debug.sources.map(src => (
+                  <div key={src.name} className="px-2 py-1.5 bg-white dark:bg-zinc-950 flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <span className="font-medium text-slate-800 dark:text-zinc-200">{src.name}</span>
+                      {src.error && (
+                        <div className="text-red-700 dark:text-red-400 break-words font-mono mt-0.5">{src.error}</div>
+                      )}
+                    </div>
+                    <div className="flex-shrink-0 text-right text-fg-muted">
+                      <div>{src.resultCount} result{src.resultCount === 1 ? '' : 's'}</div>
+                      <div>{src.durationMs} ms</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {debug.pipeline && (
             <div>
               <h4 className="font-semibold text-slate-700 dark:text-zinc-300 mb-1">Pipeline</h4>

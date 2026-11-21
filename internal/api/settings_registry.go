@@ -179,6 +179,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingMetadataBookRanobeDB, Type: SettingTypeBool, Default: "false",
+		Description: "Give light novels their official English title from RanobeDB. It applies to books added after it is switched on, and existing books keep their titles. A title is written only when RanobeDB has a clear best match with the same volume numbers and a matching author, and never over a locked title. Two requests per book, paced to RanobeDB's 60 a minute. Off by default: while off, RanobeDB is sent no request. A change applies to the next metadata lookup, without a restart.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: SettingMetadataAudnexRegion, Type: SettingTypeEnum, Default: audnex.DefaultRegion,
 		Values:      audnex.Regions,
 		Description: "Audible marketplace audnex looks an ASIN up in: us, ca, uk, au, fr, de, jp, it, in or es. An ASIN sold only on another marketplace is a 404 in the US one, so set this to the marketplace your audiobooks come from. Only one marketplace is asked, with no fallback to the others. A change applies to the next metadata lookup, without a restart.",
@@ -216,7 +221,7 @@ var settingDescriptors = []SettingDescriptor{
 	},
 	{
 		Key: SettingLibraryScanInterval, Type: SettingTypeDuration, Default: "6h", Min: "15m", Max: "168h",
-		Description:     "How often the library is scanned for new and changed files. The Scan Library button on Settings, General runs one right away.",
+		Description:     "How often the library is scanned for new and changed files. The Scan Library button on Settings, Storage runs one right away.",
 		RestartRequired: true,
 		State:           SettingStateActive,
 	},

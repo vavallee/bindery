@@ -109,7 +109,10 @@ describe('MetadataTab library defaults', () => {
     // An invalid count is shown but never persisted.
     fireEvent.change(count, { target: { value: '0' } })
     expect(api.setSetting).not.toHaveBeenCalledWith('author.default_monitor_latest_count', '0')
+    fireEvent.blur(count)
+    expect(api.setSetting).not.toHaveBeenCalledWith('author.default_monitor_latest_count', '0')
     fireEvent.change(count, { target: { value: '3' } })
+    fireEvent.blur(count)
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('author.default_monitor_latest_count', '3'))
   })
 
@@ -150,6 +153,23 @@ describe('MetadataTab library defaults', () => {
     expect(wikidata).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(wikidata)
     await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('metadata.author_enrichment.wikidata', 'false'))
+  })
+
+  // #2012: RanobeDB light novel titles are opt in and saved as a plain setting.
+  it('switches RanobeDB light novel titles on and off', async () => {
+    seedSettings({ 'autoGrab.enabled': 'true', 'recommendations.enabled': 'false' })
+    render(<MetadataTab />)
+    await waitFor(() => expect(api.listSettings).toHaveBeenCalled())
+    expect(screen.getByText('settings.general.bookRanobeDBLabel')).toBeInTheDocument()
+    const ranobedb = screen.getAllByRole('switch')[3]
+    expect(ranobedb).toHaveAttribute('aria-checked', 'false')
+    // The switch is named by its visible label.
+    expect(screen.getByLabelText('settings.general.bookRanobeDBLabel')).toBe(ranobedb)
+    fireEvent.click(ranobedb)
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('metadata.book_enrichment.ranobedb', 'true'))
+    expect(ranobedb).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(ranobedb)
+    await waitFor(() => expect(api.setSetting).toHaveBeenCalledWith('metadata.book_enrichment.ranobedb', 'false'))
   })
 
   it('toggles auto-grab off and recommendations on', async () => {

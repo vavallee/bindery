@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import { restoreSetting, useAutoSave } from './useAutoSave'
 import RichText from '../../components/RichText'
 import Alert from '../../components/Alert'
 import {
@@ -11,6 +12,8 @@ import {
   type SettingSaveResult,
 } from '../../api/client'
 import Toggle from './Toggle'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import SaveButton from './SaveButton'
 import CalibreDeliveryPanel from './CalibreDeliveryPanel'
 import { useSaveResult } from './useSaveResult'
@@ -96,6 +99,7 @@ function CalibreSection({
 }) {
   const fid = useId()
   const { t } = useTranslation()
+  const autoSave = useAutoSave()
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string; detail?: string; warning?: string } | null>(null)
   const [saveError, setSaveError] = useState<{ key: string; msg: string } | null>(null)
@@ -328,24 +332,31 @@ function CalibreSection({
   const setMode = async (next: 'off' | 'calibredb' | 'plugin') => {
     setSettings(s => ({ ...s, 'calibre.mode': next }))
     setCalibredbMissing(null)
-    try {
-      applyCalibredbWarning(await api.setSetting('calibre.mode', next))
-    } catch (err) {
-      console.error(err)
-    }
+    const label = {
+      off: t('settings.calibre.mode.off', 'Off'),
+      calibredb: t('settings.calibre.mode.calibredb', 'calibredb CLI'),
+      plugin: t('settings.calibre.mode.plugin', 'Calibre Bridge plugin'),
+    }[next]
+    const res = await autoSave('calibre.mode', () => api.setSetting('calibre.mode', next), {
+      value: label,
+      previous: settings['calibre.mode'],
+      next,
+      revert: to => restoreSetting(setSettings, 'calibre.mode', to),
+    })
+    if (res) applyCalibredbWarning(res)
   }
 
   const setTransport = async (next: 'push' | 'pull') => {
     setTestResult(null)
     setSettings(s => ({ ...s, 'calibre.plugin_transport': next }))
-    await api.setSetting('calibre.plugin_transport', next).catch(console.error)
+    await autoSave('calibre.plugin_transport', () => api.setSetting('calibre.plugin_transport', next), { value: t(next === 'push' ? 'settings.calibre.transport.push' : 'settings.calibre.transport.pull'), previous: settings['calibre.plugin_transport'], next, revert: to => restoreSetting(setSettings, 'calibre.plugin_transport', to) })
   }
 
   return (
     <section>
       <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Calibre</h3>
       <p className="text-xs text-fg-muted mb-3">
-        <RichText text={t('settings.calibre.intro', 'Calibre only knows about books recorded in its <code>metadata.db</code>; a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over: register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below), or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, under File Naming on the General tab). Neither the write integration nor the CWA mirror runs in External import mode. The <guide>Calibre integration guide</guide> compares them.')} components={{ code: <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded" />, guide: <a href="https://github.com/vavallee/bindery/blob/main/docs/Calibre-Integration-Wiki.md" target="_blank" rel="noopener noreferrer" className="text-accent-text underline" /> }} />
+        <RichText text={t('settings.calibre.intro', 'Calibre only knows about books recorded in its <code>metadata.db</code>; a file placed in its library folder is invisible to Calibre and to CWA. There are three ways to hand a book over: register it with Calibre after import (Write integration below), copy it into a CWA ingest folder (the CWA section below), or let CWA or Calibre own the library and feed it from a drop folder (Import Mode External, on the File Naming tab). Neither the write integration nor the CWA mirror runs in External import mode. The <guide>Calibre integration guide</guide> compares them.')} components={{ code: <code className="text-[11px] bg-slate-200 dark:bg-zinc-800 px-1 rounded" />, guide: <a href="https://github.com/vavallee/bindery/blob/main/docs/Calibre-Integration-Wiki.md" target="_blank" rel="noopener noreferrer" className="text-accent-text underline" /> }} />
       </p>
       <div className="p-4 border border-slate-200 dark:border-zinc-800 rounded-lg bg-slate-100 dark:bg-zinc-900 space-y-4">
 
@@ -375,7 +386,8 @@ function CalibreSection({
 
         <div id="calibre.mode" className="pt-1 border-t border-slate-200 dark:border-zinc-800">
           <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-2 mt-3">{t('settings.calibre.mode.heading', 'Write integration')}</label>
-          <div className="space-y-1.5">
+          <FieldValue for="calibre-mode" value={mode === 'calibredb' ? t('settings.calibre.mode.calibredb', 'calibredb CLI') : mode === 'plugin' ? t('settings.calibre.mode.plugin', 'Calibre Bridge plugin') : t('settings.calibre.mode.off', 'Off')} />
+          <div role="radiogroup" aria-label={t('settings.calibre.mode.heading', 'Write integration')} aria-describedby={fieldValueId('calibre-mode')} className="space-y-1.5">
             {([
               { v: 'off', label: t('settings.calibre.mode.off', 'Off'), desc: t('settings.calibre.mode.offDesc', 'No Calibre call on import. The file lands in the Bindery library only.') },
               { v: 'calibredb', label: t('settings.calibre.mode.calibredb', 'calibredb CLI'), desc: t('settings.calibre.mode.calibredbDesc', 'Run calibredb add --with-library after each import. Calibre copies the file into its own library, so it exists twice. Needs calibredb inside the Bindery container or process; the official distroless image does not ship it.') },
@@ -439,7 +451,8 @@ function CalibreSection({
         {mode === 'plugin' && (
           <div id="calibre.plugin_transport" data-testid="calibre-transport">
             <label className="block text-xs text-fg-muted mb-1">{t('settings.calibre.transport.label')}</label>
-            <div className="space-y-1.5">
+            <FieldValue for="calibre-transport" value={transport === 'pull' ? t('settings.calibre.transport.pull') : t('settings.calibre.transport.push')} />
+            <div role="radiogroup" aria-label={t('settings.calibre.transport.label')} aria-describedby={fieldValueId('calibre-transport')} className="space-y-1.5">
               {([
                 { v: 'push', label: t('settings.calibre.transport.push'), desc: t('settings.calibre.transport.pushDesc') },
                 { v: 'pull', label: t('settings.calibre.transport.pull'), desc: t('settings.calibre.transport.pullDesc') },
@@ -608,16 +621,18 @@ function CalibreSection({
           <div id="calibre.library_import_enabled" className="flex items-center justify-between">
             <div>
               <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.calibre.import.heading', 'Library import')}</label>
+              <FieldValue for="calibre-library-import" value={libraryImportEnabled ? t('settings.currentValue.enabled', 'On') : t('settings.currentValue.disabled', 'Off')} flush />
               <p className="text-xs text-fg-muted mt-0.5">
                 {t('settings.calibre.import.hint', 'Read your existing Calibre library and import books, authors, and editions into Bindery. Works independently of the write mode above.')}
               </p>
             </div>
             <Toggle
+              describedBy={fieldValueId('calibre-library-import')}
               checked={libraryImportEnabled}
               onChange={async () => {
                 const next = libraryImportEnabled ? 'false' : 'true'
                 setSettings(s => ({ ...s, 'calibre.library_import_enabled': next }))
-                await api.setSetting('calibre.library_import_enabled', next).catch(console.error)
+                await autoSave('calibre.library_import_enabled', () => api.setSetting('calibre.library_import_enabled', next), { previous: settings['calibre.library_import_enabled'], next, revert: to => restoreSetting(setSettings, 'calibre.library_import_enabled', to) })
               }}
               title={libraryImportEnabled ? t('settings.calibre.import.disable', 'Disable library import') : t('settings.calibre.import.enable', 'Enable library import')}
             />
@@ -628,14 +643,16 @@ function CalibreSection({
               <div id="calibre.sync_on_startup" className="flex items-center justify-between">
                 <div>
                   <label className="block text-sm font-medium text-slate-800 dark:text-zinc-200">{t('settings.calibre.import.syncOnStartup', 'Sync on startup')}</label>
+                  <FieldValue for="calibre-sync-on-startup" value={syncOnStartup ? t('settings.currentValue.enabled', 'On') : t('settings.currentValue.disabled', 'Off')} flush />
                   <p className="text-xs text-fg-muted mt-0.5">{t('settings.calibre.import.syncOnStartupHint', 'Re-import each time Bindery starts. Safe to leave on — imports are incremental and idempotent.')}</p>
                 </div>
                 <Toggle
+                  describedBy={fieldValueId('calibre-sync-on-startup')}
                   checked={syncOnStartup}
                   onChange={async () => {
                     const next = syncOnStartup ? 'false' : 'true'
                     setSettings(s => ({ ...s, 'calibre.sync_on_startup': next }))
-                    await api.setSetting('calibre.sync_on_startup', next).catch(console.error)
+                    await autoSave('calibre.sync_on_startup', () => api.setSetting('calibre.sync_on_startup', next), { previous: settings['calibre.sync_on_startup'], next, revert: to => restoreSetting(setSettings, 'calibre.sync_on_startup', to) })
                   }}
                   title={syncOnStartup ? t('common.disable', 'Disable') : t('common.enable', 'Enable')}
                 />
@@ -715,7 +732,7 @@ function CalibreSection({
       <div className="bg-slate-100 dark:bg-zinc-900 rounded-lg p-5 border border-slate-300 dark:border-zinc-800">
         <h3 className="text-base font-semibold mb-3 text-slate-800 dark:text-zinc-200">Calibre-Web-Automated (CWA)</h3>
         <p className="text-xs text-fg-muted mb-4">
-          <RichText text={t('settings.calibre.cwa.intro', 'When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the General tab for that setup. Leave blank to disable.')} components={{ cwa: <a href="https://github.com/crocodilestick/Calibre-Web-Automated" target="_blank" rel="noopener noreferrer" className="text-accent-text underline" /> }} />
+          <RichText text={t('settings.calibre.cwa.intro', 'When set, every successful ebook import is also copied into this directory so a sibling <cwa>CWA</cwa> container can ingest it. Bindery keeps its own copy. Audiobooks are not mirrored. This mirror is independent of the write integration above, and it does nothing in External import mode; use the Drop folder on the File Naming tab for that setup. Leave blank to disable.')} components={{ cwa: <a href="https://github.com/crocodilestick/Calibre-Web-Automated" target="_blank" rel="noopener noreferrer" className="text-accent-text underline" /> }} />
         </p>
         <div id="cwa.ingest_path">
           <label htmlFor={`${fid}-6`} className="block text-xs text-fg-muted mb-1">{t('settings.calibre.cwa.ingestPath', 'Ingest folder path')}</label>

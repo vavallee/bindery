@@ -52,7 +52,7 @@ describe('SetupChecklist blocked state', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Imports have a problem right now')
     expect(alert).toHaveTextContent('not available')
-    expect(screen.getByRole('link', { name: 'Check storage' })).toHaveAttribute('href', '/settings?tab=general')
+    expect(screen.getByRole('link', { name: 'Check storage' })).toHaveAttribute('href', '/settings?tab=storage')
   })
 
   it('points a failing download client at the clients tab', async () => {

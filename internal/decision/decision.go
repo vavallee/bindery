@@ -17,7 +17,7 @@ import (
 // package free of a direct dependency on the indexer sub-package.
 type Release struct {
 	GUID        string
-	IndexerID   int64
+	IndexerID   int64 // 0 when no indexer produced the release (a Soulseek result); no indexer id is ever 0
 	IndexerName string
 	Title       string
 	Size        int64 // bytes
@@ -100,9 +100,13 @@ func Approved(decisions []Decision) []Decision {
 // ReleaseFromSearchResult converts a newznab.SearchResult to a decision.Release.
 // Format is parsed from the release title; Formats carries every token in it.
 func ReleaseFromSearchResult(sr newznab.SearchResult) Release {
+	var indexerID int64
+	if sr.IndexerID != nil {
+		indexerID = *sr.IndexerID
+	}
 	return Release{
 		GUID:        sr.GUID,
-		IndexerID:   sr.IndexerID,
+		IndexerID:   indexerID,
 		IndexerName: sr.IndexerName,
 		Title:       sr.Title,
 		Size:        sr.Size,

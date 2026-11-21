@@ -116,6 +116,10 @@ func (r *SearchResultRegistry) remember(results []newznab.SearchResult) {
 		if res.GUID == "" {
 			continue
 		}
+		var indexerID int64 // 0 for a result no indexer produced (Soulseek); apply maps it back to nil
+		if res.IndexerID != nil {
+			indexerID = *res.IndexerID
+		}
 		key := registryKey(res.GUID)
 		r.seq++
 		r.entries[key] = searchRelease{
@@ -123,7 +127,7 @@ func (r *SearchResultRegistry) remember(results []newznab.SearchResult) {
 			NZBURL:    res.NZBURL,
 			Title:     res.Title,
 			Size:      res.Size,
-			IndexerID: res.IndexerID,
+			IndexerID: indexerID,
 			Protocol:  res.Protocol,
 			seq:       r.seq,
 			at:        now,

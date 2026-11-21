@@ -35,7 +35,7 @@ Bindery imports each download into its own library the normal way. BookOrbit has
 
 ### What to set
 
-In Bindery, set **Import Mode** to `Copy` (Settings, General tab, File Naming). Only Copy was tested here. Hardlink and Move are untested for this recipe. Hardlinks make two names for one file, so anything that edits a file in place, including a BookOrbit option that writes metadata into files if you turn it on, edits both names. Use separate roots:
+In Bindery, set **Import Mode** to `Copy` (Settings, File Naming tab). Only Copy was tested here. Hardlink and Move are untested for this recipe. Hardlinks make two names for one file, so anything that edits a file in place, including a BookOrbit option that writes metadata into files if you turn it on, edits both names. Use separate roots:
 
 | Setting | Value |
 |---|---|
@@ -74,7 +74,7 @@ The lab for this recipe ran on Bindery 1.51.1, before the External mode changes 
 1. Bindery grabs a release and the download client finishes it.
 2. Bindery copies or hardlinks the book into the drop folder under a clean name. The download is never moved, so a torrent would keep seeding. The download shows as handed off and the book stays Wanted. The History row (Folder Imported) names what was dropped: the file for an ebook, the folder for an audiobook.
 3. BookOrbit's Book Dock sees the file, looks the book up and, if it is confident enough, moves it into its library under its own naming. In the lab this took about 17 to 18 seconds, with no rescan and no restart.
-4. Bindery's next library scan finds the file and the book becomes Imported. The scan runs every 6 hours by default (`library.scan_interval`, 15 minutes at the lowest, applied on restart) or on demand from Settings, General tab, Library, **Scan Library**.
+4. Bindery's next library scan finds the file and the book becomes Imported. The scan runs every 6 hours by default (`library.scan_interval`, 15 minutes at the lowest, applied on restart) or on demand from Settings, Storage tab, Library, **Scan Library**.
 
 ### One tree, mounted in both
 
@@ -134,7 +134,7 @@ curl -X PUT https://bookorbit.example.com/api/v1/book-dock/settings \
 
 ### Bindery settings
 
-Under Settings, General tab, File Naming:
+Under Settings, File Naming tab:
 
 | Setting | Value | Default |
 |---|---|---|

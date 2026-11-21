@@ -65,17 +65,26 @@ const (
 // one that never refuses a download.
 func (s *Scanner) contentCheckMode(ctx context.Context, key string) string {
 	if s.settings == nil {
-		return contentCheckWarn
+		return strictOr(ctx, contentCheckWarn)
 	}
 	setting, err := s.settings.Get(ctx, key)
 	if err != nil || setting == nil {
-		return contentCheckWarn
+		return strictOr(ctx, contentCheckWarn)
 	}
 	switch v := strings.ToLower(strings.TrimSpace(setting.Value)); v {
 	case contentCheckOff, contentCheckBlock:
 		return v
 	}
-	return contentCheckWarn
+	return strictOr(ctx, contentCheckWarn)
+}
+
+// strictOr is the mode for a warn reading: block when the download came from
+// Soulseek (soulseek_gate.go), warn otherwise.
+func strictOr(ctx context.Context, mode string) string {
+	if mode == contentCheckWarn && strictContentCheck(ctx) {
+		return contentCheckBlock
+	}
+	return mode
 }
 
 // WithAuthorAliases wires the author alias repo the ebook content check uses to

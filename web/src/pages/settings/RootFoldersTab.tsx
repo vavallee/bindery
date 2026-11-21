@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAutoSave } from './useAutoSave'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import { api, RootFolder } from '../../api/client'
 import { inputCls } from './formStyles'
 import { formatBytesZero } from '../../util/format'
@@ -11,6 +14,7 @@ const DEFAULT_AUDIOBOOK_ROOT_FOLDER_KEY = 'library.defaultAudiobookRootFolderId'
 
 export default function RootFoldersTab() {
   const { t } = useTranslation()
+  const autoSave = useAutoSave()
   const [rootFolders, setRootFolders] = useState<RootFolder[]>([])
   const [newFolderPath, setNewFolderPath] = useState('')
   const [folderError, setFolderError] = useState('')
@@ -36,18 +40,20 @@ export default function RootFoldersTab() {
   }, [])
 
   const setDefault = async (value: string) => {
+    const previous = defaultRootFolderId
     setDefaultRootFolderId(value)
     try {
-      await api.setSetting(DEFAULT_ROOT_FOLDER_KEY, value)
+      await autoSave('library.defaultRootFolderId', () => api.setSetting(DEFAULT_ROOT_FOLDER_KEY, value), { rethrow: true, previous, next: value, revert: to => setDefaultRootFolderId(to ?? '') })
     } catch (err) {
       console.error(err)
     }
   }
 
   const setAudiobookDefault = async (value: string) => {
+    const previous = defaultAudiobookRootFolderId
     setDefaultAudiobookRootFolderId(value)
     try {
-      await api.setSetting(DEFAULT_AUDIOBOOK_ROOT_FOLDER_KEY, value)
+      await autoSave('library.defaultAudiobookRootFolderId', () => api.setSetting(DEFAULT_AUDIOBOOK_ROOT_FOLDER_KEY, value), { rethrow: true, previous, next: value, revert: to => setDefaultAudiobookRootFolderId(to ?? '') })
     } catch (err) {
       console.error(err)
     }
@@ -116,9 +122,11 @@ export default function RootFoldersTab() {
           <label htmlFor="default-root-folder" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.rootfolders.defaultLabel')}
           </label>
+          <FieldValue for="default-root-folder" value={rootFolders.find(rf => String(rf.id) === defaultRootFolderId)?.path ?? t('settings.rootfolders.defaultUnset')} />
           <p className="text-xs text-fg-muted mb-2">{t('settings.rootfolders.defaultHint')}</p>
           <select
             id="default-root-folder"
+            aria-describedby={fieldValueId('default-root-folder')}
             value={defaultRootFolderId}
             onChange={e => setDefault(e.target.value)}
             className={inputCls + ' max-w-md'}
@@ -136,9 +144,11 @@ export default function RootFoldersTab() {
           <label htmlFor="default-audiobook-root-folder" className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
             {t('settings.rootfolders.audiobookDefaultLabel')}
           </label>
+          <FieldValue for="default-audiobook-root-folder" value={rootFolders.find(rf => String(rf.id) === defaultAudiobookRootFolderId)?.path ?? t('settings.rootfolders.audiobookDefaultUnset')} />
           <p className="text-xs text-fg-muted mb-2">{t('settings.rootfolders.audiobookDefaultHint')}</p>
           <select
             id="default-audiobook-root-folder"
+            aria-describedby={fieldValueId('default-audiobook-root-folder')}
             value={defaultAudiobookRootFolderId}
             onChange={e => setAudiobookDefault(e.target.value)}
             className={inputCls + ' max-w-md'}

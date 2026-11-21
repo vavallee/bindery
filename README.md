@@ -136,7 +136,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 - **Grouping editions and translations** of one work under a single book ([#1358](https://github.com/vavallee/bindery/issues/1358)).
 - **Audio conversion, M4B merging and chapter editing.** Audiobookshelf's M4B encoder covers this well.
 - **A built in reader or player, or reading progress sync.** Audiobookshelf, Calibre-Web Automated, Kavita and Komga do this, and Bindery feeds them.
-- **Shadow libraries, IRC, Soulseek and magazines** are out of scope; see the roadmap's standing answers.
+- **Shadow libraries, IRC and magazines** are out of scope; see the roadmap's standing answers.
 
 ## Features
 
@@ -144,7 +144,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 <summary><strong>Following authors and finding books</strong></summary>
 
 - Author monitoring with per install and per author modes (all, future, latest, none, or only the series you pick), per book monitor toggles, and a wanted to imported workflow with live download progress.
-- Unattended release discovery: monitored authors are checked for new books daily, weekly or monthly. It ships off; turn it on in **Settings, General, New release discovery**.
+- Unattended release discovery: monitored authors are checked for new books daily, weekly or monthly. It ships off; turn it on in **Settings, Schedules, New release discovery**.
 - Series pages with positions, gap detection against Hardcover, Fill gaps, and adding a whole Hardcover series in one step.
 - Hardcover list sync on an interval, Goodreads CSV import, and a Discover page with recommendations from your library: next in series, new from monitored authors, genre similarity and your Hardcover wishlist.
 - A release calendar of upcoming books.
@@ -155,7 +155,7 @@ Being upfront saves everyone time. These are tracked, and the [roadmap](docs/ROA
 <summary><strong>Search and downloads</strong></summary>
 
 - Newznab and Torznab indexers queried in parallel and ranked by your format order, edition tags (RETAIL, UNABRIDGED, ABRIDGED), year, grabs, size and ISBN match. Prowlarr can sync its indexers into Bindery, with seed ratio and seed time per indexer.
-- SABnzbd, NZBGet, qBittorrent, Transmission, Deluge and rTorrent or ruTorrent, with SSL and URL base support. Pin an indexer to a download client, and remove a torrent once it is imported and seeded.
+- SABnzbd, NZBGet, qBittorrent, Transmission, Deluge and rTorrent or ruTorrent, with SSL and URL base support, plus Soulseek through slskd as an opt in client (0.26.0 or newer). With one enabled, interactive search lists Soulseek results beside your indexer results, marked with a Soulseek badge, and you can grab them from the search page (interactive only, never automatic). Pin an indexer to a download client, and remove a torrent once it is imported and seeded.
 - **Diagnose** on each download client checks the connection, the category, where grabs land, the path remap, read access, and whether imports can hardlink, then names the first thing to fix. No shell needed, which matters in a distroless image.
 - Automatic search on an interval and on add, interactive search per book, and a global pause. Quality profiles per media type, language filter, delay profiles, freeleech only indexers, a blocklist, and a per indexer daily query limit with polite back off when an indexer refuses.
 - Failed downloads can be retried one at a time or all at once. Releases the filters set aside stay visible in interactive search with the reason, and you can still grab them.
@@ -230,6 +230,9 @@ All public APIs, no scraping. Audible's catalogue endpoint and Audnex are open b
 | [Audnex](https://api.audnex.us) | None | Audiobook narrator, duration and cover by ASIN |
 | [Audible](https://audible.com) | None | Audiobook ASINs the others miss |
 | [Wikidata](https://www.wikidata.org) | None | Author photos and bios, found by authority ID; off by default |
+| [RanobeDB](https://ranobedb.org) | None | Official English titles for light novels, for books added after it is switched on (existing books keep their titles); off by default. Data under the ODbL, API for non commercial use ([credit and terms](docs/third-party-data.md#ranobedb)) |
+
+Contains information from [RanobeDB](https://ranobedb.org), which is made available here under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/). (Only when the opt in RanobeDB setting is on: it can give a light novel its official English title.)
 
 Each enricher can be switched off in **Settings, Metadata**. Covers are fetched and cached by the server, so your browser never contacts third party image hosts, and a book no provider has a cover for takes one from its own file.
 
@@ -262,6 +265,7 @@ The full reference, including path remapping, API key seeding, trusted proxies a
 |---|---|
 | **Usenet clients** | SABnzbd, NZBGet |
 | **Torrent clients** | qBittorrent, Transmission, Deluge, rTorrent and ruTorrent (XML-RPC over HTTP or SCGI) |
+| **Soulseek (opt in)** | slskd 0.26.0 or newer, added as a download client. It is off until you add one. Interactive search then shows Soulseek results and you can grab them by hand; the automatic search never uses Soulseek. The [setup guide](docs/DEPLOYMENT.md#slskd-soulseek) covers the privacy cost |
 | **Indexers** | Newznab and Torznab, with per indexer categories; Prowlarr indexer sync |
 | **Lists and imports** | Hardcover lists (synced), Goodreads CSV, Readarr database, Calibre `metadata.db`, Audiobookshelf, BookOrbit |
 | **Library tools** | Calibre (`calibredb` or the Bindery Bridge plugin), Calibre-Web Automated ingest, Grimmory (preview), a post import drop folder for anything that watches one ([guide](docs/Calibre-Integration-Wiki.md)) |

@@ -1,10 +1,13 @@
 import { FormEvent, useCallback, useEffect, useState, useId } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAutoSave } from './useAutoSave'
 import { useConfirmDialog } from '../../components/useConfirmDialog'
 import { api, QualityProfile } from '../../api/client'
 import { inputCls, labelCls } from './formStyles'
 import { dangerLink, primaryFill } from '../../components/buttons'
 import FormatList from './FormatList'
+import FieldValue from './FieldValue'
+import { fieldValueId } from './fieldValueId'
 import { EditorItem, partitionItems } from './qualitySummary'
 
 // EBOOK_FORMATS and AUDIOBOOK_FORMATS mirror formatTokens in
@@ -113,6 +116,7 @@ const DEFAULT_QUALITY_PROFILE_SETTING = 'author.default_quality_profile_id'
 // section simply stays quiet instead of breaking the profile list below it.
 function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) {
   const { t } = useTranslation()
+  const autoSave = useAutoSave()
   const fid = useId()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [defaultId, setDefaultId] = useState<number | null>(null)
@@ -157,7 +161,7 @@ function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) 
     setDefaultId(value ? Number(value) : null)
     setDefaultErr(null)
     try {
-      await api.setSetting(DEFAULT_QUALITY_PROFILE_SETTING, value)
+      await autoSave('author.default_quality_profile_id', () => api.setSetting(DEFAULT_QUALITY_PROFILE_SETTING, value), { rethrow: true })
     } catch (e) {
       // Put the select back on what the server still holds, so it never
       // shows a default that was not saved.
@@ -193,9 +197,11 @@ function NewAuthorQualityDefaults({ profiles }: { profiles: QualityProfile[] }) 
         <label htmlFor={`${fid}-default`} className="block text-sm font-medium text-slate-800 dark:text-zinc-200 mb-1">
           {t('settings.quality.defaultProfileLabel')}
         </label>
+        <FieldValue for={`${fid}-default`} value={profiles.find(p => p.id === effectiveDefault)?.name ?? ''} />
         <p className="text-xs text-fg-muted mb-2">{t('settings.quality.defaultProfileHint')}</p>
         <select
           id={`${fid}-default`}
+          aria-describedby={fieldValueId(`${fid}-default`)}
           value={effectiveDefault ?? ''}
           onChange={e => { void saveDefault(e.target.value) }}
           className="bg-slate-200 dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-md px-3 py-2 text-sm"
