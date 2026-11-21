@@ -14,6 +14,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/releasefail"
 )
 
 // importRetryLimit is the maximum number of times CheckDownloads will
@@ -611,8 +612,37 @@ func (s *Scanner) applyEmbeddedLanguage(ctx context.Context, book *models.Book, 
 }
 
 func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, message string) {
+	s.markDownloadFailedClass(ctx, dl, message, "")
+}
+
+// markDownloadFailedCounted fails a torrent for a reason that may be the
+// release's, and blocklists the release once it has failed the same way
+// releasefail.EscalateAfter times in a row (#4111). One failure is retried
+// after the cooldown as before: the usual cause of a torrent missing from or
+// errored in the client is on Bindery's side of the wire, and a blocklist row
+// is permanent. detail names the failure in the blocklist reason and holds
+// nothing taken from the client.
+func (s *Scanner) markDownloadFailedCounted(ctx context.Context, dl *models.Download, message string, class releasefail.Class, detail string) {
+	verdict := releasefail.Assess(ctx, s.history, dl, class, time.Now().UTC())
+	if verdict.Block {
+		message += fmt.Sprintf(". Blocklisted after %d failures in a row.", verdict.Count)
+	}
+	s.markDownloadFailedClass(ctx, dl, message, string(class))
+	if verdict.Block {
+		releasefail.Blocklist(ctx, s.blocklist, dl, releasefail.Reason(detail, verdict.Count))
+	}
+}
+
+// markDownloadFailedClass is markDownloadFailed with the failure class stored
+// on the history event, which is what releasefail counts. An empty class stores
+// none, and the failure is not counted.
+func (s *Scanner) markDownloadFailedClass(ctx context.Context, dl *models.Download, message, class string) {
 	s.setDownloadError(ctx, dl.ID, message)
-	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{"guid": dl.GUID, "message": message})
+	data := map[string]string{"guid": dl.GUID, "message": message}
+	if class != "" {
+		data["class"] = class
+	}
+	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, dl.OwnerUserID, data)
 	s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
 		"title":   dl.Title,
 		"message": message,
@@ -739,10 +769,13 @@ const neverArrivedGrace = 10 * time.Minute
 //     slow to publish the torrent is left alone.
 //
 // The download is failed rather than blocked: nothing was placed on disk and
-// nothing needs unpicking, so this is recoverable by grabbing again. It
-// deliberately does not blocklist the release, because the usual cause is on
+// nothing needs unpicking, so this is recoverable by grabbing again. The first
+// failures do not blocklist the release, because the usual cause is on
 // Bindery's side of the wire and blocklisting a good release for that would
-// cost the user the best copy.
+// cost the user the best copy. But the grab is retried every
+// models.DeadRegrabCooldown, so a release that never arrives
+// releasefail.EscalateAfter times in a row is blocklisted (#4111): by then it
+// is the release, not one restart of the client.
 func (s *Scanner) failDownloadThatNeverArrived(
 	ctx context.Context,
 	dl *models.Download,
@@ -770,7 +803,7 @@ func (s *Scanner) failDownloadThatNeverArrived(
 	const reason = "never reached the download client — the client has no record of it, so nothing was downloaded. Check the indexer and the client are both reachable, then grab it again"
 	slog.Warn("failing a download the client never received",
 		"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
-	s.markDownloadFailed(ctx, dl, reason)
+	s.markDownloadFailedCounted(ctx, dl, reason, releasefail.ClassNeverArrived, "never reached the download client")
 }
 
 // alreadyImportedFormat reports whether book already has a tracked, on-disk

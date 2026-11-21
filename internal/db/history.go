@@ -272,3 +272,36 @@ func (r *HistoryRepo) query(ctx context.Context, q string, args ...interface{}) 
 	}
 	return events, rows.Err()
 }
+
+// CountReleaseFailures counts the downloadFailed events one release has had
+// since `since`, restricted to the given failure classes (the "class" field of
+// the event data, see package releasefail). Only events after the release's
+// last successful import count, so a release that worked resets its tally; the
+// import is found by source title, which is the release title on both events.
+func (r *HistoryRepo) CountReleaseFailures(ctx context.Context, guid, title string, since time.Time, classes []string) (int, error) {
+	if len(classes) == 0 {
+		return 0, nil
+	}
+	var lastImport time.Time
+	err := r.db.QueryRowContext(ctx,
+		`SELECT created_at FROM history WHERE event_type = ? AND source_title = ? ORDER BY created_at DESC LIMIT 1`,
+		models.HistoryEventBookImported, title).Scan(&lastImport)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("count release failures: %w", err)
+	}
+	if lastImport.After(since) {
+		since = lastImport
+	}
+	args := []any{models.HistoryEventDownloadFailed, guid, since}
+	marks := make([]string, len(classes))
+	for i, c := range classes {
+		marks[i] = "?"
+		args = append(args, c)
+	}
+	var n int
+	q := `SELECT COUNT(*) FROM history WHERE event_type = ? AND json_extract(data, '$.guid') = ? AND created_at > ? AND json_extract(data, '$.class') IN (` + strings.Join(marks, ",") + `)`
+	if err := r.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count release failures: %w", err)
+	}
+	return n, nil
+}

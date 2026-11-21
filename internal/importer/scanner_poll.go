@@ -20,6 +20,7 @@ import (
 	"github.com/vavallee/bindery/internal/downloader/transmission"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
+	"github.com/vavallee/bindery/internal/releasefail"
 )
 
 // checkSABnzbdDownloads polls SABnzbd for status changes.
@@ -748,7 +749,7 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			s.tryImportQbittorrent(withTorrentOwnFolder(ctx, qbitHasOwnFolder(torrent)), qb, client, &dl, downloadPath, bookFiles)
 		} else if isFailed && dl.Status != models.StateFailed {
 			slog.Warn("download failed", "title", dl.Title, "state", torrent.State)
-			s.markDownloadFailed(ctx, &dl, "Torrent failed in qBittorrent")
+			s.markDownloadFailedCounted(ctx, &dl, "Torrent failed in qBittorrent", releasefail.ClassClientError, "qBittorrent reported the torrent as errored")
 		}
 	}
 
@@ -830,7 +831,7 @@ func (s *Scanner) checkDelugeDownloads(ctx context.Context, client *models.Downl
 			s.tryImportDeluge(ctx, &dl, downloadPath, bookFiles)
 		case isFailed && dl.Status != models.StateFailed:
 			slog.Warn("download failed", "title", dl.Title, "state", t.State)
-			s.markDownloadFailed(ctx, &dl, "Torrent failed in Deluge")
+			s.markDownloadFailedCounted(ctx, &dl, "Torrent failed in Deluge", releasefail.ClassClientError, "Deluge reported the torrent as errored")
 		}
 	}
 

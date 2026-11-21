@@ -540,6 +540,20 @@ Each of these is per step: a paused unpack step never stops `FAILURE/HEALTH` or 
 
 SABnzbd needs none of this: it refuses to start downloading without unrar, skips 7-Zip archives when 7-Zip is missing, and reports a full disk or a failed move with its own messages, so its content failures are always blocklisted.
 
+#### Torrents that keep failing
+
+Torrent failures are the other half of the same loop. They are not blocklisted on the first failure, because most of them are on the indexer's or on Bindery's side of the wire and a Blocklist entry is permanent. Instead Bindery counts, per release, the failures that could be the release's, and blocklists it after three in a row inside seven days. A release that imports in between starts again from zero. The entry is scoped to the release and its reason names the failure and the count, for example `downloadFailed: indexer HTTP 429, failed 3 times in a row`. The History tab shows each failure with the same wording.
+
+| Failure | Counts toward the blocklist | Also |
+|---|---|---|
+| The indexer answered the download link with HTTP 429, a 5xx or a "disabled till" notice | yes | Bindery leaves that indexer alone for a while: until the time it gave (capped at 24 hours, at least 5 minutes), otherwise one hour. Its releases are passed over and the search tries the next one. The pause is held in memory, so a restart forgets it. |
+| The indexer answered 404 or 410 (the link is gone) | yes | |
+| The grab was sent but the client has no record of the torrent | yes | A single occurrence is usually a client restart and is retried as before. |
+| qBittorrent or Deluge reports the torrent as errored | yes | Not an immediate ban: qBittorrent's error state is usually a disk fault such as a full disk or an unwritable save path, which is your host and not the release. |
+| The client is unreachable, a timeout, a rejected credential, or an HTTP error from the client itself | no | Retried after the six hour wait, however often it repeats. |
+
+An indexer that rate limits the download link of one release usually does so for the next one too, which is why the pause is per indexer. Nothing from the error text, such as a URL with an API key, is copied into History or the Blocklist.
+
 `importBlocked` is deliberately left to you. Those files downloaded fine and are still on disk; what failed was the import. The sweep cannot tell whether they are still there, and re-downloading them would fetch bytes you already have and leave the old torrent in your client with nothing tracking it, so a blocked row is only ever re-grabbed when you ask for it. Use **Retry import** if the files are still in place, and **Grab** if they are gone.
 
 Earlier releases let a failed row block the release permanently, and the skip was silent: the log showed `auto-grabbing book` and then nothing, as though the grab had gone ahead. Every skip now writes a line naming the release, its GUID, the blocking Queue row and its status, and the `book search finished` line for that book ends with an `outcome` that says the same thing.
