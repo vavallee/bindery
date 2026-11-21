@@ -326,11 +326,14 @@ func (s *Scanner) checkTransmissionDownloads(ctx context.Context, client *models
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
-		s.noteClientSeen(ctx, &dl)
 
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
+		// Only a row that can still reach failDownloadThatNeverArrived needs the
+		// sighting; after a restart this keeps the first poll from writing one
+		// UPDATE per historical torrent still listed in the client.
+		s.noteClientSeen(ctx, &dl)
 
 		isComplete, isStopped := transmissionCompletion(torrent.Status, torrent.PercentDone)
 		stopError := strings.TrimSpace(torrent.ErrorString)
@@ -608,11 +611,14 @@ func (s *Scanner) checkQbittorrentDownloads(ctx context.Context, client *models.
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
-		s.noteClientSeen(ctx, &dl)
 
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
+		// Only a row that can still reach failDownloadThatNeverArrived needs the
+		// sighting; after a restart this keeps the first poll from writing one
+		// UPDATE per historical torrent still listed in the client.
+		s.noteClientSeen(ctx, &dl)
 
 		isComplete, isFailed := qbitCompletion(torrent)
 
@@ -802,10 +808,13 @@ func (s *Scanner) checkDelugeDownloads(ctx context.Context, client *models.Downl
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
-		s.noteClientSeen(ctx, &dl)
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
+		// Only a row that can still reach failDownloadThatNeverArrived needs the
+		// sighting; after a restart this keeps the first poll from writing one
+		// UPDATE per historical torrent still listed in the client.
+		s.noteClientSeen(ctx, &dl)
 
 		// Deluge reports a finished torrent as "Seeding" (or "Paused" when
 		// seeding is disabled / ratio met) with progress 100. Treat any
@@ -939,10 +948,13 @@ func (s *Scanner) checkRtorrentDownloads(ctx context.Context, client *models.Dow
 			continue
 		}
 		seenSourceIDs[dl.ID] = true
-		s.noteClientSeen(ctx, &dl)
 		if dl.Status == models.StateImported || dl.Status == models.StateFailed {
 			continue
 		}
+		// Only a row that can still reach failDownloadThatNeverArrived needs the
+		// sighting; after a restart this keeps the first poll from writing one
+		// UPDATE per historical torrent still listed in the client.
+		s.noteClientSeen(ctx, &dl)
 
 		// d.message is rTorrent's per-torrent error slot. It also carries benign
 		// tracker chatter on a healthy torrent, so it only counts as a failure

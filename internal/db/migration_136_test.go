@@ -113,7 +113,7 @@ func TestMarkClientSeenWritesOnce(t *testing.T) {
 	if seen, _ := repo.ClientSeen(ctx, d.ID); seen {
 		t.Fatal("a new row reads as seen")
 	}
-	first, err := repo.MarkClientSeen(ctx, d.ID)
+	first, err := repo.MarkClientSeen(ctx, d.ID, d.AddedAt)
 	if err != nil || !first {
 		t.Fatalf("first sighting = %v (%v), want true", first, err)
 	}
@@ -122,7 +122,7 @@ func TestMarkClientSeenWritesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(5 * time.Millisecond)
-	again, err := repo.MarkClientSeen(ctx, d.ID)
+	again, err := repo.MarkClientSeen(ctx, d.ID, d.AddedAt)
 	if err != nil || again {
 		t.Fatalf("second sighting = %v (%v), want false: no write", again, err)
 	}
@@ -148,7 +148,7 @@ func TestRegrabClearsClientSeen(t *testing.T) {
 	if err := repo.Create(ctx, d); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.MarkClientSeen(ctx, d.ID); err != nil {
+	if _, err := repo.MarkClientSeen(ctx, d.ID, d.AddedAt); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.SetError(ctx, d.ID, "removed"); err != nil {
@@ -160,5 +160,49 @@ func TestRegrabClearsClientSeen(t *testing.T) {
 	}
 	if seen, _ := repo.ClientSeen(ctx, d.ID); seen {
 		t.Fatal("a re-grabbed row still reads as seen by the client")
+	}
+}
+
+// A poller that loaded the row before a re-grab holds the old attempt's
+// added_at. Its sighting must not stamp the new attempt, and a copy loaded
+// after the re-grab (read back through the driver, as a poll does) still can.
+func TestMarkClientSeenIgnoresAStaleAttempt(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	repo := NewDownloadRepo(database)
+	d := &models.Download{GUID: "g-stale", Title: "t", Status: models.StateDownloading, Protocol: "torrent"}
+	if err := repo.Create(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := repo.GetByGUID(ctx, "g-stale")
+	if err != nil || stale == nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetError(ctx, d.ID, "removed"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if ok, err := repo.RetryDeadForAutoGrab(ctx, d, time.Now().Add(time.Hour)); err != nil || !ok {
+		t.Fatalf("regrab claim = %v (%v)", ok, err)
+	}
+
+	stamped, err := repo.MarkClientSeen(ctx, stale.ID, stale.AddedAt)
+	if err != nil || stamped {
+		t.Fatalf("a stale copy stamped the re-grabbed row: %v (%v)", stamped, err)
+	}
+	if seen, _ := repo.ClientSeen(ctx, d.ID); seen {
+		t.Fatal("the new attempt reads as seen from the old attempt's sighting")
+	}
+
+	fresh, err := repo.GetByGUID(ctx, "g-stale")
+	if err != nil || fresh == nil {
+		t.Fatal(err)
+	}
+	if stamped, err := repo.MarkClientSeen(ctx, fresh.ID, fresh.AddedAt); err != nil || !stamped {
+		t.Fatalf("the current attempt could not be stamped from a re-read row: %v (%v)", stamped, err)
 	}
 }

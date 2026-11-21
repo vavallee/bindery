@@ -850,7 +850,7 @@ func (s *Scanner) noteClientSeen(ctx context.Context, dl *models.Download) {
 		return
 	}
 	s.clientSeenMu.Unlock()
-	if _, err := s.downloads.MarkClientSeen(ctx, dl.ID); err != nil {
+	if _, err := s.downloads.MarkClientSeen(ctx, dl.ID, dl.AddedAt); err != nil {
 		slog.Warn("could not record that the client lists a download", "download_id", dl.ID, "error", err)
 		return
 	}

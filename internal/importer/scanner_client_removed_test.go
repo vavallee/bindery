@@ -23,7 +23,12 @@ func TestNeverArrived_RemovedAfterBeingSeenIsNeverCounted(t *testing.T) {
 	dl := torrentFailureDownload(t, ctx, f, "guid-cancelled")
 
 	for i := 0; i < 3*releasefail.EscalateAfter; i++ {
-		if _, err := f.downloads.MarkClientSeen(ctx, dl.ID); err != nil {
+		// Stamp the attempt as a poll would: from the row as stored.
+		stored, err := f.downloads.GetByGUID(ctx, "guid-cancelled")
+		if err != nil || stored == nil {
+			t.Fatal(err)
+		}
+		if _, err := f.downloads.MarkClientSeen(ctx, stored.ID, stored.AddedAt); err != nil {
 			t.Fatal(err)
 		}
 		neverArrived(ctx, f, dl)

@@ -678,10 +678,14 @@ func (r *DownloadRepo) ImportManual(ctx context.Context, id int64) (bool, error)
 // client_seen_at is still NULL, so every later call writes nothing. It reports
 // whether this call was the first sighting. A re-grab clears the column with
 // the other per grab columns, so each attempt is seen on its own.
-func (r *DownloadRepo) MarkClientSeen(ctx context.Context, id int64) (bool, error) {
+//
+// addedAt is the attempt the caller loaded the row for. A re-grab resets
+// added_at, so a poller still holding a copy from before the re-grab matches
+// nothing and cannot stamp the new attempt as seen.
+func (r *DownloadRepo) MarkClientSeen(ctx context.Context, id int64, addedAt time.Time) (bool, error) {
 	res, err := r.db.ExecContext(ctx,
-		"UPDATE downloads SET client_seen_at=? WHERE id=? AND client_seen_at IS NULL",
-		time.Now().UTC(), id)
+		"UPDATE downloads SET client_seen_at=? WHERE id=? AND added_at=? AND client_seen_at IS NULL",
+		time.Now().UTC(), id, addedAt.UTC())
 	if err != nil {
 		return false, err
 	}
