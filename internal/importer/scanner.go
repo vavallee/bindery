@@ -66,6 +66,11 @@ const (
 
 // Scanner checks for completed downloads and imports them into the library.
 type Scanner struct {
+	// clientSeen remembers, per download, the attempt (its added_at) whose
+	// first sighting in the client has been written, so later polls do not
+	// touch the row (#4111). In memory: a restart costs one no-op UPDATE.
+	clientSeenMu sync.Mutex
+	clientSeen   map[int64]time.Time
 	// windowsPaths makes path comparisons fold case and trailing dots, as
 	// Windows does (#3468). Set from the host OS; tests inject it.
 	windowsPaths bool

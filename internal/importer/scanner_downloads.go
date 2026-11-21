@@ -14,6 +14,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/releasefail"
 )
 
 // importRetryLimit is the maximum number of times CheckDownloads will
@@ -611,8 +612,40 @@ func (s *Scanner) applyEmbeddedLanguage(ctx context.Context, book *models.Book, 
 }
 
 func (s *Scanner) markDownloadFailed(ctx context.Context, dl *models.Download, message string) {
+	s.markDownloadFailedClass(ctx, dl, message, "")
+}
+
+// markDownloadFailedCounted fails a torrent for a reason that may be the
+// release's, and blocklists the release once it has failed the same way
+// releasefail.EscalateAfter times in a row (#4111). One failure is retried
+// after the cooldown as before: the usual cause of a torrent missing from or
+// errored in the client is on Bindery's side of the wire, and a blocklist row
+// is permanent. detail names the failure in the blocklist reason and holds
+// nothing taken from the client.
+func (s *Scanner) markDownloadFailedCounted(ctx context.Context, dl *models.Download, message string, class releasefail.Class, detail string) {
+	verdict := releasefail.Assess(ctx, s.history, dl, class, time.Now().UTC())
+	if verdict.Block {
+		message += fmt.Sprintf(". Blocklisted after %d failures in a row.", verdict.Count)
+	}
+	s.markDownloadFailedClass(ctx, dl, message, string(verdict.Class))
+	if verdict.Block {
+		releasefail.Blocklist(ctx, s.blocklist, dl, releasefail.Reason(detail, verdict.Count))
+	}
+}
+
+// markDownloadFailedClass is markDownloadFailed with the failure class stored
+// on the history event, which is what releasefail counts. An empty class stores
+// none, and the failure is not counted.
+func (s *Scanner) markDownloadFailedClass(ctx context.Context, dl *models.Download, message, class string) {
 	s.setDownloadError(ctx, dl.ID, message)
-	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, dl.OwnerUserID, map[string]string{"guid": dl.GUID, "message": message})
+	data := map[string]string{"guid": dl.GUID, "message": message}
+	if class != "" {
+		data["class"] = class
+		if dl.IndexerID != nil {
+			data["indexerId"] = strconv.FormatInt(*dl.IndexerID, 10)
+		}
+	}
+	s.createHistoryEvent(ctx, models.HistoryEventDownloadFailed, dl.Title, dl.BookID, dl.OwnerUserID, data)
 	s.notify(ctx, notifierEventDownloadFailed, map[string]interface{}{
 		"title":   dl.Title,
 		"message": message,
@@ -739,10 +772,13 @@ const neverArrivedGrace = 10 * time.Minute
 //     slow to publish the torrent is left alone.
 //
 // The download is failed rather than blocked: nothing was placed on disk and
-// nothing needs unpicking, so this is recoverable by grabbing again. It
-// deliberately does not blocklist the release, because the usual cause is on
+// nothing needs unpicking, so this is recoverable by grabbing again. The first
+// failures do not blocklist the release, because the usual cause is on
 // Bindery's side of the wire and blocklisting a good release for that would
-// cost the user the best copy.
+// cost the user the best copy. But the grab is retried every
+// models.DeadRegrabCooldown, so a release that never arrives
+// releasefail.EscalateAfter times in a row is blocklisted (#4111): by then it
+// is the release, not one restart of the client.
 func (s *Scanner) failDownloadThatNeverArrived(
 	ctx context.Context,
 	dl *models.Download,
@@ -767,10 +803,63 @@ func (s *Scanner) failDownloadThatNeverArrived(
 	if since.IsZero() || time.Since(since) < neverArrivedGrace {
 		return
 	}
-	const reason = "never reached the download client — the client has no record of it, so nothing was downloaded. Check the indexer and the client are both reachable, then grab it again"
+	if dl.Protocol != "torrent" {
+		// Usenet keeps the plain failure; #3049's rules apply to it.
+		slog.Warn("failing a download the client never received",
+			"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
+		s.markDownloadFailed(ctx, dl, neverArrivedReason)
+		return
+	}
+	// A client that listed the torrent at some point and no longer does had
+	// it removed (cancelled, dropped, wiped): that says nothing about the
+	// release and is never counted. Only a torrent no poll ever found is
+	// "never arrived". A read error is treated as seen, the side that cannot
+	// blocklist.
+	seen, err := s.downloads.ClientSeen(ctx, dl.ID)
+	if err != nil {
+		slog.Warn("could not read whether the client ever listed a download", "download_id", dl.ID, "error", err)
+		seen = true
+	}
+	if seen {
+		slog.Warn("failing a download the client no longer has",
+			"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
+		s.markDownloadFailedClass(ctx, dl, clientRemovedReason, string(releasefail.ClassClientRemoved))
+		return
+	}
 	slog.Warn("failing a download the client never received",
 		"title", dl.Title, "download_id", dl.ID, "grabbed_at", since)
-	s.markDownloadFailed(ctx, dl, reason)
+	s.markDownloadFailedCounted(ctx, dl, neverArrivedReason, releasefail.ClassNeverArrived, "never reached the download client")
+}
+
+const (
+	neverArrivedReason = "never reached the download client — the client has no record of it, so nothing was downloaded. Check the indexer and the client are both reachable, then grab it again"
+	// clientRemovedReason is for a download the client did have: it was
+	// removed there, by a person or by the client.
+	clientRemovedReason = "removed from the download client — the client listed it earlier and no longer has it. If you did not remove it, check the client's settings for automatic removal; it will be grabbed again"
+)
+
+// noteClientSeen records the first time a poll finds dl's source in its
+// client (#4111), which is what lets failDownloadThatNeverArrived tell a
+// torrent the client never received from one it later lost. The write happens
+// once per attempt: the attempt is remembered by the row's added_at, which a
+// re-grab resets, and the repo's UPDATE matches only a row still unset.
+func (s *Scanner) noteClientSeen(ctx context.Context, dl *models.Download) {
+	s.clientSeenMu.Lock()
+	if at, ok := s.clientSeen[dl.ID]; ok && at.Equal(dl.AddedAt) {
+		s.clientSeenMu.Unlock()
+		return
+	}
+	s.clientSeenMu.Unlock()
+	if _, err := s.downloads.MarkClientSeen(ctx, dl.ID, dl.AddedAt); err != nil {
+		slog.Warn("could not record that the client lists a download", "download_id", dl.ID, "error", err)
+		return
+	}
+	s.clientSeenMu.Lock()
+	if s.clientSeen == nil {
+		s.clientSeen = map[int64]time.Time{}
+	}
+	s.clientSeen[dl.ID] = dl.AddedAt
+	s.clientSeenMu.Unlock()
 }
 
 // alreadyImportedFormat reports whether book already has a tracked, on-disk
