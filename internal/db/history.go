@@ -367,3 +367,19 @@ func (r *HistoryRepo) IndexerFailuresElsewhere(ctx context.Context, indexerID in
 	}
 	return n, nil
 }
+
+// IndexerServedElsewhere reports whether a release other than excludeGUID was
+// sent to a download client from this indexer ("indexerId" on the grabbed
+// event) after `since`: the evidence that the indexer is otherwise serving.
+func (r *HistoryRepo) IndexerServedElsewhere(ctx context.Context, indexerID int64, excludeGUID string, since time.Time) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM history
+		WHERE event_type = ? AND created_at > ?
+		AND CAST(json_extract(data, '$.indexerId') AS TEXT) = ?
+		AND COALESCE(json_extract(data, '$.guid'), '') != ?`,
+		models.HistoryEventGrabbed, since, fmt.Sprint(indexerID), excludeGUID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("indexer served elsewhere: %w", err)
+	}
+	return n > 0, nil
+}

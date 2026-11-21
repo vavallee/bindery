@@ -80,11 +80,32 @@ func blocklistEntries(t *testing.T, f *regrabFixture) []models.BlocklistEntry {
 	return entries
 }
 
-// failSpaced records n failures a retry apart, the way the cooldown spaces them.
+// serveOther records that the indexer sent a different release to the client,
+// which is what an indexer that is otherwise serving looks like.
+func serveOther(t *testing.T, f *regrabFixture, dl *models.Download) {
+	t.Helper()
+	data := `{"guid":"g-served","indexerId":` + strconv.FormatInt(*dl.IndexerID, 10) + `}`
+	if err := f.s.history.Create(context.Background(), &models.HistoryEvent{
+		EventType: models.HistoryEventGrabbed, SourceTitle: "Served Elsewhere", Data: data,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// failSpaced records n failures a retry apart, the way the cooldown spaces
+// them, with the indexer serving other releases in between.
 func failSpaced(t *testing.T, f *regrabFixture, dl *models.Download, msg string, n int) {
+	t.Helper()
+	failSpacedServed(t, f, dl, msg, n, true)
+}
+
+func failSpacedServed(t *testing.T, f *regrabFixture, dl *models.Download, msg string, n int, served bool) {
 	t.Helper()
 	for i := 0; i < n; i++ {
 		f.s.recordSendFailure(context.Background(), dl, errors.New(msg))
+		if served {
+			serveOther(t, f, dl)
+		}
 		f.s.indexerBackoffMu.Lock()
 		f.s.indexerBackoff = nil // the pause has lapsed by the next retry
 		f.s.indexerBackoffMu.Unlock()
@@ -230,6 +251,17 @@ func TestRecordSendFailure_IndexerWideFaultIsNotCounted(t *testing.T) {
 	failSpaced(t, f, dl, indexer429, 2*releasefail.EscalateAfter)
 	if n := len(blocklistEntries(t, f)); n != 0 {
 		t.Fatalf("an indexer wide outage blocklisted a release (%d entries)", n)
+	}
+}
+
+// An outage is not the release: retries of one release through an indexer that
+// serves nothing in between never add up to a blocklist entry, however long it
+// lasts.
+func TestRecordSendFailure_OutageDoesNotEscalate(t *testing.T) {
+	f, dl := failureFixture(t)
+	failSpacedServed(t, f, dl, indexer429, 4*releasefail.EscalateAfter, false)
+	if n := len(blocklistEntries(t, f)); n != 0 {
+		t.Fatalf("retries through an outage blocklisted the release (%d entries)", n)
 	}
 }
 
@@ -379,6 +411,8 @@ func torrentFixture(t *testing.T) *regrabFixture {
 // lets the indexer pause lapse, as six hours do.
 func retryAfterCooldown(t *testing.T, f *regrabFixture) {
 	t.Helper()
+	idx, _ := f.s.indexers.List(context.Background())
+	serveOther(t, f, &models.Download{IndexerID: &idx[0].ID})
 	row, err := f.downloads.GetByGUID(context.Background(), regrabGUID)
 	if err != nil || row == nil {
 		t.Fatalf("row: %v", err)

@@ -165,3 +165,24 @@ func TestIndexerFailuresElsewhere(t *testing.T) {
 		t.Fatalf("a release's own failure counted as elsewhere: %d", n)
 	}
 }
+
+func TestIndexerServedElsewhere(t *testing.T) {
+	f := newStreakFixture(t)
+	ctx := context.Background()
+	f.add(models.HistoryEventGrabbed, "A", 2*time.Hour, map[string]string{"guid": "a", "indexerId": "7"})
+	f.add(models.HistoryEventGrabbed, "B", time.Hour, map[string]string{"guid": "b", "indexerId": "8"})
+	f.add(models.HistoryEventGrabbed, "G", time.Hour, map[string]string{"guid": "g", "indexerId": "7"})
+	if ok, err := f.repo.IndexerServedElsewhere(ctx, 7, "g", f.now.Add(-3*time.Hour)); err != nil || !ok {
+		t.Fatalf("served = %v (%v), want true", ok, err)
+	}
+	if ok, _ := f.repo.IndexerServedElsewhere(ctx, 7, "g", f.now.Add(-time.Hour/2)); ok {
+		t.Error("a grab before `since` counted")
+	}
+	if ok, _ := f.repo.IndexerServedElsewhere(ctx, 7, "a", f.now.Add(-3*time.Hour)); ok {
+		// only g (excluded=a) remains: g is another release, so it counts
+		t.Log("g counts for a")
+	}
+	if ok, _ := f.repo.IndexerServedElsewhere(ctx, 9, "g", f.now.Add(-3*time.Hour)); ok {
+		t.Error("another indexer's grab counted")
+	}
+}

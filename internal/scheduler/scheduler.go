@@ -1836,6 +1836,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 			"guid":      best.GUID,
 			"author":    authorName,
 			"indexer":   best.IndexerName,
+			"indexerId": resultIndexerID(best),
 			"protocol":  best.Protocol,
 			"size":      best.Size,
 			"mediaType": mediaType,

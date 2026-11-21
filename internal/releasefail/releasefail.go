@@ -209,6 +209,9 @@ type Verdict struct {
 //     way in the last IndexerWideWindow, because that is an indexer wide fault;
 //   - a never-arrived failure is not counted when the indexer failed releases
 //     in that window, for the same reason;
+//   - a repeated indexer failure is counted only if the indexer sent another
+//     release to a client since this release last failed, so a long outage
+//     cannot add up across retries;
 //   - one inside MinSpacing of the last counted failure is recorded but adds
 //     nothing (see HistoryRepo.ReleaseFailureStreak).
 //
@@ -243,6 +246,20 @@ func Assess(ctx context.Context, history *db.HistoryRepo, dl *models.Download, c
 	v.Count = prior
 	if last.IsZero() || now.Sub(last) >= MinSpacing {
 		v.Count = prior + 1
+	}
+	// A repeated indexer failure counts only if the indexer served another
+	// release since this one last failed: otherwise every retry of a release
+	// through an outage would add up, and an outage is not the release.
+	if class == ClassIndexer && prior > 0 && !last.IsZero() && dl.IndexerID != nil {
+		served, err := history.IndexerServedElsewhere(ctx, *dl.IndexerID, dl.GUID, last)
+		if err != nil {
+			slog.Warn("could not check that the indexer is serving", "guid", dl.GUID, "error", err)
+		}
+		if !served {
+			v.Class = ClassIndexerWide
+			v.Count = prior
+			return v
+		}
 	}
 	v.Block = v.Count >= EscalateAfter
 	return v
