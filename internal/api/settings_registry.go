@@ -148,6 +148,11 @@ var settingDescriptors = []SettingDescriptor{
 		State:       SettingStateActive,
 	},
 	{
+		Key: SettingAuthorDefaultMetadataProfileID, Type: SettingTypeInt, Default: "", Min: "1",
+		Description: "metadata_profiles.id given to authors added without a metadata profile, and used for any author whose own profile was deleted. Empty means the first profile that exists.",
+		State:       SettingStateActive,
+	},
+	{
 		Key: SettingRequestsMaxPendingPerUser, Type: SettingTypeInt, Default: "25", Min: "1", Max: "10000",
 		Description: "How many requests one requester may have waiting for an admin's decision. Further requests answer 429 until some are decided.",
 		State:       SettingStateActive,

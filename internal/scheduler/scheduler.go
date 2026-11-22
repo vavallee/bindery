@@ -1105,15 +1105,11 @@ func (s *Scheduler) resolveAllowedLanguages(ctx context.Context, author *models.
 	if s.profiles == nil {
 		return nil
 	}
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := s.profiles.GetByID(ctx, id)
-	if err != nil || p == nil {
+	res, err := db.ResolveMetadataProfile(ctx, s.profiles, author)
+	if err != nil {
 		return nil
 	}
-	return models.ParseAllowedLanguages(p.AllowedLanguages)
+	return models.ParseAllowedLanguages(res.Profile.AllowedLanguages)
 }
 
 // resultIndexerID is the id of the indexer that produced res, or 0 when none

@@ -41,11 +41,38 @@ func isDownloadArtifact(name string) bool {
 
 // archiveVolumeRe matches the volumes of a RAR set: "x.rar", which covers the
 // RAR 5 "x.part1.rar" naming, and the RAR 4 overflow volumes "x.r00" to
-// "x.r99", then "x.s00" onwards.
-var archiveVolumeRe = regexp.MustCompile(`(?i)\.(rar|[rs][0-9]{2})$`)
+// "x.r99", then "x.s00" onwards. It also matches a ZIP ("x.zip") and a 7z
+// ("x.7z", and the split "x.7z.001") archive (#4131). ".cbz" and ".epub" are
+// book files and do not match.
+var archiveVolumeRe = regexp.MustCompile(`(?i)\.(rar|[rs][0-9]{2}|zip|7z(\.[0-9]{3})?)$`)
 
-// isArchivePart reports whether name is a volume of a RAR set. Bindery does
-// not unpack archives (#3203): a release packed as one waits for an unpacker
+// archiveKind names the archive format of a volume's file name: "ZIP", "7z" or
+// "RAR".
+func archiveKind(name string) string {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(lower, ".zip"):
+		return "ZIP"
+	case strings.HasSuffix(lower, ".7z") || strings.Contains(lower, ".7z."):
+		return "7z"
+	}
+	return "RAR"
+}
+
+// archiveWaitMessage is what a download that holds only an archive says it is
+// waiting for. The archive type is named for a ZIP or 7z; the RAR text is
+// unchanged.
+func archiveWaitMessage(archive, dir string) string {
+	base := filepath.Base(archive)
+	kind := ""
+	if k := archiveKind(base); k != "RAR" {
+		kind = " (" + k + ")"
+	}
+	return fmt.Sprintf("waiting for %s to be extracted: this download holds only an archive%s, and Bindery does not unpack archives. An unpacker such as unpackerr has to extract it into %q; the import runs once the files are there.", base, kind, dir)
+}
+
+// isArchivePart reports whether name is a volume of a RAR set, or a ZIP or 7z
+// archive. Bindery does not unpack archives (#3203, #4131): a release packed as one waits for an unpacker
 // such as unpackerr to extract it into the download's folder, and once it has,
 // the volumes are kept out of the library by copy and hardlink placements, like
 // the other download artifacts, and stay with the client. A move of a whole

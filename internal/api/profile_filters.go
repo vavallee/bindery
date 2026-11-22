@@ -30,16 +30,12 @@ func effectiveMetadataProfile(ctx context.Context, profiles *db.MetadataProfileR
 	if profiles == nil {
 		return nil
 	}
-	id := models.DefaultMetadataProfileID
-	if author != nil && author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := profiles.GetByID(ctx, id)
+	res, err := db.ResolveMetadataProfile(ctx, profiles, author)
 	if err != nil {
-		slog.Debug("metadata profile lookup failed; not filtering", "profileID", id, "error", err)
+		slog.Debug("metadata profile lookup failed; not filtering", "error", err)
 		return nil
 	}
-	return p
+	return res.Profile
 }
 
 // storedBookProfileFilter reports which metadata profile filter rejects b,

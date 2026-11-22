@@ -550,15 +550,22 @@ func (r *AuthorRepo) CreateForUser(ctx context.Context, a *models.Author, ownerU
 	// runs on Update and on scan. Doing it on scan would make a NULL row report
 	// a profile it does not have, which hides the leak instead of closing it.
 	//
-	// This is currently invisible: ResolveAuthorMetadataProfile and its two
-	// sibling readers all fall back to DefaultMetadataProfileID already, so
-	// filtering behaviour is unchanged either way. That is exactly why it would
-	// rot quietly, until a fourth reader arrives without the fallback. The
-	// column is a bare INTEGER with no REFERENCES clause, so an id pointing at
-	// a profile the user has since deleted stores fine and every reader still
-	// falls back, the same as NULL does today.
+	// The column is a bare INTEGER with no REFERENCES clause, so an id pointing
+	// at a profile the user has since deleted stores fine. Every reader goes
+	// through ResolveMetadataProfile, which treats a missing profile the same
+	// way everywhere (#4132).
+	//
+	// The stamp is the install default (#4132): author.default_metadata_profile_id
+	// when that profile exists, else the first profile that exists, so a
+	// deleted profile 1 is never written into a new author. Only an install
+	// with no profile at all falls through to the historic id 1.
 	if a != nil && a.MetadataProfileID == nil {
 		id := models.DefaultMetadataProfileID
+		if def, ok, err := defaultMetadataProfileID(ctx, r.db); err != nil {
+			slog.Warn("could not resolve the default metadata profile; using the seeded id", "error", err)
+		} else if ok {
+			id = def
+		}
 		a.MetadataProfileID = &id
 	}
 	var ownerArg any

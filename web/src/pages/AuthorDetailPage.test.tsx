@@ -1413,6 +1413,22 @@ describe('AuthorDetailPage — last sync outcome', () => {
     )
   })
 
+  // #4132: an author whose stored metadata profile was deleted is filtered by a
+  // substitute profile, and the page names it.
+  it('warns when the author profile no longer exists, and stays quiet otherwise', async () => {
+    const { unmount } = renderAuthorDetailPage([makeBook({ id: 1, title: 'Book', status: 'imported' })], 'grid', {
+      metadataProfileFallback: { missingProfileId: 1, usedProfileId: 2, usedProfileName: 'Deutsch' },
+    })
+    const note = await screen.findByRole('status')
+    expect(note).toHaveTextContent('no longer exists')
+    expect(note).toHaveTextContent('Deutsch')
+    unmount()
+    cleanup()
+    renderAuthorDetailPage([makeBook({ id: 1, title: 'Book', status: 'imported' })], 'grid', {})
+    await screen.findByText('Book')
+    expect(screen.queryByText(/no longer exists/)).toBeNull()
+  })
+
   // #1815: a refresh of an author who isn't taking new books adds nothing, and
   // "nothing happened" reads as a broken refresh unless the page says why.
   it('explains the works a refresh declined to add', async () => {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/concurrency"
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -216,17 +217,11 @@ func (h *AuthorHandler) reconciliationProfile(ctx context.Context, author *model
 	if h.profiles == nil {
 		return reconciliationProfile{}, errors.New("metadata profiles are not configured")
 	}
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	profile, err := h.profiles.GetByID(ctx, id)
+	res, err := db.ResolveMetadataProfile(ctx, h.profiles, author)
 	if err != nil {
 		return reconciliationProfile{}, fmt.Errorf("load metadata profile: %w", err)
 	}
-	if profile == nil {
-		return reconciliationProfile{}, fmt.Errorf("metadata profile %d not found", id)
-	}
+	profile := res.Profile
 	return reconciliationProfile{
 		name:            profile.Name,
 		allowedLangs:    models.ParseAllowedLanguages(profile.AllowedLanguages),
