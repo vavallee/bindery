@@ -40,8 +40,9 @@ import (
 //     after the first.
 //
 // A lone main title release with no position, no library title to compare it
-// with, and no full title in the batch stays approved: nothing in the release
-// or the library says it is another book. That is the rule's known limit.
+// with, and no full title in the batch stays approved. With a known position, a
+// release that explicitly numbers another volume after the main title is
+// rejected (#4076).
 
 // FilterDebug reasons for the main title reading.
 const (
@@ -443,6 +444,20 @@ func (si subtitleInfo) mainTitleOnly(tr *trailingRules, raw, n, identity string,
 	if si.seriesLike && si.n <= 1 {
 		return ""
 	}
+	// An ordinary subtitle also distinguishes the first, unnumbered volume
+	// from releases that explicitly number a later book after the main title:
+	// "Mage Tank: A LitRPG Adventure" is not "Mage Tank 3".  Keep this on
+	// positive evidence only. numbersAfter's guarded reading accepts a number
+	// at the end, behind a volume marker, or before punctuation while ignoring
+	// counts such as "24 bit" and "3 files". Indexers also commonly spell the
+	// same case as "Mage Tank 3 by Author", where `by` is unambiguous release
+	// furniture rather than a count.
+	if !si.seriesLike && tr.posKnown {
+		if volume := explicitVolumeAfterMain(raw, n, primary...); volume >= 2 &&
+			(volume < tr.posLo || volume > tr.posHi) {
+			return reasonLaterNumber
+		}
+	}
 	if mt := releaseMediaType(raw); mt != "" && anyFull(mt) {
 		return reasonMainTitleOnlyFullFound
 	}
@@ -474,6 +489,24 @@ func (si subtitleInfo) mainTitleOnly(tr *trailingRules, raw, n, identity string,
 		}
 	}
 	return ""
+}
+
+func explicitVolumeAfterMain(raw, n string, primary ...[]string) int {
+	for _, v := range numbersAfter(raw, n, true, primary...) {
+		if v >= 2 {
+			return v
+		}
+	}
+
+	toks, k, found := locateTitleEnd(raw, n, primary...)
+	if !found || k+1 >= len(toks) || toks[k+1].text != "by" {
+		return 0
+	}
+	if len(toks[k].text) > 2 || !isAllDigits(toks[k].text) {
+		return 0
+	}
+	v, _ := strconv.Atoi(toks[k].text)
+	return v
 }
 
 func containsInt(xs []int, v int) bool {

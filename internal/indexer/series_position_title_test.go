@@ -81,3 +81,58 @@ func TestSeriesPositionTitle_ReachesProductionEntrypoints(t *testing.T) {
 		}
 	}
 }
+
+// An unnumbered first book can carry its series as the main title and its
+// distinguishing book title as a subtitle. A release named only for the
+// series plus a later volume used to pass the primary-title fallback and win
+// search-on-add on format quality alone (#4076).
+func TestSearchBook_UnnumberedFirstVolumeRejectsNumberedSequels(t *testing.T) {
+	const title = "Mage Tank: A LitRPG Adventure"
+	const author = "Cornman"
+	const exact = "Mage Tank: A LitRPG Adventure by Cornman [ENG / M4B] [VIP]"
+	feed := feedOf(exact,
+		"Mage Tank 2 by Cornman [ENG / M4B] [VIP]",
+		"Mage Tank 3 by Cornman [ENG / M4B] [VIP]",
+		"Mage Tank 4 by Cornman [ENG / M4B] [VIP]",
+		"Mage Tank 5 by Cornman [ENG / M4B] [VIP]",
+		"Mage Tank Book 3 by Cornman [ENG / M4B] [VIP]",
+		"Mage Tank Vol. 4 by Cornman [ENG / M4B] [VIP]",
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(feed))
+	}))
+	defer srv.Close()
+
+	idxs := []models.Indexer{{ID: 1, Name: "test", URL: srv.URL, Enabled: true, Categories: []int{3030}}}
+	crit := MatchCriteria{Title: title, Author: author, MediaType: models.MediaTypeAudiobook, SeriesTitle: "Mage Tank", SeriesPosition: "1"}
+	ctx := context.Background()
+	results := newTestSearcher().SearchBook(ctx, idxs, crit)
+	debugged, _ := newTestSearcher().SearchBookWithDebug(ctx, idxs, crit)
+	outcomes, _ := newTestSearcher().SearchBookWithOutcomes(ctx, idxs, crit)
+	for name, got := range map[string][]string{
+		"SearchBook":             resultTitles(results),
+		"SearchBookWithDebug":    resultTitles(debugged),
+		"SearchBookWithOutcomes": resultTitles(outcomes),
+	} {
+		if len(got) != 1 || got[0] != exact {
+			t.Errorf("%s returned %v, want only the exact book-1 release %q", name, got, exact)
+		}
+	}
+}
+
+func TestFilterRelevant_UnnumberedFirstVolumeKeepsSubtitleAndFormatVariants(t *testing.T) {
+	const title = "Mage Tank: A LitRPG Adventure"
+	const author = "Cornman"
+	for _, release := range []string{
+		"Mage Tank: A LitRPG Adventure by Cornman [ENG / M4B] [VIP]",
+		"Mage Tank - A LitRPG Adventure - Cornman [Unabridged M4B]",
+		"Mage Tank Book 1: A LitRPG Adventure by Cornman [ENG / M4B]",
+		"Mage Tank Vol. 1: A LitRPG Adventure by Cornman [ENG / M4B]",
+	} {
+		got, _ := filterRelevantWithContext(toResults(release), title, author, nil, bookContext{})
+		if len(got) != 1 {
+			t.Errorf("valid subtitle/format variant %q was rejected", release)
+		}
+	}
+}

@@ -136,7 +136,9 @@ and three more:
   season or series form (`S1 Part 2`, `Series 02`, `Season 2`).
 - The series number and other title checks above also read what follows the
   main title, so `The High Druid of Shannara 3 - Straken` is not `High Druid of
-  Shannara: Jarka Ruus`.
+  Shannara: Jarka Ruus`. When the wanted book has a known series position,
+  this also catches a bare number before the author, such as
+  `Mage Tank 3 by Cornman` in a search for book 1.
 
 - A bare series entry is not its numbered volumes. When the wanted title has no
   series position but your library already holds `Rotten School #12 - Battle of
