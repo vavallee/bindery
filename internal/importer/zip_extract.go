@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/pathmap"
@@ -169,10 +170,70 @@ func zipEntryCap(compressed uint64) int64 {
 	return max(limit, zipEntryRatioFloor)
 }
 
+// zipExtractTimeout bounds one folder's whole extraction, so a zip near the size
+// caps cannot hold a download client's poll loop for the length of the copy.
+// A variable so a test can shorten it.
+var zipExtractTimeout = 10 * time.Minute
+
+// zipBeforeOpenHook, when set by a test, runs between the caller's containment
+// check and the open of the folder.
+var zipBeforeOpenHook func(folder string)
+
+// zipStopped is the error that ends an extraction whose context is done, in
+// words the Queue can show.
+func zipStopped(ctx context.Context) error {
+	switch err := ctx.Err(); {
+	case err == nil:
+		return nil
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("extraction took longer than %s and was stopped", zipExtractTimeout)
+	default:
+		return fmt.Errorf("extraction was cancelled: %w", err)
+	}
+}
+
+// ctxReader fails a read once its context is done, so a copy checks for
+// cancellation between chunks.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := zipStopped(c.ctx); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+// confirmOpenedFolder re-resolves folder after it was opened as root and
+// refuses unless it is still a real path (no link has appeared in it), still
+// strictly inside one of roots, and the same directory root holds open.
+func confirmOpenedFolder(root *os.Root, folder string, roots []string) error {
+	again, ok := resolveStrictlyInside(folder, roots)
+	if !ok || again != folder {
+		return errors.New("the folder changed while it was being opened, so nothing was written")
+	}
+	dir, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	held, err := dir.Stat()
+	if err != nil {
+		return err
+	}
+	now, err := os.Stat(again)
+	if err != nil || !os.SameFile(held, now) {
+		return errors.New("the folder changed while it was being opened, so nothing was written")
+	}
+	return nil
+}
+
 // copyBounded copies src to dst and fails when src holds more than limit bytes.
 // The limit is enforced while copying, not read from a header.
-func copyBounded(dst io.Writer, src io.Reader, limit int64) (int64, error) {
-	n, err := io.Copy(dst, io.LimitReader(src, limit+1))
+func copyBounded(ctx context.Context, dst io.Writer, src io.Reader, limit int64) (int64, error) {
+	n, err := io.Copy(dst, io.LimitReader(ctxReader{ctx: ctx, r: src}, limit+1))
 	if err != nil {
 		return n, err
 	}
@@ -272,7 +333,7 @@ func mkdirTracked(root *os.Root, dir string, created *zipCreated) error {
 
 // writeZipEntry writes one entry below root with O_EXCL, so a file that is
 // already there is skipped, never overwritten. It reports whether it wrote.
-func writeZipEntry(root *os.Root, e zipPlanEntry, b *zipBudget, created *zipCreated) (bool, error) {
+func writeZipEntry(ctx context.Context, root *os.Root, e zipPlanEntry, b *zipBudget, created *zipCreated) (bool, error) {
 	if dir := path.Dir(e.rel); dir != "." {
 		if err := mkdirTracked(root, dir, created); err != nil {
 			if errors.Is(err, errZipBlocked) {
@@ -295,7 +356,7 @@ func writeZipEntry(root *os.Root, e zipPlanEntry, b *zipBudget, created *zipCrea
 		return false, err
 	}
 	limit := min(zipEntryCap(e.file.CompressedSize64), b.bytes)
-	n, err := copyBounded(dst, src, limit)
+	n, err := copyBounded(ctx, dst, src, limit)
 	_ = src.Close()
 	if cerr := dst.Close(); err == nil {
 		err = cerr
@@ -349,7 +410,9 @@ type zipArchive struct {
 // nothing: on an error everything it wrote is removed. The zips themselves are
 // kept. A folder that was extracted once is not extracted again, which is what
 // stops a zip that came out of a zip from being opened on the next attempt.
-func extractZipsInFolder(folder string) (zipOutcome, error) {
+func extractZipsInFolder(ctx context.Context, folder string, roots []string) (zipOutcome, error) {
+	ctx, cancel := context.WithTimeout(ctx, zipExtractTimeout)
+	defer cancel()
 	var out zipOutcome
 	names := topLevelZips(folder)
 	if len(names) == 0 {
@@ -358,11 +421,21 @@ func extractZipsInFolder(folder string) (zipOutcome, error) {
 	if len(names) > zipMaxArchives {
 		return out, fmt.Errorf("it holds more than %d ZIP files", zipMaxArchives)
 	}
+	if zipBeforeOpenHook != nil {
+		zipBeforeOpenHook(folder)
+	}
 	root, err := os.OpenRoot(folder)
 	if err != nil {
 		return out, err
 	}
 	defer func() { _ = root.Close() }()
+	// The folder was resolved and checked by the caller, but a path can be
+	// swapped for a link between that check and this open. Resolve it again and
+	// require it to be the same real folder, still inside a root, and the very
+	// directory the handle points at; otherwise write nothing.
+	if err := confirmOpenedFolder(root, folder, roots); err != nil {
+		return out, err
+	}
 	if _, err := root.Lstat(zipExtractedMarker); err == nil {
 		out.done = true
 		return out, nil
@@ -376,6 +449,9 @@ func extractZipsInFolder(folder string) (zipOutcome, error) {
 		}
 	}()
 	for _, name := range names {
+		if err := zipStopped(ctx); err != nil {
+			return out, err
+		}
 		f, err := root.Open(name)
 		if err != nil {
 			return out, fmt.Errorf("%s: %w", name, err)
@@ -398,6 +474,10 @@ func extractZipsInFolder(folder string) (zipOutcome, error) {
 	var created zipCreated
 	for _, a := range archives {
 		for _, e := range a.plan {
+			if err := zipStopped(ctx); err != nil {
+				rollbackZip(root, &created)
+				return zipOutcome{}, err
+			}
 			switch e.kind {
 			case zipEntryDir:
 				if err := mkdirTracked(root, e.rel, &created); err != nil && !errors.Is(err, errZipBlocked) {
@@ -405,7 +485,7 @@ func extractZipsInFolder(folder string) (zipOutcome, error) {
 					return zipOutcome{}, fmt.Errorf("%s: %w", a.name, err)
 				}
 			case zipEntryFile:
-				wrote, err := writeZipEntry(root, e, b, &created)
+				wrote, err := writeZipEntry(ctx, root, e, b, &created)
 				if err != nil {
 					rollbackZip(root, &created)
 					return zipOutcome{}, fmt.Errorf("%s: entry %q: %w", a.name, e.file.Name, err)
@@ -499,6 +579,65 @@ func resolveStrictlyInside(folder string, roots []string) (string, bool) {
 	return "", false
 }
 
+// acceptableZipRoots drops every root that is too broad for "inside the
+// download folder" to mean anything, the way movePruneRoot's guard refuses a
+// folder: a filesystem root, the user's home, and any folder that equals or
+// contains a library folder or a root folder. A remap target such as "/" or
+// "/data" would otherwise let any path through. Roots that cannot be resolved
+// are dropped too.
+func (s *Scanner) acceptableZipRoots(ctx context.Context, roots []string) []string {
+	protected := []string{s.libraryDir, s.audiobookDir}
+	if home, err := os.UserHomeDir(); err == nil {
+		protected = append(protected, home)
+	}
+	var homeReal string
+	if home, err := os.UserHomeDir(); err == nil {
+		homeReal, _ = filepath.EvalSymlinks(home)
+	}
+	if s.rootFolders != nil {
+		if rfs, err := s.rootFolders.List(ctx); err == nil {
+			for _, rf := range rfs {
+				protected = append(protected, rf.Path)
+			}
+		} else {
+			return nil // unknown library folders: refuse rather than guess
+		}
+	}
+	var realProtected []string
+	for _, p := range protected {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if rp, err := filepath.EvalSymlinks(p); err == nil {
+			realProtected = append(realProtected, rp)
+		} else {
+			realProtected = append(realProtected, filepath.Clean(p))
+		}
+	}
+	var out []string
+	for _, r := range roots {
+		if strings.TrimSpace(r) == "" || !filepath.IsAbs(r) {
+			continue
+		}
+		real, err := filepath.EvalSymlinks(r)
+		if err != nil || real == filepath.Dir(real) || (homeReal != "" && real == homeReal) {
+			continue
+		}
+		broad := false
+		for _, p := range realProtected {
+			// p is the root, or inside it.
+			if rel, err := filepath.Rel(real, p); err == nil && relInside(rel) {
+				broad = true
+				break
+			}
+		}
+		if !broad {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // unpackZipForImport runs the ZIP extraction for a download that found no book
 // file, when every guard allows it. extracted reports that files were written.
 // note explains, for the "waiting" message, why a ZIP is still there when
@@ -513,14 +652,24 @@ func (s *Scanner) unpackZipForImport(ctx context.Context, dl *models.Download, d
 	case (clientType != "sabnzbd" && clientType != "nzbget") || dl == nil || dl.Protocol == "torrent" || dl.Protocol == "soulseek" || isManualImport(ctx) || len(explicitFiles) > 0:
 		return false, "Bindery extracts ZIP files only for usenet downloads.", true, nil
 	}
-	folder, ok := resolveStrictlyInside(downloadPath, zipExtractRootsFrom(ctx))
+	// The pollers attach the client's own folders; any other caller gets the
+	// scanner's configured ones. Roots too broad to mean anything are dropped.
+	roots := zipExtractRootsFrom(ctx)
+	if len(roots) == 0 {
+		roots = s.usenetExtractRoots(nil)
+	}
+	roots = s.acceptableZipRoots(ctx, roots)
+	if len(roots) == 0 {
+		return false, "Bindery extracts ZIP files only inside its download folders, and it has none it can use: set BINDERY_DOWNLOAD_DIR (or a path remap that is not a library folder, your home or /), then use Retry import once the client has been polled.", true, nil
+	}
+	folder, ok := resolveStrictlyInside(downloadPath, roots)
 	if !ok {
-		return false, "Bindery extracts ZIP files only inside its own download folders, and this one is outside them, so it was not touched.", true, nil
+		return false, "Bindery extracts ZIP files only inside its download folders (BINDERY_DOWNLOAD_DIR, BINDERY_AUDIOBOOK_DOWNLOAD_DIR and the download client's path remap), and this one is outside them, so it was not touched.", true, nil
 	}
 	if len(topLevelZips(folder)) == 0 {
 		return false, "", false, nil
 	}
-	out, err := extractZipsInFolder(folder)
+	out, err := extractZipsInFolder(ctx, folder, roots)
 	if err != nil {
 		return false, "", false, err
 	}

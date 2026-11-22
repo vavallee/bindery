@@ -244,12 +244,12 @@ func TestZipExtraction_BombsAreRefused(t *testing.T) {
 // size cannot unpack more.
 func TestCopyBounded_StopsAtTheLimitWhateverTheHeaderSays(t *testing.T) {
 	var dst bytes.Buffer
-	n, err := copyBounded(&dst, bytes.NewReader(make([]byte, 5000)), 1000)
+	n, err := copyBounded(context.Background(), &dst, bytes.NewReader(make([]byte, 5000)), 1000)
 	if err == nil || n > 1001 {
 		t.Fatalf("copied %d bytes with err %v, want a stop at the limit", n, err)
 	}
 	dst.Reset()
-	if n, err := copyBounded(&dst, bytes.NewReader(make([]byte, 1000)), 1000); err != nil || n != 1000 {
+	if n, err := copyBounded(context.Background(), &dst, bytes.NewReader(make([]byte, 1000)), 1000); err != nil || n != 1000 {
 		t.Fatalf("exactly the limit: %d, %v", n, err)
 	}
 }
@@ -401,10 +401,26 @@ func TestZipExtraction_FolderOutsideTheDownloadDirsIsNotWritten(t *testing.T) {
 			t.Errorf("the shared download folder was written to: %v", names)
 		}
 	})
-	t.Run("no roots configured", func(t *testing.T) {
+	t.Run("a caller that attached no roots falls back to the configured folders", func(t *testing.T) {
 		f := newZipFixture(t)
 		f.put("a.zip", buildZip(t, zipEnt{name: "Author - Title.epub", body: testEpubBytes(t)}))
 		f.s.tryImportInternal(f.ctx, f.dl, f.folder, "sabnzbd", "x", "", nil, nil)
+		if _, err := os.Stat(filepath.Join(f.folder, "Author - Title.epub")); err != nil {
+			t.Errorf("a folder inside BINDERY_DOWNLOAD_DIR was not extracted for a caller without roots: %v", err)
+		}
+	})
+	t.Run("no download folder known says so", func(t *testing.T) {
+		f := newZipFixture(t)
+		f.s.WithDownloadDir("")
+		f.put("a.zip", buildZip(t, zipEnt{name: "Author - Title.epub", body: testEpubBytes(t)}))
+		f.s.tryImportInternal(f.ctx, f.dl, f.folder, "sabnzbd", "x", "", nil, nil)
+		got, err := f.s.downloads.GetByID(f.ctx, f.dl.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got.ErrorMessage, "it has none it can use") || strings.Contains(got.ErrorMessage, "outside them") {
+			t.Errorf("message %q does not say the download folders are unknown", got.ErrorMessage)
+		}
 		f.assertFolderUntouched("a.zip")
 	})
 	t.Run("a client remap target counts", func(t *testing.T) {
@@ -482,7 +498,7 @@ func TestZipExtraction_FailureLeavesNothingBehind(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(folder, "a.zip"), buf.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := extractZipsInFolder(folder); err == nil {
+	if _, err := extractZipsInFolder(context.Background(), folder, []string{filepath.Dir(folder)}); err == nil {
 		t.Fatal("a corrupt entry did not fail the extraction")
 	}
 	entries, _ := os.ReadDir(folder)
@@ -497,7 +513,7 @@ func TestZipExtraction_PermissionsAreFixed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(folder, "a.zip"), body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := extractZipsInFolder(folder); err != nil {
+	if _, err := extractZipsInFolder(context.Background(), folder, []string{filepath.Dir(folder)}); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(filepath.Join(folder, "sub", "run.sh"))

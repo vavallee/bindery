@@ -507,6 +507,14 @@ Bindery extracts a ZIP only when all of this holds, and otherwise says why in th
 
 Limits, checked before anything is written and again while copying: at most 2000 entries in all the zips of a folder, 4 GiB unpacked in total, 2 GiB for one file, and a compression ratio of at most 100 to 1, so a zip bomb is refused. An entry whose name is absolute, contains `..` or a drive letter (a backslash counts as a separator) refuses the whole archive. Password protected entries, links and special files are skipped, and the message says how many. A file that is already in the folder is never overwritten. A failed extraction removes what it wrote. Files are created with mode 0644 and folders with 0755.
 
+The extraction stops after 10 minutes in all, or when Bindery shuts down, removes what it wrote, and the Queue says so. It also refuses to treat a folder as a download folder when it is `/`, your home, or equals or contains a library folder or root folder, so a path remap to `/data` that also holds your library does not switch the guard off. If the job folder is swapped for a link while Bindery is opening it, nothing is written.
+
+What happens with awkward archives, all of it skipping and never overwriting:
+
+- **Two entries with the same name:** the first copy is kept, the second is skipped.
+- **A directory entry, then a file of the same name:** the file is skipped and the empty directory stays.
+- **`A.txt` and `a.txt`:** on Linux both are written, as they are two names there.
+
 If a zip is refused, extract it yourself, then use **Retry import**. To turn the feature off, untick the setting; the download then waits for an unpacker, as a RAR does.
 
 ### "Already grabbed" when re-grabbing a release
