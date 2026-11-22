@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/importer/formatsniff"
 	"github.com/vavallee/bindery/internal/models"
 )
@@ -67,15 +68,11 @@ func isManualImport(ctx context.Context) bool {
 // could not be loaded would block books for a reason the user cannot see.
 func (s *Scanner) importAllowedLanguages(ctx context.Context, author *models.Author) ([]string, string) {
 	if author != nil {
-		id := models.DefaultMetadataProfileID
-		if author.MetadataProfileID != nil {
-			id = *author.MetadataProfileID
-		}
-		p, err := s.metadataProfiles.GetByID(ctx, id)
+		res, err := db.ResolveMetadataProfile(ctx, s.metadataProfiles, author)
 		if err != nil {
 			slog.Warn("import language check: could not load metadata profile, not enforcing",
-				"profileID", id, "error", err)
-		} else if p != nil {
+				"error", err)
+		} else if p := res.Profile; p != nil {
 			if langs := models.ParseAllowedLanguages(p.AllowedLanguages); len(langs) > 0 {
 				return langs, fmt.Sprintf("the metadata profile %q", p.Name)
 			}

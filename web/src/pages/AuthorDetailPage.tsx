@@ -1392,6 +1392,11 @@ export default function AuthorDetailPage() {
 
       {/* Books the last sync dropped, right above the list they are missing
           from (#1889). Renders nothing when nothing was filtered out. */}
+      {author.metadataProfileFallback && (
+        <p role="status" className="mb-3 px-3 py-2 rounded bg-warning-subtle border border-warning-border text-warning-strong text-xs">
+          {t('authorDetail.metadataProfileFallback', 'This author points at a metadata profile that no longer exists, so "{{name}}" is filtering its languages. Pick a profile in Edit to fix it.', { name: author.metadataProfileFallback.usedProfileName })}
+        </p>
+      )}
       <AuthorSyncNotice sync={author.lastSync} />
 
       <Section

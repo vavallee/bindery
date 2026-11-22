@@ -58,7 +58,7 @@ vi.mock('../api/client', () => ({
 }))
 
 import { api } from '../api/client'
-import type { Author } from '../api/client'
+import type { Author, MetadataProfile } from '../api/client'
 
 function author(overrides: Partial<Author>): Author {
   return {
@@ -87,6 +87,7 @@ const bareDefaults: AuthorAddDefaults = {
   monitorNewItems: 'all',
   qualityProfiles: [],
   qualityProfileId: null,
+  metadataProfileId: null,
 }
 
 function renderConfirm(a: Author, props: Partial<React.ComponentProps<typeof AddAuthorConfirm>> = {}) {
@@ -368,6 +369,23 @@ describe('AddAuthorConfirm', () => {
       expect('qualityProfileId' in vi.mocked(api.addAuthor).mock.calls[0][0]).toBe(false)
     })
 
+    // #4132: the picker starts on the install default metadata profile, else
+    // the first profile, matching what the server stamps.
+    it('preselects the default metadata profile, else the first one', async () => {
+      const profiles = [{ id: 2, name: 'Deutsch' }, { id: 3, name: 'Both' }] as MetadataProfile[]
+      vi.mocked(api.listMetadataProfiles).mockResolvedValue(profiles)
+      const withDefault = (value: string | null) => async (key: string) => {
+        if (key === 'author.default_metadata_profile_id' && value !== null) return { key, value }
+        throw new Error('HTTP 404')
+      }
+      vi.mocked(api.getSetting).mockImplementation(withDefault('3'))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ metadataProfileId: 3 }))
+      vi.mocked(api.getSetting).mockImplementation(withDefault(null))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ metadataProfileId: 2 }))
+      vi.mocked(api.getSetting).mockImplementation(withDefault('1'))
+      expect(await loadAuthorAddDefaults()).toEqual(expect.objectContaining({ metadataProfileId: 2 }))
+    })
+
     it('loads the install default, and None when it is unset or deleted', async () => {
       vi.mocked(api.listQualityProfiles).mockResolvedValue(qps)
       const withDefault = (value: string | null) => async (key: string) => {
@@ -459,7 +477,7 @@ describe('AddAuthorConfirm', () => {
       vi.mocked(api.getSetting).mockRejectedValue(new Error('HTTP 404'))
       vi.mocked(api.listMetadataProfiles).mockRejectedValue(new Error('HTTP 500'))
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, audiobookRootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1, monitorNewItems: 'all', qualityProfiles: [], qualityProfileId: null })
+      expect(await loadAuthorAddDefaults()).toEqual({ profiles: [], rootFolders: [], rootFolderId: null, audiobookRootFolderId: null, mediaType: 'ebook', monitorMode: 'all', monitorLatestCount: 1, monitorNewItems: 'all', qualityProfiles: [], qualityProfileId: null, metadataProfileId: null })
       consoleError.mockRestore()
     })
   })

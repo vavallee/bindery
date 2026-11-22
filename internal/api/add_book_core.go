@@ -327,8 +327,9 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 			}
 		}
 		fetched.Monitored = false
-		def := models.DefaultMetadataProfileID
-		fetched.MetadataProfileID = &def
+		// Left unset: Create stamps the install default metadata profile,
+		// which is never an id that was deleted (#4132).
+		fetched.MetadataProfileID = nil
 
 		// Dedupe path: if a canonical provider (OL / Hardcover / …) is being
 		// added for a SortName previously persisted as a synthetic DNB-only

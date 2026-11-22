@@ -39,6 +39,8 @@ type coreFixture struct {
 	authors *db.AuthorRepo
 	books   *db.BookRepo
 	jobs    *jobs.Group
+	// profiles is the metadata profile repo the handler uses (#4132 tests).
+	profiles *db.MetadataProfileRepo
 }
 
 // newCoreFixture wires an AuthorHandler over a fresh in memory database with
@@ -60,7 +62,7 @@ func newCoreFixture(t *testing.T, provider metadata.Provider) coreFixture {
 	t.Cleanup(func() { group.Shutdown(5 * time.Second) })
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
 		metadata.NewAggregator(provider), nil, profileRepo, nil).WithJobs(group)
-	return coreFixture{h: h, authors: authorRepo, books: bookRepo, jobs: group}
+	return coreFixture{h: h, authors: authorRepo, books: bookRepo, jobs: group, profiles: profileRepo}
 }
 
 // drain waits for every job the handler started and fails on a straggler.
