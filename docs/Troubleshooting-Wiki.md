@@ -494,7 +494,7 @@ If the files never appear, it does not wait forever: after about 30 minutes of f
 
 ### "Waiting for … to be extracted"
 
-The download is a RAR-packed release: its folder holds an archive (`Title.part1.rar`, or `Title.rar` and `Title.r00`…) and no book file yet. Bindery does not unpack archives, so it waits, without spending import retries, for an unpacker such as unpackerr to extract the files into the download's folder, and imports them as soon as they appear. If nothing extracts it within about 30 minutes, the download is blocked with *this download holds only an archive*. Set up an unpacker as described in [Storage and Hardlinks, RAR-packed torrent releases](Storage-And-Hardlinks-Wiki.md#rar-packed-torrent-releases), or extract the archive into the folder yourself, then use **Retry import**.
+The download's folder holds an archive (`Title.part1.rar`, or `Title.rar` and `Title.r00`…, a `.zip`, a `.7z` or a split `.7z.001`) and no book file yet. `.zip`, `.7z` and split `.7z` archives are recognised like `.rar`, and the message names the archive and its type. Bindery does not unpack archives, so it waits, without spending import retries, for an unpacker such as unpackerr, or the download client, to extract the files into the download's folder, and imports them as soon as they appear. If nothing extracts it within about 30 minutes, the download is blocked with *this download holds only an archive*. Set up an unpacker as described in [Storage and Hardlinks, RAR-packed torrent releases](Storage-And-Hardlinks-Wiki.md#rar-packed-torrent-releases), or extract the archive into the folder yourself, then use **Retry import**. A `.cbz` or `.epub` is a book file, not an archive, and is imported as one.
 
 ### "Already grabbed" when re-grabbing a release
 
