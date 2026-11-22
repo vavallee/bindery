@@ -1945,6 +1945,7 @@ unset key:
 | `author.default_monitor_latest_count` | add author dialog |
 | `author.default_monitor_new_items` | add author dialog |
 | `author.default_quality_profile_id` | add author dialog |
+| `author.default_metadata_profile_id` | add author dialog |
 
 `author.default_quality_profile_id` (#3831) is the quality profile id given to
 authors created without one, on every creation path. Empty, the default, means
@@ -1953,6 +1954,18 @@ at import. A write must name an existing profile or be empty (`400`
 otherwise). A default that names a profile deleted later is treated as empty.
 If the default profile has upgrades on, authors created by an ABS or Calibre
 import join the upgrade sweep straight away.
+
+`author.default_metadata_profile_id` (#4132) is the metadata profile id given to
+authors created without one, on every creation path, and the profile every
+consumer falls back to for an author whose own profile no longer exists. Empty,
+the default, means the first profile that exists. A write must name an existing
+profile or be empty (`400` otherwise); a default naming a profile deleted later
+is treated as empty. Search (automatic and interactive), import, catalogue
+sync, series fill and reconcile catalogue all resolve a missing profile the same
+way: the install default, else the first profile by id, else a built in profile
+that filters nothing. `GET /api/v1/author/{id}` carries
+`metadataProfileFallback` (`missingProfileId`, `usedProfileId`,
+`usedProfileName`) while the author's stored profile does not exist.
 
 `metadata.primary_provider` accepts `openlibrary` (the default), `dnb`, `nb`
 (Nasjonalbiblioteket), `bnf` (Bibliothèque nationale de France, #3144) and
@@ -2268,7 +2281,7 @@ GET    /api/v1/series/{id}/hardcover-link         the series' Hardcover link
 PUT    /api/v1/series/{id}/hardcover-link         set it (admin); DELETE removes it
 POST   /api/v1/series/{id}/hardcover-link/auto    link automatically (admin)
 GET    /api/v1/series/{id}/hardcover-diff         compare the series with its linked Hardcover series
-GET    /api/v1/metadataprofile[/{id}]             metadata profiles; POST, PUT and DELETE are admin
+GET    /api/v1/metadataprofile[/{id}]             metadata profiles; POST, PUT and DELETE are admin. DELETE answers 409 (`error`, `authorCount`, `authorNames`) while authors still use the profile; `DELETE /metadataprofile/{id}?moveAuthorsTo={otherId}` moves them to another profile and deletes it in one step (#4132)
 GET    /api/v1/delayprofile[/{id}]                delay profiles; POST, PUT and DELETE too (all admin)
 GET    /api/v1/importlist[/{id}]                  import lists (admin); POST creates, PUT and DELETE change one
 POST   /api/v1/importlist/{id}/sync               sync one list (admin); GET /importlist/sync/status shows progress

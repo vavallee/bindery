@@ -267,13 +267,11 @@ func (h *AuthorHandler) resolveManualBookAuthor(ctx context.Context, authorID in
 	} else if existing != nil {
 		return existing, false, nil
 	}
-	def := models.DefaultMetadataProfileID
 	author := &models.Author{
-		ForeignID:         foreignID,
-		Name:              name,
-		SortName:          sortName(name),
-		MetadataProvider:  models.ManualMetadataProvider,
-		MetadataProfileID: &def,
+		ForeignID:        foreignID,
+		Name:             name,
+		SortName:         sortName(name),
+		MetadataProvider: models.ManualMetadataProvider,
 		// Unmonitored, as addBookCore creates the author a book add brings
 		// in: the user asked for one book, not for the author.
 		Monitored: false,

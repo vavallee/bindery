@@ -120,7 +120,7 @@ function AddAuthorForm({ author, defaults, primaryProvider, onBack, onClose, onA
     // Default to the first profile, which is the seeded "Standard" profile
     // on a fresh install, so the language filter kicks in without the user
     // having to pick one.
-    setProfileId(defaults.profiles.length > 0 ? defaults.profiles[0].id : null)
+    setProfileId(defaults.metadataProfileId ?? defaults.profiles[0]?.id ?? null)
     setQualityProfileId(defaults.qualityProfileId)
     setRootFolderId(defaults.rootFolderId)
     setAudiobookRootFolderId(defaults.audiobookRootFolderId)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -129,7 +130,42 @@ func (h *MetadataProfileHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "metadata profile not found"})
 		return
 	}
+	// ?moveAuthorsTo=<id> moves the authors that still use this profile to
+	// another one and deletes it in one step (#4132). Without it, a profile
+	// authors still reference is refused with 409.
+	if raw := r.URL.Query().Get("moveAuthorsTo"); raw != "" {
+		moveTo, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || moveTo <= 0 || moveTo == id {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "moveAuthorsTo must be the id of a different metadata profile"})
+			return
+		}
+		target, err := h.repo.GetByID(r.Context(), moveTo)
+		if err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		if target == nil || !auth.CheckOwnership(r.Context(), target.OwnerUserID) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "moveAuthorsTo names a metadata profile that does not exist"})
+			return
+		}
+		if err := h.repo.DeleteMovingAuthors(r.Context(), id, moveTo); err != nil {
+			writeServerError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if err := h.repo.Delete(r.Context(), id); err != nil {
+		var inUse *db.ErrMetadataProfileInUse
+		if errors.As(err, &inUse) {
+			names, _ := h.repo.AuthorNamesUsing(r.Context(), id, 5)
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":       formatInUseMessage(inUse.AuthorCount, names) + ". Pass moveAuthorsTo=<profile id> to move them to another profile.",
+				"authorCount": inUse.AuthorCount,
+				"authorNames": names,
+			})
+			return
+		}
 		writeServerError(w, r, err)
 		return
 	}

@@ -187,14 +187,11 @@ func dateOnly(t time.Time) time.Time {
 }
 
 func (h *AuthorHandler) resolveAllowedLanguages(ctx context.Context, author *models.Author) ([]string, bool) {
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := h.profiles.GetByID(ctx, id)
-	if err != nil || p == nil {
+	res, err := db.ResolveMetadataProfile(ctx, h.profiles, author)
+	if err != nil {
 		return []string{"eng"}, false
 	}
+	p := res.Profile
 	return models.ParseAllowedLanguages(p.AllowedLanguages), p.UnknownLanguageBehavior == models.UnknownLanguageFail
 }
 
@@ -323,14 +320,11 @@ func authorWorkPassesLanguageFilter(book *models.Book, allowed []string, unknown
 // no-op behavior) on any lookup failure, so an unresolvable profile never
 // turns into unexpected catalogue loss.
 func (h *AuthorHandler) resolveSkipMissingDate(ctx context.Context, author *models.Author) bool {
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := h.profiles.GetByID(ctx, id)
-	if err != nil || p == nil {
+	res, err := db.ResolveMetadataProfile(ctx, h.profiles, author)
+	if err != nil {
 		return false
 	}
+	p := res.Profile
 	return p.SkipMissingDate
 }
 
@@ -341,14 +335,11 @@ func (h *AuthorHandler) resolveSkipMissingDate(ctx context.Context, author *mode
 // failure, so an unresolvable profile never causes unexpected catalogue
 // loss.
 func (h *AuthorHandler) resolveEditionFilters(ctx context.Context, author *models.Author) (minPages int, skipMissingISBN bool) {
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := h.profiles.GetByID(ctx, id)
-	if err != nil || p == nil {
+	res, err := db.ResolveMetadataProfile(ctx, h.profiles, author)
+	if err != nil {
 		return 0, false
 	}
+	p := res.Profile
 	return p.MinPages, p.SkipMissingISBN
 }
 
@@ -357,14 +348,11 @@ func (h *AuthorHandler) resolveEditionFilters(ctx context.Context, author *model
 // lookup failure, so an unresolvable profile never turns into unexpected
 // catalogue loss.
 func (h *AuthorHandler) resolveMinEditionCount(ctx context.Context, author *models.Author) int {
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := h.profiles.GetByID(ctx, id)
-	if err != nil || p == nil {
+	res, err := db.ResolveMetadataProfile(ctx, h.profiles, author)
+	if err != nil {
 		return 0
 	}
+	p := res.Profile
 	return p.MinEditionCount
 }
 
@@ -410,13 +398,10 @@ func passesMinPagesFilter(editions []models.Edition, minPages int) bool {
 // no-op behavior) on any lookup failure, so an unresolvable profile never
 // turns into unexpected catalogue loss.
 func (h *AuthorHandler) resolveSkipPartBooks(ctx context.Context, author *models.Author) bool {
-	id := models.DefaultMetadataProfileID
-	if author.MetadataProfileID != nil {
-		id = *author.MetadataProfileID
-	}
-	p, err := h.profiles.GetByID(ctx, id)
-	if err != nil || p == nil {
+	res, err := db.ResolveMetadataProfile(ctx, h.profiles, author)
+	if err != nil {
 		return false
 	}
+	p := res.Profile
 	return p.SkipPartBooks
 }

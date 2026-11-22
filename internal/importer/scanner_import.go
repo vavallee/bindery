@@ -201,13 +201,12 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			return
 		}
 		if archive := archiveAwaitingExtraction(downloadPath); archive != "" {
-			// A RAR-packed release (#3203). The retries that follow wait for an
+			// A RAR, 7z or ZIP packed release (#3203, #4131). The retries that follow wait for an
 			// unpacker without spending attempts (importSourcePresent), and the
 			// message says what the download is waiting for.
 			slog.Info("download holds only an archive; waiting for it to be extracted",
 				"path", downloadPath, "archive", filepath.Base(archive))
-			s.failImport(ctx, dl, models.StateImportFailed,
-				fmt.Sprintf("waiting for %s to be extracted: this download holds only an archive, and Bindery does not unpack archives. An unpacker such as unpackerr has to extract it into %q; the import runs once the files are there.", filepath.Base(archive), downloadPath))
+			s.failImport(ctx, dl, models.StateImportFailed, archiveWaitMessage(archive, downloadPath))
 			return
 		}
 		slog.Warn("no book files found in download", "path", downloadPath)
