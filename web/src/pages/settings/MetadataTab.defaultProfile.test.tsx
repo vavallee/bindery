@@ -81,4 +81,25 @@ describe('Default metadata profile', () => {
     await acceptConfirm()
     expect(await screen.findByText('in use by 3 authors: A, B, C')).toBeInTheDocument()
   })
+
+  it('falls back to generic messages when the server error has no message', async () => {
+    vi.mocked(api.setSetting).mockRejectedValue('nope')
+    vi.mocked(api.deleteMetadataProfile).mockRejectedValue('nope')
+    render(<MetadataTab />)
+    const select = await screen.findByLabelText('Default metadata profile for new authors') as HTMLSelectElement
+    await waitFor(() => expect(select.value).toBe('2'))
+    fireEvent.change(select, { target: { value: '3' } })
+    expect(await screen.findByText('Could not save the default metadata profile')).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: 'common.delete' })[0])
+    await acceptConfirm()
+    expect(await screen.findByText('Could not delete the metadata profile')).toBeInTheDocument()
+    expect(api.listMetadataProfiles).toHaveBeenCalledTimes(1) // a refused delete does not reload
+  })
+
+  it('hides the picker when there is only one profile to choose', async () => {
+    vi.mocked(api.listMetadataProfiles).mockResolvedValue([profile(2, 'Deutsch')])
+    render(<MetadataTab />)
+    await screen.findByText('Deutsch')
+    expect(screen.queryByLabelText('Default metadata profile for new authors')).toBeNull()
+  })
 })
