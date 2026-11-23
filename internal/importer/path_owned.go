@@ -90,6 +90,33 @@ func (s *Scanner) recordImportedFile(ctx context.Context, dl *models.Download, b
 	return nil
 }
 
+// refreshAfterCommit re-derives the paths a book renders once a staged file
+// has really been promoted to destPath (#4142).
+//
+// recordImportedFile runs before commit on purpose (see the staging comment in
+// the ebook import loop), and the refresh inside AddBookFile only counts rows
+// whose file exists on disk. So at that refresh the file being imported is
+// never a candidate: each one sees only the files committed before it, and the
+// format imported last could not become the rendered ebook path, even when it
+// was the most preferred one. Importing pdf, azw3, mobi, epub left the AZW3
+// rendered until the next library scan.
+//
+// It runs after every commit rather than once after the loop so the rendered
+// path is right at each step: the per-file work that follows a commit (cover
+// fill, Calibre and library pushes) and anything reading the book while a
+// large download is still copying see the best of the files that have landed,
+// and so does a process that stops midway through the loop.
+//
+// A failure is logged and not returned. The file and its row are both in
+// place, so the import succeeded; the worst outcome is the old one, a less
+// preferred format rendered until the next library scan re-derives it.
+func (s *Scanner) refreshAfterCommit(ctx context.Context, bookID int64, destPath string) {
+	if err := s.books.RefreshBookStatus(ctx, bookID); err != nil {
+		slog.Warn("failed to refresh book paths after import; the next library scan will re-derive them",
+			"bookID", bookID, "path", destPath, "error", err)
+	}
+}
+
 // pathOwnedReason is the error recordImportedFile returns when another book
 // already tracks path. It still matches *db.PathOwnedError through errors.As,
 // which is how the import decides to block rather than retry.

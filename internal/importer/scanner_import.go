@@ -1216,6 +1216,7 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 			lastFileErr = err
 			continue
 		}
+		s.refreshAfterCommit(ctx, book.ID, destPath)
 		imported++
 		importedSrcFiles = append(importedSrcFiles, srcFile)
 		importedDestPaths = append(importedDestPaths, destPath)
