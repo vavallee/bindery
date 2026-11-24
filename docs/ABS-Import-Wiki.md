@@ -76,6 +76,7 @@ Bindery distinguishes between an item it could not match locally and an item it 
 
 - **Unmatched** authors and books — where Bindery's local matcher finds nothing close — are **not** sent to review. They are created/imported directly, and a confidence-gated upstream lookup still relinks the new row to the metadata provider when it finds a confident match. This is deliberate: an unmatched author is not an uncertain one, and parking every unmatched item in review previously sent the bulk of a folder-backed ABS library to the queue even for well-known authors.
 - **Ambiguous** matches — a close-but-uncertain local candidate — are the only items sent to the review queue, so you can confirm or correct the author or book match yourself.
+- **A file already tracked on another book** — when the file an item reports is already on a Bindery book under a different spelling of the author, the item is queued as an ambiguous book match instead of creating a duplicate book that could never take the file. Resolve it to the book or its author in review; approving it imports the book.
 - When ABS metadata and upstream metadata disagree for mapped fields, Bindery keeps the current applied value temporarily and records a conflict so you can choose the winning source.
 - Placeholder ABS authors can be relinked during conflict review when Bindery can confidently connect them to upstream metadata.
 
@@ -89,6 +90,7 @@ Bindery distinguishes between an item it could not match locally and an item it 
 - Imports are asynchronous.
 - Non-visible file paths become metadata-only imports instead of hard failures.
 - Each item has 10 minutes. An item that runs past that is marked failed with a timeout message, logged at WARN, and skipped so the rest of the import continues; a restart resumes after it, and importing again retries it.
+- Failed items are recorded on the import run with their message, so the run itself lists what failed instead of only the last 100 status results.
 - Ambiguous title matches are not auto-applied.
 - A book whose ISBN only a fallback provider matched is not relinked while your primary metadata provider is not answering. The row keeps the identity it already had, the summary says `book relink skipped` and names the provider that failed, and the next import retries. A primary that answers without the ISBN still lets the fallback's record through.
 

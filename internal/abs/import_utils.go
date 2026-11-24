@@ -197,6 +197,25 @@ func primaryAuthorName(item NormalizedLibraryItem) string {
 	return strings.TrimSpace(item.Authors[0].Name)
 }
 
+// hasManualResolution reports whether the item carries a human's resolution
+// from the review queue: a resolved author or book the user picked. Such an
+// item has already been decided, so the importer must not second-guess it
+// with its own matching — resolveManualAuthor / upsertManualBook own that
+// decision (#4077). The check is on the pairs the review UI records
+// (foreign id and name/title together): a half-resolved item must still go
+// through the normal matching, not skip it and then fail on the missing
+// half. The author pair is also what resolveManualAuthor requires; the
+// book side is stricter than upsertManualBook, whose title falls back to
+// the item title — the pair is the safer contract, and the UI always
+// records both fields together.
+func hasManualResolution(item NormalizedLibraryItem) bool {
+	authorResolved := strings.TrimSpace(item.ResolvedAuthorForeignID) != "" &&
+		strings.TrimSpace(item.ResolvedAuthorName) != ""
+	bookResolved := strings.TrimSpace(item.ResolvedBookForeignID) != "" &&
+		strings.TrimSpace(item.ResolvedBookTitle) != ""
+	return authorResolved || bookResolved
+}
+
 func allowImmediateImport(item NormalizedLibraryItem) bool {
 	return strings.TrimSpace(item.ASIN) != "" && (len(item.AudioFiles) > 0 || deriveMediaType(item) == models.MediaTypeBoth || deriveMediaType(item) == models.MediaTypeAudiobook)
 }
