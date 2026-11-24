@@ -57,6 +57,8 @@ export interface Author {
   // True while a catalogue sync for this author is running on the server. Set
   // on GET /author/{id} only; the page polls it after a manual Refresh (#2601).
   syncInProgress?: boolean
+  // Set when the stored metadata profile no longer exists (#4132).
+  metadataProfileFallback?: { missingProfileId: number; usedProfileId: number; usedProfileName: string }
   // Present on add-flow responses when the linked record syncs from a
   // provider other than the configured primary (#2237).
   providerMismatch?: AuthorProviderMismatch

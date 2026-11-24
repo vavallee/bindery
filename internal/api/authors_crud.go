@@ -111,6 +111,16 @@ func (h *AuthorHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// And whether a sync is running now, which the page polls after a manual
 	// Refresh so it can show the result instead of the state before it (#2601).
 	author.SyncInProgress = h.runningSyncs.running(id)
+	// Say so when the author's metadata profile no longer exists (#4132).
+	if h.profiles != nil {
+		if res, err := db.ResolveMetadataProfile(r.Context(), h.profiles, author); err == nil && res.FellBack {
+			author.MetadataProfileFallback = &models.AuthorMetadataProfileFallback{
+				MissingProfileID: res.RequestedID,
+				UsedProfileID:    res.Profile.ID,
+				UsedProfileName:  res.Profile.Name,
+			}
+		}
+	}
 
 	cleanAuthorDescription(author)
 	writeAuthor(w, http.StatusOK, author)
@@ -264,16 +274,12 @@ func applyAuthorCreateOptions(author *models.Author, monitored bool, monitorMode
 	author.QualityProfileID = qualityProfileID
 	author.RootFolderID = rootFolderID
 	author.AudiobookRootFolderID = audiobookRootFolderID
-	// Default to the seeded "Standard" profile (id=1) so the language filter
-	// has something to consult when the UI didn't send an explicit choice.
-	// The client can opt out by sending a profile whose allowed_languages is
-	// empty or "any".
-	if metadataProfileID != nil {
-		author.MetadataProfileID = metadataProfileID
-	} else {
-		def := models.DefaultMetadataProfileID
-		author.MetadataProfileID = &def
-	}
+	// With no explicit choice the profile stays unset and AuthorRepo.Create
+	// stamps the install default (author.default_metadata_profile_id, else the
+	// first profile that exists), so the language filter always has a real
+	// profile to consult (#4132). The client can opt out by sending a profile
+	// whose allowed_languages is empty or "any".
+	author.MetadataProfileID = metadataProfileID
 }
 
 func (h *AuthorHandler) resolveCreateMonitorOptions(ctx context.Context, requestedMode *string, requestedLatestCount *int) (string, int, error) {

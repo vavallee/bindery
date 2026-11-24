@@ -67,6 +67,11 @@ const (
 // the same reason as the monitor defaults.
 const SettingAuthorDefaultQualityProfileID = db.SettingAuthorDefaultQualityProfileID
 
+// SettingAuthorDefaultMetadataProfileID is the metadata profile given to
+// authors created without one, and the fallback for an author whose own
+// profile was deleted (#4132). Defined in internal/db.
+const SettingAuthorDefaultMetadataProfileID = db.SettingAuthorDefaultMetadataProfileID
+
 // SettingDefaultLibraryRootFolderID is the KV key that stores the ID of the
 // root folder used as the fallback library path when an author has no
 // per-author RootFolderID. Value is a decimal integer (the root_folder.id);
@@ -668,6 +673,9 @@ const SettingRecommendationsEnabled = "recommendations.enabled"
 //     quality profile picker (#3831). A quality profile id, and the profiles
 //     themselves are already listable by every non requester account through
 //     GET /qualityprofile.
+//   - author.default_metadata_profile_id: authorAddDefaults too, for the
+//     metadata profile picker (#4132). A metadata profile id, and those
+//     profiles are listable by every account through GET /metadataprofile.
 //
 // Adding a key here hands its value to every authenticated account, so a new
 // entry needs a non admin screen that reads it and a value that says nothing
@@ -682,6 +690,7 @@ var nonAdminReadableSettings = map[string]bool{
 	SettingAuthorDefaultMonitorLatestCount: true,
 	SettingAuthorDefaultMonitorNewItems:    true,
 	SettingAuthorDefaultQualityProfileID:   true,
+	SettingAuthorDefaultMetadataProfileID:  true,
 }
 
 // isAdminOnlySetting reports whether a settings key may only be read by an
@@ -918,6 +927,8 @@ func (h *SettingsHandler) validateSettingDependencies(ctx context.Context, key, 
 		// A typo'd id would otherwise save and quietly do nothing, since the
 		// read side treats a missing profile as no default.
 		return db.ValidateDefaultAuthorQualityProfileID(ctx, h.settings, value)
+	case SettingAuthorDefaultMetadataProfileID:
+		return db.ValidateDefaultAuthorMetadataProfileID(ctx, h.settings, value)
 	case SettingMetadataPrimaryProvider:
 		if value != "hardcover" {
 			return nil
@@ -1246,6 +1257,16 @@ func validateSettingValue(key, value string) error {
 		id, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || id <= 0 {
 			return fmt.Errorf("%s %q must be a quality profile id or empty", key, value)
+		}
+	case SettingAuthorDefaultMetadataProfileID:
+		// Empty = the first profile that exists. Whether the profile exists is
+		// checked in validateSettingDependencies.
+		if value == "" {
+			return nil
+		}
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || id <= 0 {
+			return fmt.Errorf("%s %q must be a metadata profile id or empty", key, value)
 		}
 	case SettingRequestsAutoApproveDefault:
 		// Only the two canonical values (or empty, meaning off), so a typo

@@ -88,6 +88,10 @@ type Author struct {
 	// Refresh started and then show its result (#2601). Set by the author Get
 	// handler only.
 	SyncInProgress bool `json:"syncInProgress,omitempty"`
+	// MetadataProfileFallback is set by the author Get handler when the
+	// author's stored metadata profile no longer exists, so the profile named
+	// here is what actually filters its languages (#4132).
+	MetadataProfileFallback *AuthorMetadataProfileFallback `json:"metadataProfileFallback,omitempty"`
 
 	// Transient: populated from the metadata provider during add/refresh; not stored in DB.
 	// Used to seed author_aliases so non-latin primary names get latin-script alternates.
@@ -100,6 +104,16 @@ type Author struct {
 	// provider, and the author then syncs from that provider forever.
 	// Transport-only; nothing persists it.
 	ProviderMismatch *AuthorProviderMismatch `json:"providerMismatch,omitempty"`
+}
+
+// AuthorMetadataProfileFallback reports that an author's metadata profile id
+// names a profile that does not exist and which profile is used instead.
+// UsedProfileID is 0 and UsedProfileName "Built in default" when no profile
+// exists at all.
+type AuthorMetadataProfileFallback struct {
+	MissingProfileID int64  `json:"missingProfileId"`
+	UsedProfileID    int64  `json:"usedProfileId"`
+	UsedProfileName  string `json:"usedProfileName"`
 }
 
 // AuthorProviderMismatch reports that an author's catalogue will sync from a

@@ -678,6 +678,22 @@ joined name whose first or last part is a language word (for example
 `DutchOven` or `FrenchPress`) is treated like its spaced form, so an English
 only profile drops those as well.
 
+**A profile that restricts languages also prefers them.** The filter above can
+only reject a release that is tagged with a language the profile does not
+allow; an untagged release always passes. So that the untagged English file
+does not beat the tagged German ones for a German library, a release whose name
+is tagged with an allowed language is ranked well above an untagged one, enough
+to outweigh a better format and a RETAIL tag. A release with no detectable
+language ranks as before, and only a profile that allows any language ranks
+exactly as before. The default profile allows English, so on a default install
+a release tagged English now beats an untagged one of a better format. An exact
+ASIN or ISBN match still outranks a language only match. The wanted book's own title and author never count as a tag, so a
+German book called "English Lessons" is not read as English. The order of the
+languages in the profile makes no difference: every allowed language counts the
+same. A tag Bindery does not recognise, such as a bare `DE` placed before the
+format word (`Title.DE.2020.ABook.MP3-GRP`), is not seen by the filter or by
+this preference.
+
 **The file's language is checked at import.** The language filter at grab
 time can only read the release name, so a release that does not say its
 language gets through it. When the download arrives, Bindery reads the
@@ -743,6 +759,17 @@ on the Blocklist and the book stays Wanted. Manual import and **Match to book**
 are never refused. There is no separate setting for this; it follows the
 allowed languages on the metadata profile, and a profile that allows any
 language checks nothing.
+
+**Deleting a metadata profile.** A profile that authors still use cannot be
+deleted: Settings → Metadata Profiles tells you how many authors use it. Move
+those authors to another profile first (the API can do both in one step with
+`moveAuthorsTo`). **Settings → Metadata Profiles → Default metadata profile for
+new authors** picks the profile every new author gets, including authors added
+through Add Book, imports and list syncs; empty means the first profile that
+exists. If an author's profile is missing anyway, for example after an older
+version deleted it, search, import, catalogue sync and reconcile all use that
+default instead of each doing something different, the author page says so, and
+upgrading repoints such authors at the default once.
 
 **The file's own title and author are checked at import (ebooks).** The release
 name can say one book while the EPUB inside is another, and without a check that

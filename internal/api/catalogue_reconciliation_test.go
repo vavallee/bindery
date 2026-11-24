@@ -734,13 +734,19 @@ func TestReconciliationProfile_ReportsConfigurationErrors(t *testing.T) {
 		t.Fatal("missing profile repository returned nil error")
 	}
 
-	t.Run("profile not found", func(t *testing.T) {
+	// A missing profile is no longer an error: the shared resolver substitutes
+	// the default profile (#4132). See metadata_profile_missing_test.go.
+	t.Run("profile not found falls back to the default", func(t *testing.T) {
 		f := newReconciliationFixture(t, &stubMetaProvider{name: "hardcover"})
 		missingID := int64(999)
 		author := *f.author
 		author.MetadataProfileID = &missingID
-		if _, err := f.handler.reconciliationProfile(context.Background(), &author); err == nil || !strings.Contains(err.Error(), "not found") {
-			t.Fatalf("error = %v, want not found", err)
+		got, err := f.handler.reconciliationProfile(context.Background(), &author)
+		if err != nil {
+			t.Fatalf("error = %v, want the default profile", err)
+		}
+		if got.name != "Standard" {
+			t.Fatalf("profile = %q, want the seeded default", got.name)
 		}
 	})
 

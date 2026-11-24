@@ -206,7 +206,7 @@ describe('MetadataTab profiles', () => {
   it('lists profiles with their filters and language labels', async () => {
     vi.mocked(api.listMetadataProfiles).mockResolvedValue([profile, loose])
     render(<MetadataTab />)
-    expect(await screen.findByText('Strict')).toBeInTheDocument()
+    expect((await screen.findAllByText('Strict')).length).toBeGreaterThan(0)
     expect(screen.getByText('120')).toBeInTheDocument()
     expect(screen.getByText('English, German, xyz')).toBeInTheDocument()
     expect(screen.getByText('settings.metadata.skipMissingDate')).toBeInTheDocument()

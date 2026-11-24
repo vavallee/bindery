@@ -2316,8 +2316,8 @@ func (h *SeriesHandler) ensureHardcoverCatalogBook(ctx context.Context, series *
 	if strings.TrimSpace(author.MetadataProvider) == "" {
 		author.MetadataProvider = "hardcover"
 	}
-	metadataProfileID := models.DefaultMetadataProfileID
-	author.MetadataProfileID = &metadataProfileID
+	// Left to the author repo's install default (#4132).
+	author.MetadataProfileID = nil
 
 	storedAuthor, skip, err := h.resolveHardcoverCatalogAuthor(ctx, series, author)
 	if err != nil {

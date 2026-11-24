@@ -546,6 +546,24 @@ func (i *Importer) runLibrary(ctx context.Context, cfg ImportConfig, authorMatch
 		// Returning nil for a timed-out item is what moves the checkpoint past
 		// it: the enumerator offers a checkpoint after every item the callback
 		// accepts, so a restart does not resume into the same item.
+		//
+		// A failed item used to leave nothing behind (#4077): the status
+		// endpoint only keeps the last 100 results and the run entities
+		// only stored outcomes that succeeded, so after a big run there
+		// was no list of what failed. Record the failure on the run, with
+		// its message, so the run itself shows it. The row carries no
+		// local id: the failure produced no book, and a timeout that lands
+		// after a successful link must not overwrite that link's outcome
+		// — the two rows share the item, never the local id. Rollback
+		// ignores failed rows: nothing was written to undo. Dry-run-only
+		// wrinkle: a dry-run item that plans a book (created, local id 0)
+		// and then fails records its failure under the same key, and the
+		// merge lets "created" win, so the run entity reads created with
+		// the failure message in its metadata. Stats and progress still
+		// show the failure; only the persisted dry-run outcome is wrong.
+		if result.Outcome == itemOutcomeFailed {
+			_ = i.recordRunEntity(ctx, run.ID, cfg, item.LibraryID, item.ItemID, entityTypeBook, item.ItemID, 0, itemOutcomeFailed, map[string]string{"message": result.Message})
+		}
 		if isMatchedOutcome(result.Outcome) {
 			matchedItemIDs = append(matchedItemIDs, item.ItemID)
 		}
@@ -740,6 +758,33 @@ func (i *Importer) importOne(ctx context.Context, cfg ImportConfig, runID int64,
 		ItemID:  item.ItemID,
 		Title:   item.Title,
 		Outcome: itemOutcomeUpdated,
+	}
+	// A file already tracked on a book under a different author (#4077):
+	// resolveAuthor would create a new author for the item's spelling and
+	// upsertBook a new wanted book that can never take the file, so check
+	// before either runs. Whether the two spellings name one person is a
+	// human call, so the item is parked for review and nothing is created.
+	// A manually resolved item skips the check: the human has already
+	// decided, and the manual paths own that decision — otherwise approving
+	// a queued item would re-queue it forever.
+	if !hasManualResolution(item) {
+		if conflictBook, conflictAuthor, err := i.conflictingTrackedBook(ctx, cfg, item, matcher); err != nil {
+			stats.Failed++
+			result.Outcome = itemOutcomeFailed
+			result.Message = err.Error()
+			return result
+		} else if conflictBook != nil {
+			if queueErr := i.queueReviewItem(ctx, runID, cfg, item, reviewReasonAmbiguousBook); queueErr != nil {
+				stats.Failed++
+				result.Outcome = itemOutcomeFailed
+				result.Message = queueErr.Error()
+				return result
+			}
+			stats.ReviewQueued++
+			result.Outcome = itemOutcomeSkipped
+			result.Message = fmt.Sprintf("%s; file already tracked on %q (book %d) under a different author (%q)", reviewQueueMessage(reviewReasonAmbiguousBook, item), conflictBook.Title, conflictBook.ID, conflictAuthor.Name)
+			return result
+		}
 	}
 	author, authorCreated, authorMatchedBy, authorMeta, err := i.resolveAuthor(ctx, cfg, runID, item, allowCreate, matcher, stats)
 	if err != nil {

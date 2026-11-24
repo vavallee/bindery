@@ -538,6 +538,7 @@
     "sortUnmonitoredFirst": "Not monitored first"
   },
   "authorDetail": {
+    "metadataProfileFallback": "This author points at a metadata profile that no longer exists, so \"{{name}}\" is filtering its languages. Pick a profile in Edit to fix it.",
     "nav": {
       "previous": "‹ Previous",
       "next": "Next ›",
@@ -2109,6 +2110,10 @@
       "heading": "Metadata Profiles",
       "newProfile": "+ New Profile",
       "empty": "No metadata profiles configured.",
+      "defaultProfileLabel": "Default metadata profile for new authors",
+      "defaultProfileHint": "Given to every author added without a choice, and used for any author whose own profile was deleted. Search, import and catalogue sync all use it, so they agree.",
+      "defaultProfileSaveFail": "Could not save the default metadata profile",
+      "deleteFail": "Could not delete the metadata profile",
       "description": "Books in languages outside the profile's allowed list are filtered out when an author is added or refreshed. Leave the list empty to accept any language. A metadata profile decides which books enter an author's catalogue. It does not filter releases: to stop a search grabbing another language, set Preferred language under Schedules.",
       "minPages": "Min pages:",
       "minEditionCount": "Min editions:",
