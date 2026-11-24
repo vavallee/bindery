@@ -6,6 +6,17 @@ image:
 # of failures sitting unseen in its logs. Secrets come from the
 # "bindery-secrets" ExternalSecret in the bindery-dev namespace, which syncs
 # Vault's secret/cluster/bindery (keys: dev-api-key, webhook-url).
+#
+# The log-alert job authenticates with dev-api-key, so the instance must use
+# that same key. Without auth.existingSecret, Bindery generates a random key
+# on first boot; after the dev DB was wiped on 2026-11-17 the stored key no
+# longer matched Vault and every run got HTTP 401. BINDERY_API_KEY only seeds
+# an empty DB (bootstrapAuth), so this re-aligns the key on the next wipe; a
+# key already stored, or one rotated in the UI, still wins.
+auth:
+  existingSecret: bindery-secrets
+  apiKeySecretKey: dev-api-key
+
 logAlert:
   enabled: true
   apiKeySecret:
