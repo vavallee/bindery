@@ -156,11 +156,8 @@ func (s *Scanner) sweepUsenetJobExtras(ctx context.Context, downloadPath string,
 	// Only a zip directly in the job folder counts; the book files extracted from
 	// it were imported and moved like any other, and anything else it left
 	// (an .exe, say) still keeps the folder.
-	zipExtracted := false
-	if fi, err := os.Lstat(filepath.Join(pruneRoot, zipExtractedMarker)); err == nil && fi.Mode().IsRegular() {
-		zipExtracted = true
-	}
-
+	var zipCands []string // the zips and the marker directly in the job folder
+	markerSeen := false
 	var extras, dirs []string
 	blocker := ""
 	walkErr := filepath.WalkDir(pruneRoot, func(path string, d fs.DirEntry, err error) error {
@@ -170,9 +167,10 @@ func (s *Scanner) sweepUsenetJobExtras(ctx context.Context, downloadPath string,
 		switch {
 		case d.IsDir():
 			dirs = append(dirs, path)
-		case zipExtracted && d.Type().IsRegular() && filepath.Dir(path) == pruneRoot &&
+		case d.Type().IsRegular() && filepath.Dir(path) == pruneRoot &&
 			(d.Name() == zipExtractedMarker || strings.EqualFold(filepath.Ext(d.Name()), ".zip")):
-			extras = append(extras, path)
+			markerSeen = markerSeen || d.Name() == zipExtractedMarker
+			zipCands = append(zipCands, path)
 		case d.Type().IsRegular() && isReleaseExtra(d.Name()) && !unplaced[filepath.Clean(path)] && !plausibleBookFile(path, d):
 			extras = append(extras, path)
 		default:
@@ -184,6 +182,13 @@ func (s *Scanner) sweepUsenetJobExtras(ctx context.Context, downloadPath string,
 	if walkErr != nil {
 		slog.Info("usenet job folder kept: could not read it", "folder", pruneRoot, "error", walkErr)
 		return
+	}
+	if blocker == "" && len(zipCands) > 0 {
+		if markerSeen {
+			extras = append(extras, zipCands...)
+		} else {
+			blocker = zipCands[0] // a zip nobody extracted is not an extra
+		}
 	}
 	if blocker != "" {
 		slog.Info("usenet job folder kept: it holds a file that is not a release extra", "folder", pruneRoot, "file", blocker)
