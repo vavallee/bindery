@@ -188,6 +188,12 @@ func (i *Importer) rollback(ctx context.Context, runID int64, preview bool) (*Ro
 		}
 	}
 	for _, entity := range entities {
+		if entity.Outcome == itemOutcomeFailed {
+			// A failed item wrote nothing (#4077): the row only exists so
+			// the run lists what failed. There is nothing to roll back,
+			// and listing it as "already rolled back" would be noise.
+			continue
+		}
 		current, err := i.provenance.GetByExternal(ctx, entity.SourceID, entity.LibraryID, entity.EntityType, entity.ExternalID)
 		if err != nil {
 			result.Stats.Failed++
