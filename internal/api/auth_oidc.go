@@ -715,7 +715,12 @@ func (h *OIDCHandler) GetRedirectBase(w http.ResponseWriter, r *http.Request) {
 // recovers (see EnsureLoaded).
 type providerWithStatus struct {
 	oidc.ProviderPublicConfig
-	Status *oidc.Status `json:"status,omitempty"`
+	// ClientSecretFromEnv is true when BINDERY_OIDC_<ID>_CLIENT_SECRET supplies
+	// the secret. ClientSecretEnvVar names that variable. Neither carries the
+	// value.
+	ClientSecretFromEnv bool         `json:"client_secret_from_env"`
+	ClientSecretEnvVar  string       `json:"client_secret_env_var"`
+	Status              *oidc.Status `json:"status,omitempty"`
 }
 
 // publicProvider is what GET /auth/oidc/providers shows a caller who is not an
@@ -773,6 +778,8 @@ func (h *OIDCHandler) GetProviders(w http.ResponseWriter, r *http.Request) {
 	for _, p := range ps {
 		out = append(out, providerWithStatus{
 			ProviderPublicConfig: p.Public(),
+			ClientSecretFromEnv:  oidc.ClientSecretFromEnv(p.ID),
+			ClientSecretEnvVar:   oidc.EnvClientSecretVar(p.ID),
 			Status:               h.mgr.Status(p.ID),
 		})
 	}
@@ -857,7 +864,7 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 			}
 			// The stored secret was issued by the stored issuer. Never carry
 			// it over to another one: a new issuer needs its own secret.
-			if p.ClientSecret == "" && strings.TrimSpace(p.Issuer) != strings.TrimSpace(prev.Issuer) {
+			if p.ClientSecret == "" && !oidc.ClientSecretFromEnv(p.ID) && strings.TrimSpace(p.Issuer) != strings.TrimSpace(prev.Issuer) {
 				writeErr(w, http.StatusBadRequest, "client_secret required when the issuer changes: "+p.ID)
 				return
 			}
@@ -868,7 +875,13 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 				p.AllowedGroups = prev.AllowedGroups
 			}
 		}
-		if p.ClientSecret == "" {
+		if oidc.ClientSecretFromEnv(p.ID) {
+			// The secret comes from the environment, so nothing the client
+			// sent is stored. A value already in the database is left as it
+			// is (the environment wins on read, and removing the variable
+			// falls back to it); a new provider is stored with no secret.
+			p.ClientSecret = existingByID[p.ID].ClientSecret
+		} else if p.ClientSecret == "" {
 			prev, ok := existingByID[p.ID]
 			if !ok {
 				writeErr(w, http.StatusBadRequest, "client_secret required for new provider: "+p.ID)

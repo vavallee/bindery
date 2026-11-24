@@ -25,7 +25,29 @@ Sessions are issued using the same HMAC-signed cookie as password login. OIDC si
 | `BINDERY_OIDC_DEFAULT_ROLE` | `user` | Role assigned to a freshly auto-provisioned OIDC user. Valid values: `user`, `admin`, `requester`. Any other value falls back to `user`. Set to `admin` for single-admin homelab deployments to skip the manual promotion step, or to `requester` so new logins can only browse and ask until an admin says otherwise. |
 | `BINDERY_OIDC_ADMIN_GROUP` | _(unset)_ | When set, makes the IdP authoritative for the admin role. On **every** login, the user is promoted to `admin` if this group is listed in the group claim; an admin whose claim does not list it is demoted to the default role (or to `user` when the default is `admin`); anyone else keeps their role. If the claim is missing altogether the role is left unchanged. See [Group-based role mapping](#group-based-role-mapping). |
 | `BINDERY_OIDC_GROUP_CLAIM` | `groups` | Top level claim name Bindery reads the user's groups from, looked up in the ID token first and then the userinfo document. A nested claim is not supported, so map the groups to a top level claim at the IdP — used for both `BINDERY_OIDC_ADMIN_GROUP` role mapping and the per-provider `allowed_groups` login filter. Override for IdPs that put groups under a non-standard claim (e.g. `roles`). |
+| `BINDERY_OIDC_<ID>_CLIENT_SECRET` | _(unset)_ | Supplies the client secret for the provider with that id, so it never has to be stored in the database or its backups. See [Client secret from the environment](#client-secret-from-the-environment). |
 | `BINDERY_ALLOW_LAN_OIDC` | _(off)_ | Set to `true`/`1` to lift the SSRF guard on the OIDC discovery probe. A private LAN issuer such as an on-prem Keycloak on an RFC1918 address already works without this; the variable is only needed for a loopback, link-local or cloud-metadata address, which in practice means an OIDC provider running on the Bindery host itself. It restores the historical behaviour where any issuer URL an admin types is fetched verbatim. |
+
+## Client secret from the environment
+
+A provider's client secret can come from the environment instead of the Settings screen. This suits Docker and Podman secrets, Kubernetes Secrets and secret injectors, and keeps the secret out of the database and every backup.
+
+The variable is `BINDERY_OIDC_<ID>_CLIENT_SECRET`. `<ID>` is the provider id in upper case, with every character that is not `A` to `Z` or `0` to `9` replaced by an underscore:
+
+| Provider id | Variable |
+|-------------|----------|
+| `keycloak` | `BINDERY_OIDC_KEYCLOAK_CLIENT_SECRET` |
+| `my-idp` | `BINDERY_OIDC_MY_IDP_CLIENT_SECRET` |
+| `auth.entik2` | `BINDERY_OIDC_AUTH_ENTIK2_CLIENT_SECRET` |
+
+How it behaves:
+
+- When the variable is set and not empty, it wins over any stored secret everywhere the secret is used: the login redirect and the code exchange. Restart Bindery after changing it.
+- Nothing is written to the database for that provider. A save from the Settings screen or `PUT /api/v1/auth/oidc/providers` ignores any `client_secret` in the request. A secret that was stored earlier is left as it is, so removing the variable later falls back to it. Clear it by saving the provider once with the variable unset and a new secret, or by deleting and re-adding the provider.
+- The provider list (admin only) reports `client_secret_from_env` and `client_secret_env_var`. The Settings form then shows the secret field disabled with "Set via environment variable" and the variable name. The secret itself is never returned to anyone.
+- A provider with the variable set can be created through the API with no `client_secret`. The Settings form still asks for one when you add a provider, because it cannot know the id yet. Type any placeholder; it is discarded. Editing afterwards needs nothing.
+- Two ids that become the same name, such as `my-idp` and `my_idp`, share one variable. Bindery logs a warning when it loads them and does not pick between them. Use ids that differ in letters or digits.
+- The `_CLIENT_SECRET` suffix keeps these names apart from the other `BINDERY_OIDC_*` settings, for example `BINDERY_OIDC_EMAIL_LINK`.
 
 ## Redirect URL construction
 
@@ -88,7 +110,7 @@ Providers are configured in **Settings → General → Security → SSO / OIDC P
 | `name` | Display name shown on the login button. |
 | `issuer` | OIDC discovery URL base (e.g. `https://accounts.google.com`). |
 | `client_id` | From your IdP app registration. |
-| `client_secret` | From your IdP app registration. Stored in the `settings` table — treat the database as sensitive. |
+| `client_secret` | From your IdP app registration. Stored in the `settings` table, so treat the database as sensitive, or supply it from the environment instead (see [Client secret from the environment](#client-secret-from-the-environment)). |
 | `scopes` | JSON array of scope strings (e.g. `["openid", "email", "profile"]`). The Settings form takes them space separated and converts. |
 | `allowed_groups` | Optional JSON array of IdP groups or roles allowed to log in (e.g. `["bindery-users"]`). Omitted or empty allows every authenticated user. The Settings form takes one group per line. |
 

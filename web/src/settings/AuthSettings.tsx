@@ -218,7 +218,8 @@ function ProviderForm({
   // provider at another one needs its secret again (the backend refuses it
   // otherwise, rather than send the old secret to a different IdP).
   const issuerChanged = editing && issuer.trim() !== (initial.issuer ?? '').trim()
-  const secretRequired = !editing || issuerChanged
+  const secretFromEnv = initial?.client_secret_from_env === true
+  const secretRequired = !secretFromEnv && (!editing || issuerChanged)
   // Live callback URL preview — fetched once from the backend so we get the
   // same base URL Bindery itself will resolve at /login (honors the env var
   // / forwarded-headers precedence). Older backends don't have this endpoint;
@@ -333,8 +334,18 @@ function ProviderForm({
         </div>
         <div>
           <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldClientSecret')}</label>
-          <input id={`${fid}-4`} {...secretInputAttrs} value={clientSecret} onChange={e => setClientSecret(e.target.value)} required={secretRequired} placeholder={secretRequired ? undefined : t('settings.oidc.clientSecretKeep')} type="password" className={inputCls} />
-          {issuerChanged && (
+          {secretFromEnv ? (
+            <>
+              <input id={`${fid}-4`} {...secretInputAttrs} value="" disabled placeholder={t('settings.oidc.clientSecretFromEnv')} type="password" className={`${inputCls} opacity-60`} />
+              <p className="text-[11px] text-fg-muted mt-1">
+                <span className="font-medium">{t('settings.oidc.clientSecretFromEnv')}</span>{' '}
+                {t('settings.oidc.clientSecretFromEnvVar', { name: initial?.client_secret_env_var })}
+              </p>
+            </>
+          ) : (
+            <input id={`${fid}-4`} {...secretInputAttrs} value={clientSecret} onChange={e => setClientSecret(e.target.value)} required={secretRequired} placeholder={secretRequired ? undefined : t('settings.oidc.clientSecretKeep')} type="password" className={inputCls} />
+          )}
+          {issuerChanged && !secretFromEnv && (
             <p className="text-[11px] text-warning mt-1">{t('settings.oidc.clientSecretIssuerChanged')}</p>
           )}
         </div>
