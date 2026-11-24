@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -204,6 +205,9 @@ func cleanZipEntryName(name string) (string, error) {
 		return "", errZipEntryName
 	}
 	for seg := range strings.SplitSeq(n, "/") {
+		if len(seg) > 255 { // no filesystem takes more, and the open would fail late
+			return "", errZipEntryName
+		}
 		if seg == ".." {
 			return "", errZipEntryName
 		}
@@ -520,6 +524,38 @@ func checkZipDirectory(f io.ReaderAt, size int64) error {
 	return nil
 }
 
+// zipReadSlack is what the reader may read beyond the directory limit: the end
+// of central directory search reads up to 64 KiB twice, and the ZIP64 records
+// are small.
+const zipReadSlack = 256 << 10
+
+// boundedReaderAt serves at most left bytes in all, then reports EOF and
+// remembers that it did.
+type boundedReaderAt struct {
+	r       io.ReaderAt
+	left    int64
+	clipped bool
+}
+
+func (b *boundedReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if b.left <= 0 {
+		b.clipped = true
+		return 0, io.EOF
+	}
+	if int64(len(p)) > b.left {
+		n, err := b.r.ReadAt(p[:b.left], off)
+		b.left -= int64(n)
+		b.clipped = true
+		if err == nil {
+			err = io.EOF
+		}
+		return n, err
+	}
+	n, err := b.r.ReadAt(p, off)
+	b.left -= int64(n)
+	return n, err
+}
+
 // topLevelZips lists the regular ".zip" files directly inside the folder, by
 // name. Links are not followed.
 func topLevelZips(folder string) []string {
@@ -612,10 +648,20 @@ func extractZips(ctx context.Context, folder string, roots []string, hasCandidat
 		if err := checkZipDirectory(f, fi.Size()); err != nil {
 			return out, fmt.Errorf("%s: %w", name, err)
 		}
-		zr, err := zip.NewReader(f, fi.Size())
+		// archive/zip reads the central directory from its offset until the
+		// records stop, whatever size the end record declares, so the size check
+		// above is only an early refusal. The reader below is the bound: it serves
+		// no more than the directory limit plus the end records, and a read it had
+		// to cut short refuses the archive.
+		bound := &boundedReaderAt{r: f, left: zipMaxDirBytes + zipReadSlack}
+		zr, err := zip.NewReader(bound, fi.Size())
+		if bound.clipped {
+			return out, fmt.Errorf("%s: %w", name, errZipDirectory)
+		}
 		if err != nil {
 			return out, fmt.Errorf("%s: %w", name, err)
 		}
+		bound.left = math.MaxInt64 // entry data is read through it later
 		if a.plan, err = planZip(zr, fi.Size(), b, &out); err != nil {
 			return out, fmt.Errorf("%s: %w", name, err)
 		}
@@ -638,7 +684,7 @@ func extractZips(ctx context.Context, folder string, roots []string, hasCandidat
 				wrote, err := writeZipEntry(ctx, root, e, b, &created)
 				if err != nil {
 					rollbackZip(root, &created)
-					return zipOutcome{}, fmt.Errorf("%s: entry %q: %w", a.name, e.file.Name, err)
+					return zipOutcome{}, fmt.Errorf("%s: entry %q: %w", a.name, shortZipName(e.file.Name), err)
 				}
 				if wrote {
 					out.files++

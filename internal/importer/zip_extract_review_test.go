@@ -6,8 +6,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -48,6 +50,69 @@ func TestZipExtraction_OversizedCentralDirectoryIsRefusedBeforeParsing(t *testin
 	_, err := extractZipsInFolder(context.Background(), folder, roots)
 	if !errors.Is(err, errZipDirectory) {
 		t.Fatalf("err = %v, want errZipDirectory", err)
+	}
+}
+
+// archive/zip reads records from the directory offset until they stop, whatever
+// size the end record declares. A lie about the size (or a fake end record in the
+// comment of the real one) must neither pass nor let the reader allocate the
+// whole directory.
+func TestZipExtraction_LyingDirectorySizeIsBoundedAndRefused(t *testing.T) {
+	const n = 1_000_000 // 47 MB of records; unbounded, the reader needs 250 MB
+	rec := centralRecord()
+	records := bytes.Repeat(rec, n)
+	honest := uint32(len(rec) * n)
+	real := func(size uint32, comment []byte) []byte {
+		e := eocd(uint16(n%65536), size, 0)
+		binary.LittleEndian.PutUint16(e[20:], uint16(len(comment)))
+		return append(e, comment...)
+	}
+	cases := map[string][]byte{
+		"honest size":       append(append([]byte{}, records...), real(honest, nil)...),
+		"size 22":           append(append([]byte{}, records...), real(22, nil)...),
+		"size 0":            append(append([]byte{}, records...), real(0, nil)...),
+		"fake in comment":   append(append([]byte{}, records...), real(honest, eocd(1, 22, 0))...),
+		"fake past comment": append(append(append([]byte{}, records...), real(honest, bytes.Repeat([]byte{'x'}, 22))...), eocd(1, 22, 0)...),
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			folder, roots := newJobFolder(t)
+			writeZipFile(t, folder, "a.zip", body)
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			_, err := extractZipsInFolder(context.Background(), folder, roots)
+			runtime.ReadMemStats(&after)
+			if !errors.Is(err, errZipDirectory) {
+				t.Errorf("err = %v, want errZipDirectory", err)
+			}
+			if mb := (after.TotalAlloc - before.TotalAlloc) >> 20; mb > 80 {
+				t.Errorf("allocated %d MiB before refusing", mb)
+			}
+		})
+	}
+}
+
+func TestBoundedReaderAt(t *testing.T) {
+	b := &boundedReaderAt{r: bytes.NewReader(make([]byte, 100)), left: 10}
+	p := make([]byte, 8)
+	if n, err := b.ReadAt(p, 0); n != 8 || err != nil || b.clipped {
+		t.Fatalf("first read: %d %v clipped=%v", n, err, b.clipped)
+	}
+	if n, err := b.ReadAt(p, 8); n != 2 || !errors.Is(err, io.EOF) || !b.clipped {
+		t.Fatalf("second read: %d %v clipped=%v", n, err, b.clipped)
+	}
+	if n, err := b.ReadAt(p, 20); n != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("third read: %d %v", n, err)
+	}
+}
+
+func TestCleanZipEntryName_SegmentLength(t *testing.T) {
+	if _, err := cleanZipEntryName("d/" + strings.Repeat("n", 256)); !errors.Is(err, errZipEntryName) {
+		t.Errorf("256 byte segment: %v", err)
+	}
+	if _, err := cleanZipEntryName("d/" + strings.Repeat("n", 255)); err != nil {
+		t.Errorf("255 byte segment: %v", err)
 	}
 }
 
