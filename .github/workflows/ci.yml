@@ -684,7 +684,22 @@ jobs:
           fi
 
           FILE_SHA=$(gh_get "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" .sha)
-          CONTENT=$(printf 'image:\n  tag: "%s"\n' "${IMAGE_TAG}" | base64 -w0)
+          # Change only image.tag. Writing a fresh two-line file here deleted
+          # every other key in values-dev.yaml (logAlert, auth) on each dev
+          # deploy, and dev-preview put them back from main on the next
+          # rebuild, so the log-alert CronJob came and went with every cycle.
+          # Same sed as dev-preview.yml uses to carry the live tag.
+          if [ -n "$FILE_SHA" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}?ref=${DEPLOY_BRANCH}" \
+              --jq .content | base64 -d > "${RUNNER_TEMP}/values-dev.yaml"
+            sed -i '/^image:/,/^[^[:space:]]/ s|^\([[:space:]]*tag:[[:space:]]*\).*$|\1"'"${IMAGE_TAG}"'"|' \
+              "${RUNNER_TEMP}/values-dev.yaml"
+            grep -q "tag: \"${IMAGE_TAG}\"" "${RUNNER_TEMP}/values-dev.yaml" \
+              || { echo "::error::could not set image.tag in ${FILE_PATH}"; exit 1; }
+            CONTENT=$(base64 -w0 < "${RUNNER_TEMP}/values-dev.yaml")
+          else
+            CONTENT=$(printf 'image:\n  tag: "%s"\n' "${IMAGE_TAG}" | base64 -w0)
+          fi
           if [ -n "$FILE_SHA" ]; then
             gh api "repos/${GITHUB_REPOSITORY}/contents/${FILE_PATH}" \
               -X PUT \
