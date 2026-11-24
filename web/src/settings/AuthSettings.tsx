@@ -325,7 +325,7 @@ function ProviderForm({
           </p>
         )}
       </div>
-      <IssuerField value={issuer} onChange={setIssuer} />
+      <IssuerField value={issuer} onChange={setIssuer} fixedBy={initial?.client_secret_issuer_bound ? initial.client_secret_issuer_env_var : undefined} />
 
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -341,6 +341,11 @@ function ProviderForm({
                 <span className="font-medium">{t('settings.oidc.clientSecretFromEnv')}</span>{' '}
                 {t('settings.oidc.clientSecretFromEnvVar', { name: initial?.client_secret_env_var })}
               </p>
+              {initial?.client_secret_issuer_bound && (
+                <p className="text-[11px] text-fg-muted mt-1">
+                  {t('settings.oidc.issuerFixedByEnv', { name: initial.client_secret_issuer_env_var })}
+                </p>
+              )}
             </>
           ) : (
             <input id={`${fid}-4`} {...secretInputAttrs} value={clientSecret} onChange={e => setClientSecret(e.target.value)} required={secretRequired} placeholder={secretRequired ? undefined : t('settings.oidc.clientSecretKeep')} type="password" className={inputCls} />
@@ -392,7 +397,7 @@ type DiscoveryResult =
     }
   | { state: 'error'; message: string }
 
-function IssuerField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function IssuerField({ value, onChange, fixedBy }: { value: string; onChange: (v: string) => void; fixedBy?: string }) {
   const fid = useId()
   const { t } = useTranslation()
   const [result, setResult] = useState<DiscoveryResult>({ state: 'idle' })
@@ -430,6 +435,8 @@ function IssuerField({ value, onChange }: { value: string; onChange: (v: string)
           {...urlInputAttrs}
           value={value}
           onChange={e => handleChange(e.target.value)}
+          readOnly={fixedBy !== undefined}
+          aria-describedby={fixedBy !== undefined ? `${fid}-fixed` : undefined}
           required
           placeholder="https://accounts.google.com"
           className={inputCls}
@@ -443,6 +450,9 @@ function IssuerField({ value, onChange }: { value: string; onChange: (v: string)
           {result.state === 'probing' ? t('settings.oidc.testDiscoveryProbing') : t('settings.oidc.testDiscovery')}
         </button>
       </div>
+      {fixedBy !== undefined && (
+        <p id={`${fid}-fixed`} className="text-[11px] text-fg-muted mt-1">{t('settings.oidc.issuerFixedByEnv', { name: fixedBy })}</p>
+      )}
       <DiscoveryResultView result={result} entered={value.trim()} />
     </div>
   )

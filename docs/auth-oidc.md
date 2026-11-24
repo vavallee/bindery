@@ -26,6 +26,7 @@ Sessions are issued using the same HMAC-signed cookie as password login. OIDC si
 | `BINDERY_OIDC_ADMIN_GROUP` | _(unset)_ | When set, makes the IdP authoritative for the admin role. On **every** login, the user is promoted to `admin` if this group is listed in the group claim; an admin whose claim does not list it is demoted to the default role (or to `user` when the default is `admin`); anyone else keeps their role. If the claim is missing altogether the role is left unchanged. See [Group-based role mapping](#group-based-role-mapping). |
 | `BINDERY_OIDC_GROUP_CLAIM` | `groups` | Top level claim name Bindery reads the user's groups from, looked up in the ID token first and then the userinfo document. A nested claim is not supported, so map the groups to a top level claim at the IdP — used for both `BINDERY_OIDC_ADMIN_GROUP` role mapping and the per-provider `allowed_groups` login filter. Override for IdPs that put groups under a non-standard claim (e.g. `roles`). |
 | `BINDERY_OIDC_<ID>_CLIENT_SECRET` | _(unset)_ | Supplies the client secret for the provider with that id, so it never has to be stored in the database or its backups. See [Client secret from the environment](#client-secret-from-the-environment). |
+| `BINDERY_OIDC_<ID>_ISSUER` | _(unset)_ | Optional. Binds that provider's environment secret to one issuer. Always set it next to the secret variable. See [Bind the secret to an issuer](#bind-the-secret-to-an-issuer). |
 | `BINDERY_ALLOW_LAN_OIDC` | _(off)_ | Set to `true`/`1` to lift the SSRF guard on the OIDC discovery probe. A private LAN issuer such as an on-prem Keycloak on an RFC1918 address already works without this; the variable is only needed for a loopback, link-local or cloud-metadata address, which in practice means an OIDC provider running on the Bindery host itself. It restores the historical behaviour where any issuer URL an admin types is fetched verbatim. |
 
 ## Client secret from the environment
@@ -48,6 +49,16 @@ How it behaves:
 - A provider with the variable set can be created through the API with no `client_secret`. The Settings form still asks for one when you add a provider, because it cannot know the id yet. Type any placeholder; it is discarded. Editing afterwards needs nothing.
 - Two ids that become the same name, such as `my-idp` and `my_idp`, cannot both be saved: Bindery refuses the save, so one provider can never be handed another provider's secret. New provider ids are limited to `a-z`, `0-9`, `_` and `-` (up to 32 characters) and need at least one letter or digit.
 - The `_CLIENT_SECRET` suffix keeps these names apart from the other `BINDERY_OIDC_*` settings, for example `BINDERY_OIDC_EMAIL_LINK`.
+
+### Bind the secret to an issuer
+
+Set `BINDERY_OIDC_<ID>_ISSUER` (same `<ID>` rule as above, for example `BINDERY_OIDC_KEYCLOAK_ISSUER`) to the issuer URL the secret belongs to. **Always set it when you set the secret variable.**
+
+- **Unset: the secret is not bound.** Anyone who can save OIDC providers (an admin) can then point that provider at an issuer they control, and Bindery will send them the secret during the login code exchange. Stored secrets are protected from this, because changing the issuer demands a new secret; an environment secret is only protected when this variable is set.
+- **Set:** the environment secret is used only while the provider's issuer equals this value. The comparison trims whitespace and one trailing slash on both sides, and is otherwise exact and case sensitive, so `https://kc.example.com/realms/home/` matches `https://kc.example.com/realms/home` but `https://KC.example.com/realms/home` does not.
+- **On a mismatch** the environment secret is not used (Bindery falls back to the stored value, which is empty for a provider that never had one), and a warning naming the provider and the variable is logged once. The values are never logged.
+- `PUT /api/v1/auth/oidc/providers` answers `400` for any provider, new or edited, whose issuer is not the bound one, and the error names the variable. To move a provider to another issuer, change this variable and restart Bindery first.
+- The admin provider list reports `client_secret_issuer_bound` and `client_secret_issuer_env_var`, and the Settings form shows the issuer as read only with the variable name.
 
 ## Redirect URL construction
 

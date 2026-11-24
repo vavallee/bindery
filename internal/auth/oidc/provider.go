@@ -162,7 +162,7 @@ func (e *entry) oauth2Config(redirectBase string) oauth2.Config {
 	}
 	return oauth2.Config{
 		ClientID:     e.cfg.ClientID,
-		ClientSecret: EffectiveClientSecret(e.cfg.ID, e.cfg.ClientSecret),
+		ClientSecret: EffectiveClientSecret(e.cfg.ID, e.cfg.Issuer, e.cfg.ClientSecret),
 		Endpoint:     e.endpoint,
 		RedirectURL:  redirectBase + CallbackPath(e.cfg.ID),
 		Scopes:       scopes,

@@ -23,18 +23,18 @@ func TestEnvClientSecretVar(t *testing.T) {
 }
 
 func TestEffectiveClientSecret_EnvWinsWhenNonEmpty(t *testing.T) {
-	if got := EffectiveClientSecret("kc", "stored"); got != "stored" {
+	if got := EffectiveClientSecret("kc", "https://i.example", "stored"); got != "stored" {
 		t.Fatalf("unset env: got %q, want stored", got)
 	}
 	t.Setenv("BINDERY_OIDC_KC_CLIENT_SECRET", "")
-	if got := EffectiveClientSecret("kc", "stored"); got != "stored" {
+	if got := EffectiveClientSecret("kc", "https://i.example", "stored"); got != "stored" {
 		t.Fatalf("empty env must not override: got %q", got)
 	}
 	if ClientSecretFromEnv("kc") {
 		t.Fatal("empty env must not count as set")
 	}
 	t.Setenv("BINDERY_OIDC_KC_CLIENT_SECRET", "from-env")
-	if got := EffectiveClientSecret("kc", "stored"); got != "from-env" {
+	if got := EffectiveClientSecret("kc", "https://i.example", "stored"); got != "from-env" {
 		t.Fatalf("env set: got %q, want from-env", got)
 	}
 	if !ClientSecretFromEnv("kc") {

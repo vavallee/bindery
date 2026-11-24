@@ -55,6 +55,26 @@ describe('OIDC secret set via environment', () => {
     expect(screen.getByText(/BINDERY_OIDC_KEYCLOAK_CLIENT_SECRET/)).toBeInTheDocument()
   })
 
+  it('fixes the issuer and says why when the secret is bound to it', async () => {
+    vi.mocked(api.oidcProviders).mockResolvedValue([{
+      ...envProvider, client_secret_issuer_bound: true, client_secret_issuer_env_var: 'BINDERY_OIDC_KEYCLOAK_ISSUER',
+    }])
+    render(<AuthSettings />)
+    fireEvent.click(await screen.findByRole('button', { name: 'common.edit' }))
+
+    const issuer = screen.getByDisplayValue('https://kc.example/realms/home')
+    expect(issuer).toHaveAttribute('readonly')
+    expect(screen.getAllByText(/settings\.oidc\.issuerFixedByEnv:BINDERY_OIDC_KEYCLOAK_ISSUER/).length).toBe(2)
+  })
+
+  it('leaves the issuer editable when it is not bound', async () => {
+    vi.mocked(api.oidcProviders).mockResolvedValue([envProvider])
+    render(<AuthSettings />)
+    fireEvent.click(await screen.findByRole('button', { name: 'common.edit' }))
+    expect(screen.getByDisplayValue('https://kc.example/realms/home')).not.toHaveAttribute('readonly')
+    expect(screen.queryByText(/issuerFixedByEnv/)).not.toBeInTheDocument()
+  })
+
   it('keeps the normal editable field when the secret is not from the environment', async () => {
     vi.mocked(api.oidcProviders).mockResolvedValue([plainProvider])
     render(<AuthSettings />)
@@ -78,10 +98,13 @@ describe('oidcSetProviders wire body', () => {
     await authApi.oidcSetProviders([{
       id: 'keycloak', name: 'K', issuer: 'https://i', client_id: 'c', client_secret: '', scopes: [],
       client_secret_from_env: true, client_secret_env_var: 'BINDERY_OIDC_KEYCLOAK_CLIENT_SECRET',
+      client_secret_issuer_bound: true, client_secret_issuer_env_var: 'BINDERY_OIDC_KEYCLOAK_ISSUER',
     }])
     const sent = (body as Record<string, unknown>[])[0]
     expect(sent).not.toHaveProperty('client_secret_from_env')
     expect(sent).not.toHaveProperty('client_secret_env_var')
+    expect(sent).not.toHaveProperty('client_secret_issuer_bound')
+    expect(sent).not.toHaveProperty('client_secret_issuer_env_var')
     expect(sent.client_secret).toBe('')
   })
 })

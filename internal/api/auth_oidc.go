@@ -718,9 +718,13 @@ type providerWithStatus struct {
 	// ClientSecretFromEnv is true when BINDERY_OIDC_<ID>_CLIENT_SECRET supplies
 	// the secret. ClientSecretEnvVar names that variable. Neither carries the
 	// value.
-	ClientSecretFromEnv bool         `json:"client_secret_from_env"`
-	ClientSecretEnvVar  string       `json:"client_secret_env_var"`
-	Status              *oidc.Status `json:"status,omitempty"`
+	ClientSecretFromEnv bool   `json:"client_secret_from_env"`
+	ClientSecretEnvVar  string `json:"client_secret_env_var"`
+	// ClientSecretIssuerBound is true when BINDERY_OIDC_<ID>_ISSUER fixes the
+	// issuer the environment secret may be used with.
+	ClientSecretIssuerBound  bool         `json:"client_secret_issuer_bound"`
+	ClientSecretIssuerEnvVar string       `json:"client_secret_issuer_env_var"`
+	Status                   *oidc.Status `json:"status,omitempty"`
 }
 
 // publicProvider is what GET /auth/oidc/providers shows a caller who is not an
@@ -780,7 +784,10 @@ func (h *OIDCHandler) GetProviders(w http.ResponseWriter, r *http.Request) {
 			ProviderPublicConfig: p.Public(),
 			ClientSecretFromEnv:  oidc.ClientSecretFromEnv(p.ID),
 			ClientSecretEnvVar:   oidc.EnvClientSecretVar(p.ID),
-			Status:               h.mgr.Status(p.ID),
+
+			ClientSecretIssuerBound:  oidc.IssuerBound(p.ID),
+			ClientSecretIssuerEnvVar: oidc.EnvIssuerVar(p.ID),
+			Status:                   h.mgr.Status(p.ID),
 		})
 	}
 	writeOK(w, out)
@@ -867,6 +874,14 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		seenVars[v] = p.ID
+		// A secret bound to an issuer with BINDERY_OIDC_<ID>_ISSUER can only
+		// ever be used against that issuer. Refuse any save, new provider or
+		// edit, that points the id somewhere else, so the secret cannot be
+		// redirected by an admin session.
+		if !oidc.IssuerMatchesBound(p.ID, p.Issuer) {
+			writeErr(w, http.StatusBadRequest, "issuer for provider "+sanitizeLog(p.ID)+" is fixed by "+oidc.EnvIssuerVar(p.ID)+"; change that variable to use another issuer")
+			return
+		}
 	}
 
 	// Merge: preserve existing secret when incoming secret is empty.
