@@ -51,6 +51,12 @@ export interface OidcProvider {
   client_id?: string
   scopes?: string[]
   allowed_groups?: string[]
+  // Response only. True when BINDERY_OIDC_<ID>_CLIENT_SECRET supplies the
+  // secret; client_secret_env_var names that variable. Never the value.
+  client_secret_from_env?: boolean
+  client_secret_env_var?: string
+  client_secret_issuer_bound?: boolean
+  client_secret_issuer_env_var?: string
   // Optional runtime status. Present on responses from a backend that
   // tracks failed-discovery state; absent for older backends.
   status?: OidcProviderStatus
@@ -65,6 +71,11 @@ export interface OidcProviderConfig {
   client_secret: string
   scopes: string[]
   allowed_groups?: string[]
+  // Response only, carried through the edit form and stripped before a PUT.
+  client_secret_from_env?: boolean
+  client_secret_env_var?: string
+  client_secret_issuer_bound?: boolean
+  client_secret_issuer_env_var?: string
 }
 
 // UserOwnedRows counts the rows that reference a user, as returned in the 409
@@ -95,7 +106,18 @@ export const authApi = {
   authStatus: () => request<AuthStatus>('/auth/status'),
   oidcProviders: () => request<OidcProvider[]>('/auth/oidc/providers'),
   oidcSetProviders: (providers: OidcProviderConfig[]) =>
-    request<void>('/auth/oidc/providers', { method: 'PUT', body: JSON.stringify(providers) }),
+    request<void>('/auth/oidc/providers', {
+      method: 'PUT',
+      // The env flags are response only; never send them back.
+      body: JSON.stringify(providers.map(p => {
+        const {
+          client_secret_from_env: _f, client_secret_env_var: _v,
+          client_secret_issuer_bound: _b, client_secret_issuer_env_var: _i, ...rest
+        } = p
+        void _f; void _v; void _b; void _i
+        return rest
+      })),
+    }),
   // Returns the public base URL Bindery will use as the prefix for OIDC
   // callback URLs (resolved from the current request) plus the path template
   // with `{id}` placeholder. The settings UI uses these to live-render the

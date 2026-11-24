@@ -529,7 +529,7 @@ Bindery parks the download as *handed off* and reconciles the managed copy the e
 
 ## Environment variables
 
-The OIDC and reverse proxy variables (`BINDERY_LOCAL_AUTH_ENABLED`, `BINDERY_OIDC_REDIRECT_BASE_URL`, `BINDERY_OIDC_AUTO_PROVISION`, `BINDERY_OIDC_DEFAULT_ROLE`, `BINDERY_OIDC_EMAIL_LINK`, `BINDERY_OIDC_ADMIN_GROUP`, `BINDERY_OIDC_GROUP_CLAIM`, `BINDERY_PROXY_AUTH_HEADER`, `BINDERY_PROXY_AUTO_PROVISION`) are documented in [OIDC](auth-oidc.md) and [proxy auth](auth-proxy.md).
+The OIDC and reverse proxy variables (`BINDERY_LOCAL_AUTH_ENABLED`, `BINDERY_OIDC_REDIRECT_BASE_URL`, `BINDERY_OIDC_AUTO_PROVISION`, `BINDERY_OIDC_DEFAULT_ROLE`, `BINDERY_OIDC_EMAIL_LINK`, `BINDERY_OIDC_ADMIN_GROUP`, `BINDERY_OIDC_GROUP_CLAIM`, `BINDERY_OIDC_<ID>_CLIENT_SECRET` (a provider's client secret, for example `BINDERY_OIDC_KEYCLOAK_CLIENT_SECRET` for provider id `keycloak`, kept out of the database) with the optional `BINDERY_OIDC_<ID>_ISSUER` that binds it to one issuer (always set it with the secret; without it an admin can point the provider at another issuer and receive the secret), `BINDERY_PROXY_AUTH_HEADER`, `BINDERY_PROXY_AUTO_PROVISION`) are documented in [OIDC](auth-oidc.md) and [proxy auth](auth-proxy.md).
 
 Several variables below have a database equivalent that overrides them once it is set. **Settings, Advanced tab** lists every setting Bindery stores, with its type, its default, the values it accepts and whether a change needs a restart, so you can see which keys an install actually has a row for. It is admin only, it never shows a credential's value, and the keys most installs need still have their own tab.
 
@@ -1097,7 +1097,7 @@ clear:
 
 - indexer and Prowlarr API keys
 - download client passwords and API keys
-- OIDC client secrets
+- OIDC client secrets (except any supplied through `BINDERY_OIDC_<ID>_CLIENT_SECRET`). A secret stored before the variable was set stays in the database and in backups until the provider is deleted and re-added
 - the session signing secret and the Bindery API key
 - Hardcover, Audiobookshelf and any other external service tokens
 

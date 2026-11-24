@@ -715,7 +715,16 @@ func (h *OIDCHandler) GetRedirectBase(w http.ResponseWriter, r *http.Request) {
 // recovers (see EnsureLoaded).
 type providerWithStatus struct {
 	oidc.ProviderPublicConfig
-	Status *oidc.Status `json:"status,omitempty"`
+	// ClientSecretFromEnv is true when BINDERY_OIDC_<ID>_CLIENT_SECRET supplies
+	// the secret. ClientSecretEnvVar names that variable. Neither carries the
+	// value.
+	ClientSecretFromEnv bool   `json:"client_secret_from_env"`
+	ClientSecretEnvVar  string `json:"client_secret_env_var"`
+	// ClientSecretIssuerBound is true when BINDERY_OIDC_<ID>_ISSUER fixes the
+	// issuer the environment secret may be used with.
+	ClientSecretIssuerBound  bool         `json:"client_secret_issuer_bound"`
+	ClientSecretIssuerEnvVar string       `json:"client_secret_issuer_env_var"`
+	Status                   *oidc.Status `json:"status,omitempty"`
 }
 
 // publicProvider is what GET /auth/oidc/providers shows a caller who is not an
@@ -773,7 +782,12 @@ func (h *OIDCHandler) GetProviders(w http.ResponseWriter, r *http.Request) {
 	for _, p := range ps {
 		out = append(out, providerWithStatus{
 			ProviderPublicConfig: p.Public(),
-			Status:               h.mgr.Status(p.ID),
+			ClientSecretFromEnv:  oidc.ClientSecretFromEnv(p.ID),
+			ClientSecretEnvVar:   oidc.EnvClientSecretVar(p.ID),
+
+			ClientSecretIssuerBound:  oidc.IssuerBound(p.ID),
+			ClientSecretIssuerEnvVar: oidc.EnvIssuerVar(p.ID),
+			Status:                   h.mgr.Status(p.ID),
 		})
 	}
 	writeOK(w, out)
@@ -840,6 +854,36 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 		existingByID[e.ID] = e
 	}
 
+	// A provider's secret may come from BINDERY_OIDC_<ID>_CLIENT_SECRET, so two
+	// ids must never map to the same variable: otherwise a provider added
+	// with a look-alike id and another issuer would be sent the real secret.
+	// The payload replaces the whole set, so it is the final state to check.
+	seenVars := make(map[string]string, len(incoming))
+	for _, p := range incoming {
+		if _, saved := existingByID[p.ID]; !saved && !oidcProviderIDRe.MatchString(p.ID) {
+			writeErr(w, http.StatusBadRequest, "provider id must be 1 to 32 characters of a-z, 0-9, _ or -: "+sanitizeLog(p.ID))
+			return
+		}
+		if !oidc.EnvClientSecretVarUsable(p.ID) {
+			writeErr(w, http.StatusBadRequest, "provider id needs at least one letter or digit: "+sanitizeLog(p.ID))
+			return
+		}
+		v := oidc.EnvClientSecretVar(p.ID)
+		if other, dup := seenVars[v]; dup {
+			writeErr(w, http.StatusBadRequest, "provider ids "+sanitizeLog(other)+" and "+sanitizeLog(p.ID)+" would share the client secret variable "+v+"; use ids that differ in letters or digits")
+			return
+		}
+		seenVars[v] = p.ID
+		// A secret bound to an issuer with BINDERY_OIDC_<ID>_ISSUER can only
+		// ever be used against that issuer. Refuse any save, new provider or
+		// edit, that points the id somewhere else, so the secret cannot be
+		// redirected by an admin session.
+		if !oidc.IssuerMatchesBound(p.ID, p.Issuer) {
+			writeErr(w, http.StatusBadRequest, "issuer for provider "+sanitizeLog(p.ID)+" is fixed by "+oidc.EnvIssuerVar(p.ID)+"; change that variable to use another issuer")
+			return
+		}
+	}
+
 	// Merge: preserve existing secret when incoming secret is empty.
 	merged := make([]oidc.ProviderConfig, 0, len(incoming))
 	for i, p := range incoming {
@@ -857,7 +901,7 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 			}
 			// The stored secret was issued by the stored issuer. Never carry
 			// it over to another one: a new issuer needs its own secret.
-			if p.ClientSecret == "" && strings.TrimSpace(p.Issuer) != strings.TrimSpace(prev.Issuer) {
+			if p.ClientSecret == "" && !oidc.ClientSecretFromEnv(p.ID) && strings.TrimSpace(p.Issuer) != strings.TrimSpace(prev.Issuer) {
 				writeErr(w, http.StatusBadRequest, "client_secret required when the issuer changes: "+p.ID)
 				return
 			}
@@ -868,7 +912,21 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 				p.AllowedGroups = prev.AllowedGroups
 			}
 		}
-		if p.ClientSecret == "" {
+		if oidc.ClientSecretFromEnv(p.ID) {
+			// The secret comes from the environment, so nothing the client
+			// sent is stored. A value already in the database is left as it
+			// is (the environment wins on read, and removing the variable
+			// falls back to it); a new provider is stored with no secret.
+			// If the issuer changed, that stored secret belongs to the old
+			// issuer, so it is cleared rather than left to be used against
+			// the new one once the variable goes away.
+			prev, saved := existingByID[p.ID]
+			if saved && strings.TrimSpace(p.Issuer) == strings.TrimSpace(prev.Issuer) {
+				p.ClientSecret = prev.ClientSecret
+			} else {
+				p.ClientSecret = ""
+			}
+		} else if p.ClientSecret == "" {
 			prev, ok := existingByID[p.ID]
 			if !ok {
 				writeErr(w, http.StatusBadRequest, "client_secret required for new provider: "+p.ID)
