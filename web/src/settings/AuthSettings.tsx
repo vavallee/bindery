@@ -336,8 +336,8 @@ function ProviderForm({
           <label htmlFor={`${fid}-4`} className="block text-xs text-fg-muted mb-1">{t('settings.oidc.fieldClientSecret')}</label>
           {secretFromEnv ? (
             <>
-              <input id={`${fid}-4`} {...secretInputAttrs} value="" disabled placeholder={t('settings.oidc.clientSecretFromEnv')} type="password" className={`${inputCls} opacity-60`} />
-              <p className="text-[11px] text-fg-muted mt-1">
+              <input id={`${fid}-4`} aria-describedby={`${fid}-4-env`} {...secretInputAttrs} value="" disabled placeholder={t('settings.oidc.clientSecretFromEnv')} type="password" className={`${inputCls} opacity-60`} />
+              <p id={`${fid}-4-env`} className="text-[11px] text-fg-muted mt-1">
                 <span className="font-medium">{t('settings.oidc.clientSecretFromEnv')}</span>{' '}
                 {t('settings.oidc.clientSecretFromEnvVar', { name: initial?.client_secret_env_var })}
               </p>

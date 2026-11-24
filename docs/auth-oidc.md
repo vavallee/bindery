@@ -38,15 +38,15 @@ The variable is `BINDERY_OIDC_<ID>_CLIENT_SECRET`. `<ID>` is the provider id in 
 |-------------|----------|
 | `keycloak` | `BINDERY_OIDC_KEYCLOAK_CLIENT_SECRET` |
 | `my-idp` | `BINDERY_OIDC_MY_IDP_CLIENT_SECRET` |
-| `auth.entik2` | `BINDERY_OIDC_AUTH_ENTIK2_CLIENT_SECRET` |
+| `auth-entik2` | `BINDERY_OIDC_AUTH_ENTIK2_CLIENT_SECRET` |
 
 How it behaves:
 
-- When the variable is set and not empty, it wins over any stored secret everywhere the secret is used: the login redirect and the code exchange. Restart Bindery after changing it.
-- Nothing is written to the database for that provider. A save from the Settings screen or `PUT /api/v1/auth/oidc/providers` ignores any `client_secret` in the request. A secret that was stored earlier is left as it is, so removing the variable later falls back to it. Clear it by saving the provider once with the variable unset and a new secret, or by deleting and re-adding the provider.
+- When the variable is set and not empty, it wins over any stored secret everywhere the secret is used: the login redirect and the code exchange. It is read on each login, but an injected environment variable only changes when the process restarts. The value is sent exactly as given, so a trailing newline from a secret file is part of the secret; strip it when you create the file.
+- Nothing is written to the database for that provider. A save from the Settings screen or `PUT /api/v1/auth/oidc/providers` ignores any `client_secret` in the request. A secret that was stored before the variable was set stays in the database, and in backups, until you delete and re-add the provider; it is left as it is while the issuer stays the same, so removing the variable later falls back to it. If you change the issuer of a provider that has the variable set, the stored secret is cleared, because it belongs to the old issuer.
 - The provider list (admin only) reports `client_secret_from_env` and `client_secret_env_var`. The Settings form then shows the secret field disabled with "Set via environment variable" and the variable name. The secret itself is never returned to anyone.
 - A provider with the variable set can be created through the API with no `client_secret`. The Settings form still asks for one when you add a provider, because it cannot know the id yet. Type any placeholder; it is discarded. Editing afterwards needs nothing.
-- Two ids that become the same name, such as `my-idp` and `my_idp`, share one variable. Bindery logs a warning when it loads them and does not pick between them. Use ids that differ in letters or digits.
+- Two ids that become the same name, such as `my-idp` and `my_idp`, cannot both be saved: Bindery refuses the save, so one provider can never be handed another provider's secret. New provider ids are limited to `a-z`, `0-9`, `_` and `-` (up to 32 characters) and need at least one letter or digit.
 - The `_CLIENT_SECRET` suffix keeps these names apart from the other `BINDERY_OIDC_*` settings, for example `BINDERY_OIDC_EMAIL_LINK`.
 
 ## Redirect URL construction

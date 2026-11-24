@@ -182,7 +182,6 @@ func (e *entry) oauth2Config(redirectBase string) oauth2.Config {
 // Concurrent Reload calls are last-write-wins; that matches the contract that
 // Reload mirrors the persisted settings, which is itself a serial source.
 func (m *Manager) Reload(ctx context.Context, cfgs []ProviderConfig) {
-	WarnEnvSecretCollisions(cfgs)
 	// Step 1: snapshot the existing loaded providers under RLock so we can
 	// reuse entries whose config is unchanged (preserving the JWKS cache).
 	m.mu.RLock()

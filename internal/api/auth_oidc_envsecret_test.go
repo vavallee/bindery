@@ -48,16 +48,80 @@ func TestSetProviders_EnvSecretLeavesStoredValueAlone(t *testing.T) {
 	}
 
 	t.Setenv("BINDERY_OIDC_KC_CLIENT_SECRET", "env-secret-value")
-	// An issuer change with no secret is normally refused; with the env secret it is fine.
-	body = `[{"id":"kc","name":"KC","issuer":"https://kc2.example.com","client_id":"abc","client_secret":"typed","scopes":["openid"]}]`
+	// Same issuer: the stored value is left alone and the typed one ignored.
+	body = `[{"id":"kc","name":"KC2","issuer":"https://kc.example.com","client_id":"abc","client_secret":"typed","scopes":["openid"]}]`
 	rec = httptest.NewRecorder()
 	h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", body, context.Background()))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	got := storedProviders(t, settings)
-	if len(got) != 1 || got[0].ClientSecret != "old-stored" || got[0].Issuer != "https://kc2.example.com" {
-		t.Fatalf("stored = %+v, want old-stored kept and new issuer", got)
+	if len(got) != 1 || got[0].ClientSecret != "old-stored" {
+		t.Fatalf("stored = %+v, want old-stored kept", got)
+	}
+}
+
+// The stored secret belongs to the old issuer. With the variable set the
+// issuer guard is waived, so the stored secret must be cleared instead of
+// surviving to be used against the new issuer once the variable is removed.
+func TestSetProviders_EnvSecretIssuerChangeClearsStoredSecret(t *testing.T) {
+	h, settings := newOIDCSetProvidersFixture(t)
+	body := `[{"id":"kc","name":"KC","issuer":"https://kc.example.com","client_id":"abc","client_secret":"old-stored","scopes":["openid"]}]`
+	rec := httptest.NewRecorder()
+	h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", body, context.Background()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed status=%d", rec.Code)
+	}
+
+	t.Setenv("BINDERY_OIDC_KC_CLIENT_SECRET", "env-secret-value")
+	body = `[{"id":"kc","name":"KC","issuer":"https://kc2.example.com","client_id":"abc","scopes":["openid"]}]`
+	rec = httptest.NewRecorder()
+	h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", body, context.Background()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	got := storedProviders(t, settings)
+	if len(got) != 1 || got[0].ClientSecret != "" || got[0].Issuer != "https://kc2.example.com" {
+		t.Fatalf("stored = %+v, want empty secret and new issuer", got)
+	}
+}
+
+// Ids that map to one variable must never be saved together, or a look-alike
+// provider pointed at another issuer would be sent the real secret.
+func TestSetProviders_RejectsIDsSharingAnEnvVariable(t *testing.T) {
+	t.Setenv("BINDERY_OIDC_KEYCLOAK_CLIENT_SECRET", "env-secret-value")
+	cases := map[string]string{
+		"case":      `[{"id":"keycloak","name":"A","issuer":"https://kc.example.com","client_id":"a","client_secret":"s","scopes":["openid"]},{"id":"KEYCLOAK","name":"B","issuer":"https://evil.example","client_id":"b","scopes":["openid"]}]`,
+		"separator": `[{"id":"my-idp","name":"A","issuer":"https://a.example.com","client_id":"a","client_secret":"s","scopes":["openid"]},{"id":"my_idp","name":"B","issuer":"https://b.example.com","client_id":"b","client_secret":"s","scopes":["openid"]}]`,
+		"dotless-i": `[{"id":"kidp","name":"A","issuer":"https://a.example.com","client_id":"a","client_secret":"s","scopes":["openid"]},{"id":"kıdp","name":"B","issuer":"https://b.example.com","client_id":"b","client_secret":"s","scopes":["openid"]}]`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, settings := newOIDCSetProvidersFixture(t)
+			rec := httptest.NewRecorder()
+			h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", body, context.Background()))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s, want 400", rec.Code, rec.Body.String())
+			}
+			// "case" and "dotless-i" are stopped by the id rule, "separator"
+			// is a true variable collision between two valid ids.
+			if name == "separator" && !strings.Contains(rec.Body.String(), "share") {
+				t.Fatalf("want a shared variable error, got %s", rec.Body.String())
+			}
+			if got := storedProviders(t, settings); len(got) != 0 {
+				t.Fatalf("nothing may be stored, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestSetProviders_RejectsIDWithNoLettersOrDigits(t *testing.T) {
+	h, _ := newOIDCSetProvidersFixture(t)
+	body := `[{"id":"--","name":"A","issuer":"https://a.example.com","client_id":"a","client_secret":"s","scopes":["openid"]}]`
+	rec := httptest.NewRecorder()
+	h.SetProviders(rec, jsonReq(http.MethodPut, "/api/v1/auth/oidc/providers", body, context.Background()))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "letter or digit") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

@@ -60,6 +60,19 @@ func TestOAuth2Config_UsesEnvSecret(t *testing.T) {
 	}
 }
 
-func TestWarnEnvSecretCollisions_DoesNotPanic(t *testing.T) {
-	WarnEnvSecretCollisions([]ProviderConfig{{ID: "my-idp"}, {ID: "my_idp"}, {ID: "other"}})
+func TestEnvClientSecretVar_NonASCIIFoldingDoesNotCollide(t *testing.T) {
+	if EnvClientSecretVar("k\u0131dp") == EnvClientSecretVar("kidp") {
+		t.Fatal("dotless i must not map onto i")
+	}
+	if EnvClientSecretVar("\u017fso") == EnvClientSecretVar("sso") {
+		t.Fatal("long s must not map onto s")
+	}
+}
+
+func TestEnvClientSecretVarUsable(t *testing.T) {
+	for id, want := range map[string]bool{"kc": true, "-1-": true, "-": false, "__": false, "": false, "\u00e9": false} {
+		if got := EnvClientSecretVarUsable(id); got != want {
+			t.Errorf("usable(%q) = %v, want %v", id, got, want)
+		}
+	}
 }

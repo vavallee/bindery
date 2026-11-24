@@ -1097,7 +1097,7 @@ clear:
 
 - indexer and Prowlarr API keys
 - download client passwords and API keys
-- OIDC client secrets (except any supplied through `BINDERY_OIDC_<ID>_CLIENT_SECRET`)
+- OIDC client secrets (except any supplied through `BINDERY_OIDC_<ID>_CLIENT_SECRET`). A secret stored before the variable was set stays in the database and in backups until the provider is deleted and re-added
 - the session signing secret and the Bindery API key
 - Hardcover, Audiobookshelf and any other external service tokens
 

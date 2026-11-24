@@ -847,6 +847,28 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 		existingByID[e.ID] = e
 	}
 
+	// A provider's secret may come from BINDERY_OIDC_<ID>_CLIENT_SECRET, so two
+	// ids must never map to the same variable: otherwise a provider added
+	// with a look-alike id and another issuer would be sent the real secret.
+	// The payload replaces the whole set, so it is the final state to check.
+	seenVars := make(map[string]string, len(incoming))
+	for _, p := range incoming {
+		if _, saved := existingByID[p.ID]; !saved && !oidcProviderIDRe.MatchString(p.ID) {
+			writeErr(w, http.StatusBadRequest, "provider id must be 1 to 32 characters of a-z, 0-9, _ or -: "+sanitizeLog(p.ID))
+			return
+		}
+		if !oidc.EnvClientSecretVarUsable(p.ID) {
+			writeErr(w, http.StatusBadRequest, "provider id needs at least one letter or digit: "+sanitizeLog(p.ID))
+			return
+		}
+		v := oidc.EnvClientSecretVar(p.ID)
+		if other, dup := seenVars[v]; dup {
+			writeErr(w, http.StatusBadRequest, "provider ids "+sanitizeLog(other)+" and "+sanitizeLog(p.ID)+" would share the client secret variable "+v+"; use ids that differ in letters or digits")
+			return
+		}
+		seenVars[v] = p.ID
+	}
+
 	// Merge: preserve existing secret when incoming secret is empty.
 	merged := make([]oidc.ProviderConfig, 0, len(incoming))
 	for i, p := range incoming {
@@ -880,7 +902,15 @@ func (h *OIDCHandler) SetProviders(w http.ResponseWriter, r *http.Request) {
 			// sent is stored. A value already in the database is left as it
 			// is (the environment wins on read, and removing the variable
 			// falls back to it); a new provider is stored with no secret.
-			p.ClientSecret = existingByID[p.ID].ClientSecret
+			// If the issuer changed, that stored secret belongs to the old
+			// issuer, so it is cleared rather than left to be used against
+			// the new one once the variable goes away.
+			prev, saved := existingByID[p.ID]
+			if saved && strings.TrimSpace(p.Issuer) == strings.TrimSpace(prev.Issuer) {
+				p.ClientSecret = prev.ClientSecret
+			} else {
+				p.ClientSecret = ""
+			}
 		} else if p.ClientSecret == "" {
 			prev, ok := existingByID[p.ID]
 			if !ok {

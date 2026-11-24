@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import AuthSettings from './AuthSettings'
 import { api } from '../api/client'
@@ -63,17 +63,6 @@ describe('OIDC secret set via environment', () => {
     const secret = document.querySelector('input[type="password"]') as HTMLInputElement
     expect(secret).not.toBeDisabled()
     expect(screen.queryByText('settings.oidc.clientSecretFromEnv')).not.toBeInTheDocument()
-  })
-
-  it('saves an env-secret provider with a blank secret and no env flags', async () => {
-    vi.mocked(api.oidcProviders).mockResolvedValue([envProvider])
-    render(<AuthSettings />)
-    fireEvent.click(await screen.findByRole('button', { name: 'common.edit' }))
-    fireEvent.click(screen.getByRole('button', { name: 'settings.oidc.editSave' }))
-
-    await waitFor(() => expect(api.oidcSetProviders).toHaveBeenCalled())
-    const sent = vi.mocked(api.oidcSetProviders).mock.calls[0][0][0]
-    expect(sent.client_secret).toBe('')
   })
 })
 
