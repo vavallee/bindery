@@ -267,6 +267,18 @@ func (i *Importer) inspectFormatPath(ctx context.Context, cfg ImportConfig, form
 	return true, ""
 }
 
+// itemFileCandidates returns the paths a file lookup consults for an item,
+// in the order the book match tries them: the ebook file, then the
+// audiobook folder when the item carries audio files. Extra ebook files do
+// not take part in matching.
+func itemFileCandidates(item NormalizedLibraryItem) []string {
+	candidates := []string{item.EbookPath}
+	if len(item.AudioFiles) > 0 {
+		candidates = append(candidates, item.Path)
+	}
+	return candidates
+}
+
 // findBookByItemFiles returns the existing book that already tracks one of the
 // item's files, with that book's author, or nil. The paths are the ones
 // reconcileFormatPath would record for the item: the ebook file and the
@@ -286,11 +298,7 @@ func (i *Importer) findBookByItemFiles(ctx context.Context, cfg ImportConfig, au
 	if i.books == nil || i.authors == nil || author == nil {
 		return nil, nil, nil
 	}
-	candidates := []string{item.EbookPath}
-	if len(item.AudioFiles) > 0 {
-		candidates = append(candidates, item.Path)
-	}
-	for _, candidate := range candidates {
+	for _, candidate := range itemFileCandidates(item) {
 		if strings.TrimSpace(candidate) == "" {
 			continue
 		}
@@ -324,6 +332,102 @@ func (i *Importer) findBookByItemFiles(ctx context.Context, cfg ImportConfig, au
 		}
 	}
 	return nil, nil, nil
+}
+
+// conflictingTrackedBook returns the book already tracking one of the item's
+// files when that book belongs to a different author than the item credits
+// (#4077), or nil when there is no such book. The path is the strongest
+// match key there is, but a shared file is not proof on its own: the item
+// may credit another spelling of the same person — the author match below
+// lets that through, so the normal flow links it — or a different person
+// altogether, and claiming the book for the item would merge two authors'
+// books. The caller parks the item for review instead of minting a second,
+// wanted book that can never take the file.
+//
+// The scan mirrors findBookByItemFiles: it keeps going past a tracked book
+// whose author does not match, and only reports a conflict when no
+// candidate's book matches at all. A multi-format item whose ebook sits on
+// one author's copy and whose audiobook folder sits on another's is
+// therefore linked to the matching copy, not queued.
+//
+// Only books with no owner are reachable: an import carries no owner, so it
+// must not reach across tenants through a file (#1457), the same guard
+// findBookByItemFiles applies once the author is resolved. An item with no
+// authors is left to resolveAuthor, which reports it as failed.
+//
+// The author comparison reuses the decision resolveAuthor would make, not
+// just the raw names: matcher, when non-nil, resolves the item's author
+// through trusted aliases (a relink alias maps a provider spelling onto
+// its author even when the names do not auto-match), and the stable ABS
+// author id resolves through the foreign-id tier, which needs no name
+// agreement at all — the same spelling that varies per book in #4077.
+// Either one naming the tracking book's author lets the item through,
+// as resolveAuthor plus the file-path rung would link it. A nil matcher
+// falls back to the raw names. Both resolutions depend only on the item,
+// so they run once, before the candidate scan.
+func (i *Importer) conflictingTrackedBook(ctx context.Context, cfg ImportConfig, item NormalizedLibraryItem, matcher *authorMatcher) (*models.Book, *models.Author, error) {
+	if i.books == nil || i.authors == nil {
+		return nil, nil, nil
+	}
+	name := primaryAuthorName(item)
+	if name == "" {
+		return nil, nil, nil
+	}
+	var resolvedAuthor *models.Author
+	if matcher != nil {
+		if resolved, _, _, err := matcher.findAuthorByName(ctx, name); err != nil {
+			return nil, nil, err
+		} else {
+			resolvedAuthor = resolved
+		}
+	}
+	var foreignIDAuthor *models.Author
+	if len(item.Authors) > 0 {
+		if existing, err := i.authors.GetByAnyForeignID(ctx, absForeignID("author", item.LibraryID, authorExternalID(item.Authors[0]))); err != nil {
+			return nil, nil, err
+		} else {
+			foreignIDAuthor = existing
+		}
+	}
+	var firstConflictBook *models.Book
+	var firstConflictAuthor *models.Author
+	for _, candidate := range itemFileCandidates(item) {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		cleanPath := filepath.Clean(i.remapABSPath(cfg, candidate))
+		if cleanPath == "." || cleanPath == "" {
+			continue
+		}
+		book, err := i.books.GetByTrackedPath(ctx, cleanPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		if book == nil || book.OwnerUserID != 0 {
+			continue
+		}
+		bookAuthor, err := i.authors.GetByID(ctx, book.AuthorID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if bookAuthor == nil {
+			continue
+		}
+		switch textutil.MatchAuthorName(name, bookAuthor.Name).Kind {
+		case textutil.AuthorMatchExact, textutil.AuthorMatchFuzzyAuto:
+			return nil, nil, nil
+		}
+		if resolvedAuthor != nil && resolvedAuthor.ID == book.AuthorID {
+			return nil, nil, nil
+		}
+		if foreignIDAuthor != nil && foreignIDAuthor.ID == book.AuthorID {
+			return nil, nil, nil
+		}
+		if firstConflictBook == nil {
+			firstConflictBook, firstConflictAuthor = book, bookAuthor
+		}
+	}
+	return firstConflictBook, firstConflictAuthor, nil
 }
 
 func (i *Importer) remapABSPath(cfg ImportConfig, candidatePath string) string {

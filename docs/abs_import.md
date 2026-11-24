@@ -143,6 +143,8 @@ Resolution order:
 
 Retitling an item in Audiobookshelf and importing again updates the same book through step 1 or 2. Step 3 covers a book Bindery had before the item was ever imported, such as one it downloaded itself under the provider's spelling of the title: the item is matched to it instead of becoming a second, wanted row beside the owned one.
 
+Step 3 only fires when the file's book belongs to the same author as the item. When the file is already tracked on a book under a *different* author — the two systems spell the author differently, as in #4077 — the importer does not guess which spelling is right and does not create a duplicate: the item is parked in the review queue as an ambiguous book match, naming the book that holds the file, and no new author or book is created. The same applies when Bindery holds two copies of a book under different author spellings and the file sits on the copy the item's author does not match. The check only reaches books with no owner: an import carries no owner, so a file tracked on a book that belongs to a user is left to the normal flow. Once the user resolves the queued item — to the book's author, or to the book itself — approving it imports the book; the manual resolution is not second-guessed.
+
 Important applied fields:
 
 - title and sort title
