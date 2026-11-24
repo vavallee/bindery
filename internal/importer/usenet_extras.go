@@ -150,6 +150,17 @@ func (s *Scanner) sweepUsenetJobExtras(ctx context.Context, downloadPath string,
 		return
 	}
 
+	// A job whose ZIP Bindery extracted (the marker is Bindery's own, and an
+	// archive entry of that name is never written) is swept with its zip, so a
+	// fully imported job folder is cleaned up as before the extraction existed.
+	// Only a zip directly in the job folder counts; the book files extracted from
+	// it were imported and moved like any other, and anything else it left
+	// (an .exe, say) still keeps the folder.
+	zipExtracted := false
+	if fi, err := os.Lstat(filepath.Join(pruneRoot, zipExtractedMarker)); err == nil && fi.Mode().IsRegular() {
+		zipExtracted = true
+	}
+
 	var extras, dirs []string
 	blocker := ""
 	walkErr := filepath.WalkDir(pruneRoot, func(path string, d fs.DirEntry, err error) error {
@@ -159,6 +170,9 @@ func (s *Scanner) sweepUsenetJobExtras(ctx context.Context, downloadPath string,
 		switch {
 		case d.IsDir():
 			dirs = append(dirs, path)
+		case zipExtracted && d.Type().IsRegular() && filepath.Dir(path) == pruneRoot &&
+			(d.Name() == zipExtractedMarker || strings.EqualFold(filepath.Ext(d.Name()), ".zip")):
+			extras = append(extras, path)
 		case d.Type().IsRegular() && isReleaseExtra(d.Name()) && !unplaced[filepath.Clean(path)] && !plausibleBookFile(path, d):
 			extras = append(extras, path)
 		default:

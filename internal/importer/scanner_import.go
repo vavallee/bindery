@@ -148,8 +148,13 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 	// alone. Unpack it here, under the guards in zip_extract.go, and look again.
 	var zipNote string
 	var zipNoteIsRefusal bool
-	if len(bookFiles) == 0 && len(tooSmallFiles) == 0 {
+	if len(bookFiles) == 0 {
 		extracted, note, refusal, zerr := s.unpackZipForImport(ctx, dl, downloadPath, cleanupClientType, explicitFiles)
+		if errors.Is(zerr, errZipNoBook) {
+			s.failImport(ctx, dl, models.StateImportFailed,
+				"this download holds only a ZIP. Bindery extracted it, found nothing in it that looks like a book, and removed what it had written. If the book is inside in some other way, extract it into the folder yourself, then use Retry import on the Queue page.")
+			return
+		}
 		if zerr != nil {
 			slog.Warn("could not extract the ZIP of a usenet download", "path", downloadPath, "error", zerr)
 			s.failImport(ctx, dl, models.StateImportFailed,

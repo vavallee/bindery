@@ -3,6 +3,7 @@ package importer
 import (
 	"archive/zip"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +53,15 @@ const (
 
 	zipMaxEntries  = 2000
 	zipMaxArchives = 20
+	// Names and paths: an entry name over zipMaxNameBytes, a path deeper than
+	// zipMaxDepth, or more than zipMaxDirs folders to create refuses the archive.
+	zipMaxNameBytes = 1024
+	zipMaxDepth     = 32
+	zipMaxDirs      = 2000
+	// zipMaxDirBytes bounds the central directory, which Go reads whole into
+	// memory before any entry can be counted: an entry record is 46 bytes plus
+	// its name, and a generous allowance for extra fields and comments.
+	zipMaxDirBytes int64 = zipMaxEntries * (46 + zipMaxNameBytes + 256)
 	// zipMaxTotalBytes caps everything one folder's archives unpack to.
 	zipMaxTotalBytes int64 = 4 << 30
 	// zipMaxEntryBytes caps one entry.
@@ -76,6 +86,11 @@ var (
 	errZipTooLarge  = errors.New("it unpacks to more than the size limits allow")
 	errZipBlocked   = errors.New("a file is in the way")
 	errZipEntryName = errors.New("the entry name is not safe")
+	errZipDirectory = errors.New("its directory is larger than the limits allow")
+	errZipShape     = errors.New("it holds names or folders beyond the limits")
+	// errZipNoBook is an extraction that yielded nothing that looks like a book.
+	// What it wrote was removed again.
+	errZipNoBook = errors.New("the ZIP holds nothing that looks like a book")
 )
 
 // zipOutcome is what an extraction did, for the message the queue shows.
@@ -85,6 +100,9 @@ type zipOutcome struct {
 	encrypted int
 	special   int
 	existing  int
+	// noBook is set when the extraction yielded no book candidate and was
+	// rolled back.
+	noBook bool
 	// done is set when the folder was extracted by an earlier attempt, so
 	// nothing was opened this time.
 	done bool
@@ -95,7 +113,7 @@ type zipOutcome struct {
 func (o zipOutcome) note() string {
 	var parts []string
 	if o.done {
-		parts = append(parts, "Bindery already extracted this folder's ZIP files once and does not open a ZIP that came out of another.")
+		parts = append(parts, "Bindery already extracted this folder's ZIP files once (or found no book in them) and does not open a ZIP that came out of another.")
 	}
 	if o.files > 0 {
 		parts = append(parts, fmt.Sprintf("Bindery extracted %d file(s) from %d ZIP archive(s).", o.files, o.archives))
@@ -116,6 +134,33 @@ func (o zipOutcome) note() string {
 type zipBudget struct {
 	entries int
 	bytes   int64
+	// dirs is the folders the archives would create, counted once each.
+	dirs map[string]bool
+}
+
+// addDirs counts the folders an entry needs (every prefix of its parent path,
+// and the path itself for a folder entry) and reports false once the folders
+// of all the archives pass zipMaxDirs.
+func (b *zipBudget) addDirs(rel string, isDir bool) bool {
+	if b.dirs == nil {
+		b.dirs = map[string]bool{}
+	}
+	dir := rel
+	if !isDir {
+		dir = path.Dir(rel)
+	}
+	if dir == "." {
+		return true
+	}
+	cur := ""
+	for seg := range strings.SplitSeq(dir, "/") {
+		cur = path.Join(cur, seg)
+		b.dirs[cur] = true
+		if len(b.dirs) > zipMaxDirs {
+			return false
+		}
+	}
+	return true
 }
 
 // zipCreated records what an extraction wrote, so a failure can undo it.
@@ -136,8 +181,19 @@ func cleanZipEntryName(name string) (string, error) {
 	// reach the importer, the database and the API as is, so each run of invalid
 	// bytes becomes an underscore. Two names that collapse to one are the
 	// duplicate case: the first is kept.
+	if len(name) > zipMaxNameBytes || strings.ContainsRune(name, 0) {
+		return "", errZipEntryName
+	}
 	name = strings.ToValidUTF8(name, "_")
-	if name == "" || strings.ContainsRune(name, 0) {
+	// A control character in a name is a terminal escape in a log line and a
+	// trap in any shell the user opens the folder in: sanitised like bad UTF-8.
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return '_'
+		}
+		return r
+	}, name)
+	if name == "" {
 		return "", errZipEntryName
 	}
 	n := strings.ReplaceAll(name, `\`, "/")
@@ -156,7 +212,7 @@ func cleanZipEntryName(name string) (string, error) {
 	if c == "." {
 		return "", nil
 	}
-	if !filepath.IsLocal(filepath.FromSlash(c)) {
+	if !filepath.IsLocal(filepath.FromSlash(c)) || strings.Count(c, "/")+1 > zipMaxDepth {
 		return "", errZipEntryName
 	}
 	return c, nil
@@ -263,6 +319,15 @@ type zipPlanEntry struct {
 	kind zipEntryKind
 }
 
+// shortZipName keeps a hostile entry name from filling a log line or a Queue
+// message.
+func shortZipName(name string) string {
+	if len(name) > 80 {
+		return strings.ToValidUTF8(name[:80], "_") + "..."
+	}
+	return name
+}
+
 // planZip validates every entry of an open archive without writing anything:
 // the count, each name, the declared sizes and the compression ratio. Entries
 // that are not extracted (encrypted, links, special files) are counted in out
@@ -277,7 +342,7 @@ func planZip(zr *zip.Reader, archiveSize int64, b *zipBudget, out *zipOutcome) (
 	for _, f := range zr.File {
 		rel, err := cleanZipEntryName(f.Name)
 		if err != nil {
-			return nil, fmt.Errorf("entry %q: %w", f.Name, err)
+			return nil, fmt.Errorf("entry %q: %w", shortZipName(f.Name), err)
 		}
 		mode := f.Mode()
 		switch {
@@ -290,6 +355,9 @@ func planZip(zr *zip.Reader, archiveSize int64, b *zipBudget, out *zipOutcome) (
 		case rel == "":
 			continue
 		case mode.IsDir() || strings.HasSuffix(strings.ReplaceAll(f.Name, `\`, "/"), "/"):
+			if !b.addDirs(rel, true) {
+				return nil, fmt.Errorf("it would create more than %d folders: %w", zipMaxDirs, errZipShape)
+			}
 			plan = append(plan, zipPlanEntry{file: f, rel: rel, kind: zipEntryDir})
 			continue
 		case rel == zipExtractedMarker:
@@ -297,7 +365,10 @@ func planZip(zr *zip.Reader, archiveSize int64, b *zipBudget, out *zipOutcome) (
 			continue
 		}
 		if f.UncompressedSize64 > uint64(zipEntryCap(f.CompressedSize64)) { //nolint:gosec // the cap is positive (at least the 1 MiB floor)
-			return nil, fmt.Errorf("entry %q: %w", f.Name, errZipTooLarge)
+			return nil, fmt.Errorf("entry %q: %w", shortZipName(f.Name), errZipTooLarge)
+		}
+		if !b.addDirs(rel, false) {
+			return nil, fmt.Errorf("it would create more than %d folders: %w", zipMaxDirs, errZipShape)
 		}
 		declared += int64(f.UncompressedSize64) //nolint:gosec // just checked against the entry cap, which is an int64
 		if declared > b.bytes {
@@ -314,9 +385,12 @@ func planZip(zr *zip.Reader, archiveSize int64, b *zipBudget, out *zipOutcome) (
 // mkdirTracked creates dir and the folders above it that do not exist, inside
 // root, and records the ones it made. A file or link where a folder is needed
 // is errZipBlocked.
-func mkdirTracked(root *os.Root, dir string, created *zipCreated) error {
+func mkdirTracked(ctx context.Context, root *os.Root, dir string, created *zipCreated) error {
 	cur := ""
 	for seg := range strings.SplitSeq(dir, "/") {
+		if err := zipStopped(ctx); err != nil {
+			return err
+		}
 		cur = path.Join(cur, seg)
 		local := filepath.FromSlash(cur)
 		fi, err := root.Lstat(local)
@@ -341,7 +415,7 @@ func mkdirTracked(root *os.Root, dir string, created *zipCreated) error {
 // already there is skipped, never overwritten. It reports whether it wrote.
 func writeZipEntry(ctx context.Context, root *os.Root, e zipPlanEntry, b *zipBudget, created *zipCreated) (bool, error) {
 	if dir := path.Dir(e.rel); dir != "." {
-		if err := mkdirTracked(root, dir, created); err != nil {
+		if err := mkdirTracked(ctx, root, dir, created); err != nil {
 			if errors.Is(err, errZipBlocked) {
 				return false, nil
 			}
@@ -387,6 +461,65 @@ func rollbackZip(root *os.Root, created *zipCreated) {
 	}
 }
 
+// checkZipDirectory refuses an archive whose central directory is larger than
+// zipMaxDirBytes, before archive/zip reads it. The reader keeps a record for
+// every entry in memory before any count can be checked, and the entry count in
+// the end of central directory record cannot be trusted (it is 16 bits, and the
+// reader compares it modulo 65536), so the directory's size in bytes is what is
+// bounded. It reads the end of central directory record, and the ZIP64 one when
+// the sizes are the "look elsewhere" markers. A file with no such record is left
+// for the reader to refuse.
+func checkZipDirectory(f io.ReaderAt, size int64) error {
+	const eocdLen = 22
+	tailLen := min(size, 65535+eocdLen)
+	tail := make([]byte, tailLen)
+	if _, err := f.ReadAt(tail, size-tailLen); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	pos := -1
+	for i := len(tail) - eocdLen; i >= 0; i-- {
+		if binary.LittleEndian.Uint32(tail[i:]) == 0x06054b50 {
+			pos = i
+			break
+		}
+	}
+	if pos < 0 {
+		return nil
+	}
+	rec := tail[pos:]
+	dirSize := int64(binary.LittleEndian.Uint32(rec[12:]))
+	entries := int64(binary.LittleEndian.Uint16(rec[10:]))
+	if dirSize == 0xFFFFFFFF || entries == 0xFFFF || binary.LittleEndian.Uint32(rec[16:]) == 0xFFFFFFFF {
+		// ZIP64: the locator sits just before the end record.
+		locAt := size - tailLen + int64(pos) - 20
+		if locAt < 0 {
+			return errZipDirectory
+		}
+		loc := make([]byte, 20)
+		if _, err := f.ReadAt(loc, locAt); err != nil || binary.LittleEndian.Uint32(loc) != 0x07064b50 {
+			return errZipDirectory
+		}
+		off := binary.LittleEndian.Uint64(loc[8:])
+		if off > uint64(size) { //nolint:gosec // size is a file size, never negative
+			return errZipDirectory
+		}
+		z64 := make([]byte, 56)
+		if _, err := f.ReadAt(z64, int64(off)); err != nil || binary.LittleEndian.Uint32(z64) != 0x06064b50 { //nolint:gosec // checked above
+			return errZipDirectory
+		}
+		n := binary.LittleEndian.Uint64(z64[32:])
+		sz := binary.LittleEndian.Uint64(z64[40:])
+		if n > zipMaxEntries || sz > uint64(zipMaxDirBytes) {
+			return errZipDirectory
+		}
+		return nil
+	}
+	if dirSize > zipMaxDirBytes {
+		return errZipDirectory
+	}
+	return nil
+}
+
 // topLevelZips lists the regular ".zip" files directly inside the folder, by
 // name. Links are not followed.
 func topLevelZips(folder string) []string {
@@ -417,6 +550,14 @@ type zipArchive struct {
 // kept. A folder that was extracted once is not extracted again, which is what
 // stops a zip that came out of a zip from being opened on the next attempt.
 func extractZipsInFolder(ctx context.Context, folder string, roots []string) (zipOutcome, error) {
+	return extractZips(ctx, folder, roots, nil)
+}
+
+// extractZips is extractZipsInFolder with a check run once everything is
+// written: when hasCandidate says the folder holds nothing that looks like a
+// book, the extraction is rolled back (the marker is still written, so a retry
+// opens nothing) and the outcome says so.
+func extractZips(ctx context.Context, folder string, roots []string, hasCandidate func() bool) (zipOutcome, error) {
 	ctx, cancel := context.WithTimeout(ctx, zipExtractTimeout)
 	defer cancel()
 	var out zipOutcome
@@ -468,6 +609,9 @@ func extractZipsInFolder(ctx context.Context, folder string, roots []string) (zi
 		if err != nil || !fi.Mode().IsRegular() {
 			return out, fmt.Errorf("%s is not a regular file", name)
 		}
+		if err := checkZipDirectory(f, fi.Size()); err != nil {
+			return out, fmt.Errorf("%s: %w", name, err)
+		}
 		zr, err := zip.NewReader(f, fi.Size())
 		if err != nil {
 			return out, fmt.Errorf("%s: %w", name, err)
@@ -486,7 +630,7 @@ func extractZipsInFolder(ctx context.Context, folder string, roots []string) (zi
 			}
 			switch e.kind {
 			case zipEntryDir:
-				if err := mkdirTracked(root, e.rel, &created); err != nil && !errors.Is(err, errZipBlocked) {
+				if err := mkdirTracked(ctx, root, e.rel, &created); err != nil && !errors.Is(err, errZipBlocked) {
 					rollbackZip(root, &created)
 					return zipOutcome{}, fmt.Errorf("%s: %w", a.name, err)
 				}
@@ -504,6 +648,11 @@ func extractZipsInFolder(ctx context.Context, folder string, roots []string) (zi
 			}
 		}
 		out.archives++
+	}
+	if hasCandidate != nil && out.files > 0 && !hasCandidate() {
+		rollbackZip(root, &created)
+		out.noBook = true
+		out.files = 0
 	}
 	if m, err := root.OpenFile(zipExtractedMarker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, zipFileMode); err == nil {
 		_, _ = m.WriteString(zipExtractedMarkerTx)
@@ -644,6 +793,18 @@ func (s *Scanner) acceptableZipRoots(ctx context.Context, roots []string) []stri
 	return out
 }
 
+// countArchiveParts counts the files under folder that are archive volumes.
+func countArchiveParts(folder string) int {
+	n := 0
+	_ = filepath.WalkDir(folder, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.Type().IsRegular() && isArchivePart(d.Name()) {
+			n++
+		}
+		return nil
+	})
+	return n
+}
+
 // unpackZipForImport runs the ZIP extraction for a download that found no book
 // file, when every guard allows it. extracted reports that files were written.
 // note explains, for the "waiting" message, why a ZIP is still there when
@@ -675,9 +836,23 @@ func (s *Scanner) unpackZipForImport(ctx context.Context, dl *models.Download, d
 	if len(topLevelZips(folder)) == 0 {
 		return false, "", false, nil
 	}
-	out, err := extractZipsInFolder(ctx, folder, roots)
+	// What the folder held before: a notes file or a tiny file is not a book, and
+	// a zip that yields nothing more than that is rolled back.
+	// An archive that came out of the zip (a rar, a nested zip) is a candidate
+	// too: it keeps waiting for an unpacker, as before.
+	_, smallBefore := discoverBookFilesSized(folder, nil, true)
+	archivesBefore := countArchiveParts(folder)
+	hasCandidate := func() bool {
+		books, small := discoverBookFilesSized(folder, nil, true)
+		return len(books) > 0 || len(small) > len(smallBefore) || countArchiveParts(folder) > archivesBefore
+	}
+	out, err := extractZips(ctx, folder, roots, hasCandidate)
 	if err != nil {
 		return false, "", false, err
+	}
+	if out.noBook {
+		slog.Info("a ZIP of a usenet download held nothing that looks like a book; extraction undone", "path", folder)
+		return false, "", false, errZipNoBook
 	}
 	slog.Info("extracted ZIP files of a usenet download", "path", folder, "files", out.files, "archives", out.archives,
 		"encrypted", out.encrypted, "special", out.special, "existing", out.existing)
