@@ -166,8 +166,15 @@ func importContentMissingReason(savePath string) string {
 func importSourceGoneReason(downloadPath string) string {
 	if archive := archiveAwaitingExtraction(downloadPath); archive != "" {
 		name := filepath.Base(archive)
-		if kind := archiveKind(name); kind != "RAR" {
+		kind := archiveKind(name)
+		if kind != "RAR" {
 			name += ", " + kind
+		}
+		if kind == "ZIP" {
+			// Bindery does unpack a ZIP when it may, so this one was refused or
+			// failed: the Queue message of the earlier attempts says why.
+			return fmt.Sprintf("this download holds only an archive (%s), and it was not extracted in the %d checks Bindery waited: Bindery either may not unpack it (see Troubleshooting, Waiting for ... to be extracted) or could not. Extract it into %s yourself, or let an unpacker such as unpackerr do it. Once the files are there, use Retry import on the Queue page.",
+				name, importSkipLimit, downloadPath)
 		}
 		return fmt.Sprintf("this download holds only an archive (%s), and nothing extracted it in the %d checks Bindery waited. Bindery does not unpack archives: an unpacker such as unpackerr has to extract it into %s (see Storage and Hardlinks, RAR-packed torrent releases). Once the files are there, use Retry import on the Queue page.",
 			name, importSkipLimit, downloadPath)

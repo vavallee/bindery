@@ -499,7 +499,7 @@ If the files never appear, it does not wait forever: after about 30 minutes of f
 The download's folder holds an archive (`Title.part1.rar`, or `Title.rar` and `Title.r00`…, a `.7z`, or a `.zip`) and no book file yet. Bindery waits, without spending import retries, for the files to be extracted into the download's folder, and imports them as soon as they appear. If nothing extracts it within about 30 minutes, the download is blocked with *this download holds only an archive*. The message names the archive and its type.
 
 - **RAR and 7z** are never unpacked by Bindery. Usenet clients unpack them before they report a job complete. For torrents, or a client that does not, set up an unpacker as described in [Storage and Hardlinks, RAR-packed torrent releases](Storage-And-Hardlinks-Wiki.md#rar-packed-torrent-releases), such as unpackerr, or extract the archive into the folder yourself, then use **Retry import**.
-- **ZIP** is the container SABnzbd and NZBGet leave alone, and scene ebook releases, German ones especially, are often a zip that holds a rar that holds the EPUB. Since 1.53.1 Bindery unpacks the zip itself, with no external tool, when the setting **Extract ZIP archives of usenet downloads** (`import.extract_zip`, Settings, File Naming) is on, which is the default. It extracts one level: a zip that comes out of a zip is left alone, and so is a RAR that comes out of it, which then waits for an unpacker as above. The zip stays in the folder, and goes with the folder once the import succeeds in move mode.
+- **ZIP** is the container SABnzbd and NZBGet leave alone, and scene ebook releases, German ones especially, are often a zip that holds a rar that holds the EPUB. Bindery unpacks the zip itself, with no external tool, when the setting **Extract ZIP archives of usenet downloads** (`import.extract_zip`, Settings, File Naming) is on, which is the default. It extracts one level: a zip that comes out of a zip is left alone, and so is a RAR that comes out of it, which then waits for an unpacker as above. The zip stays in the folder, and goes with the folder once the import succeeds in move mode.
 
 Bindery extracts a ZIP only when all of this holds, and otherwise says why in the Queue message and leaves the folder as it was:
 
@@ -516,6 +516,7 @@ What happens with awkward archives, all of it skipping and never overwriting:
 - **Two entries with the same name:** the first copy is kept, the second is skipped.
 - **A directory entry, then a file of the same name:** the file is skipped and the empty directory stays.
 - **`A.txt` and `a.txt`:** on Linux both are written, as they are two names there.
+- **A name that is not valid UTF-8** (an older zip with a CP437 umlaut): each bad byte run is written as an underscore.
 
 If a zip is refused, extract it yourself, then use **Retry import**. To turn the feature off, untick the setting; the download then waits for an unpacker, as a RAR does.
 

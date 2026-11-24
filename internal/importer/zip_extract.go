@@ -131,6 +131,12 @@ type zipCreated struct {
 // segment are refused. "" with no error is an entry that names the folder
 // itself.
 func cleanZipEntryName(name string) (string, error) {
+	// A zip written by a tool that does not set the UTF-8 flag (the German scene
+	// ones, in CP437) carries raw bytes. A name that is not valid UTF-8 would
+	// reach the importer, the database and the API as is, so each run of invalid
+	// bytes becomes an underscore. Two names that collapse to one are the
+	// duplicate case: the first is kept.
+	name = strings.ToValidUTF8(name, "_")
 	if name == "" || strings.ContainsRune(name, 0) {
 		return "", errZipEntryName
 	}
@@ -290,10 +296,10 @@ func planZip(zr *zip.Reader, archiveSize int64, b *zipBudget, out *zipOutcome) (
 			out.special++
 			continue
 		}
-		if f.UncompressedSize64 > uint64(zipEntryCap(f.CompressedSize64)) {
+		if f.UncompressedSize64 > uint64(zipEntryCap(f.CompressedSize64)) { //nolint:gosec // the cap is positive (at least the 1 MiB floor)
 			return nil, fmt.Errorf("entry %q: %w", f.Name, errZipTooLarge)
 		}
-		declared += int64(f.UncompressedSize64)
+		declared += int64(f.UncompressedSize64) //nolint:gosec // just checked against the entry cap, which is an int64
 		if declared > b.bytes {
 			return nil, errZipTooLarge
 		}
@@ -595,12 +601,12 @@ func (s *Scanner) acceptableZipRoots(ctx context.Context, roots []string) []stri
 		homeReal, _ = filepath.EvalSymlinks(home)
 	}
 	if s.rootFolders != nil {
-		if rfs, err := s.rootFolders.List(ctx); err == nil {
-			for _, rf := range rfs {
-				protected = append(protected, rf.Path)
-			}
-		} else {
+		rfs, err := s.rootFolders.List(ctx)
+		if err != nil {
 			return nil // unknown library folders: refuse rather than guess
+		}
+		for _, rf := range rfs {
+			protected = append(protected, rf.Path)
 		}
 	}
 	var realProtected []string
