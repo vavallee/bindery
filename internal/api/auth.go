@@ -349,7 +349,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// usernames exist. See auth.DummyPasswordHash.
 	hash := auth.DummyPasswordHash()
 	if u != nil {
-		hash = u.PasswordHash
+		hash = auth.HashOrDummy(u.PasswordHash)
 	}
 	// Reserve the attempt before the KDF runs. Allow above is only a cheap
 	// early refusal: in a concurrent burst every request passes it before

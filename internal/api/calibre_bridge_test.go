@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -724,5 +725,48 @@ func TestCalibreDeliverySummary_ReportsPullContact(t *testing.T) {
 	}
 	if body.Transport != "pull" || body.Pull.LastSeen == nil || body.Pull.PluginVersion != "0.8.0" {
 		t.Fatalf("summary = %s", rec.Body)
+	}
+}
+
+// Allow followed by Record let a concurrent burst of wrong keys all pass the
+// check before the first failure was recorded, so the number of guesses per
+// window was bounded by concurrency rather than by the limiter's maximum.
+func TestBridgeAuth_ConcurrentWrongKeysAreBounded(t *testing.T) {
+	f := newBridgeFixture(t) // limiter allows 3 per window
+	const burst = 40
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	counts := map[int]int{}
+	start := make(chan struct{})
+	for i := 0; i < burst; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			rec := f.do(bridgeReq{path: "/bridge/v1/hello", auth: "Bearer wrong-key-wrong-key", remote: "192.0.2.50:1"})
+			mu.Lock()
+			counts[rec.Code]++
+			mu.Unlock()
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if counts[http.StatusUnauthorized] > 3 {
+		t.Fatalf("%d wrong keys were compared in one window, limiter maximum is 3 (%v)", counts[http.StatusUnauthorized], counts)
+	}
+	if counts[http.StatusTooManyRequests] < burst-3 {
+		t.Fatalf("expected at least %d 429s, got %v", burst-3, counts)
+	}
+}
+
+// A request refused because the operator's own key is too short never
+// compared anything, so it must not count against the caller.
+func TestBridgeAuth_ShortStoredKeyIsNotCharged(t *testing.T) {
+	f := newBridgeFixture(t)
+	f.set(SettingCalibrePluginAPIKey, "short")
+	for i := 0; i < 10; i++ {
+		if rec := f.do(bridgeReq{path: "/bridge/v1/hello", auth: "Bearer whatever-whatever", remote: "192.0.2.60:1"}); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status %d, want 401 and never 429", i, rec.Code)
+		}
 	}
 }

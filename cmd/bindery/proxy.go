@@ -1,10 +1,12 @@
 package main
 
 import (
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/httpsec/realip"
@@ -48,6 +50,7 @@ var proxyHeaders = []string{
 func trustedProxyMiddleware() func(http.Handler) http.Handler {
 	trusted := parseTrustedProxyCIDRs(os.Getenv("BINDERY_TRUSTED_PROXY"))
 	realIP := realip.TrustedRealIP(trusted)
+	var warnOnce sync.Once
 
 	return func(next http.Handler) http.Handler {
 		// realIP itself is a no-op when trusted is empty, so this composes
@@ -74,6 +77,9 @@ func trustedProxyMiddleware() func(http.Handler) http.Handler {
 			}
 			// Peer is not a trusted proxy — strip all forwarded headers so
 			// they cannot influence scheme/host detection downstream.
+			if forwardedFromPrivatePeer(r, peerHost) {
+				warnOnce.Do(func() { warnForwardedFromUntrustedPeer(r, peerHost, len(trusted) == 0) })
+			}
 			r = r.Clone(r.Context())
 			for _, h := range proxyHeaders {
 				r.Header.Del(h)
@@ -81,4 +87,38 @@ func trustedProxyMiddleware() func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// warnForwardedFromUntrustedPeer logs, once per process, that a request from a
+// private-range peer carried forwarded headers that were discarded because the
+// peer is not in BINDERY_TRUSTED_PROXY. That is what a reverse proxy looks like
+// when its address is missing from the list: every client then shares the
+// proxy's address, so the login rate limiter has one bucket for everyone (five
+// wrong passwords for "admin" lock the admin login for all users) and
+// local-only mode sees the proxy as the client. Nothing changes in behaviour;
+// the line only names the cause. Peers outside private ranges are not reported:
+// an internet client sending X-Forwarded-For is spoofing, not misconfigured.
+func warnForwardedFromUntrustedPeer(r *http.Request, peerHost string, listEmpty bool) {
+	seen := forwardedHeadersPresent(r)
+	slog.Warn("forwarded headers from a private-range peer were ignored because the peer is not in BINDERY_TRUSTED_PROXY; "+
+		"if this peer is your reverse proxy, add its address, otherwise all clients share its rate-limit bucket and local-only mode sees the proxy as the client",
+		"peer", peerHost, "headers", seen, "trusted_proxy_list_empty", listEmpty)
+}
+
+// forwardedHeadersPresent lists the forwarding headers the request carries.
+func forwardedHeadersPresent(r *http.Request) []string {
+	var seen []string
+	for _, h := range append([]string{"True-Client-IP"}, proxyHeaders...) {
+		if r.Header.Get(h) != "" {
+			seen = append(seen, h)
+		}
+	}
+	return seen
+}
+
+// forwardedFromPrivatePeer reports whether a private-range peer sent forwarded
+// headers. It is checked before the once-guard so that a public peer's spoofed
+// header cannot use up the single warning.
+func forwardedFromPrivatePeer(r *http.Request, peerHost string) bool {
+	return auth.IsLocalIP(strings.Trim(peerHost, "[]")) && len(forwardedHeadersPresent(r)) > 0
 }

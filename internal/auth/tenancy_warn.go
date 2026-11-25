@@ -16,7 +16,8 @@ import "log/slog"
 // library is a perfectly good household setup, and turning the gate on by
 // default would change what every existing multi-user install shows.
 const MultiUserNoTenancyWarning = "this install has more than one user account but per-user scoping is off: " +
-	"every account can see and modify every other account's authors, books, queue and history. " +
+	"every account can see and modify every other account's authors, books, queue and history, " +
+	"and can delete another account's books together with their files on disk. " +
 	"Set " + EnforceTenancyEnv + "=1 to scope each user to their own library, or ignore this if the accounts are meant to share one."
 
 // MultiUserWithoutTenancy reports whether userCount and the tenancy gate form

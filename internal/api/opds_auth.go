@@ -117,7 +117,7 @@ func opdsAuthWith(p auth.Provider, users *db.UserRepo, limiter *auth.LoginLimite
 				hash := auth.DummyPasswordHash()
 				known := err == nil && u != nil
 				if known {
-					hash = u.PasswordHash
+					hash = auth.HashOrDummy(u.PasswordHash)
 				}
 				// basic reserves the attempt before the KDF (Allow alone let a
 				// concurrent burst run one verification per request), refunds
