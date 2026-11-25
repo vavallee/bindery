@@ -32,8 +32,10 @@ const trailingSourceRE = /\(\s*(?:\[Sources?\](?:\[[^\]]{0,20}\])?\s*(?:\.\s*)?|
 // Inline tokens, in priority order: [text](url) inline link, [text][ref]
 // reference link (rendered as plain text — the [ref]: defs are stripped),
 // **bold**, *italic*. Link text may not contain `[`: with it allowed, a run of
-// unclosed `[` made every one rescan to the end of the line (quadratic).
-const inlineTokenRE = /\[([^\][]+)\]\(([^)\s]+)\)|\[([^\][]+)\]\[[^\]]+\]|\*\*([^*\n]+?)\*\*|\*([^*\n]+?)\*/g
+// unclosed `[` made every one rescan to the end of the line (quadratic). The URL
+// is bounded and may not contain `[` for the same reason: `[a](` repeated made
+// every start scan the rest of the line for a `)` that never came.
+const inlineTokenRE = /\[([^\][]+)\]\(([^)\s[]{1,2048})\)|\[([^\][]+)\]\[[^\]]+\]|\*\*([^*\n]+?)\*\*|\*([^*\n]+?)\*/g
 
 function cleanMarkdownDescription(text: string): string {
   return text

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/vavallee/bindery/internal/httpsec"
 )
 
 const logHandlerBufSize = 512
@@ -123,11 +125,17 @@ func (h *LogHandler) Handle(_ context.Context, rec slog.Record) error {
 		return true
 	})
 
+	// Secrets are stripped before the row is written: a logged URL can carry
+	// an indexer apikey or a userinfo password, and the logs table is part of
+	// every backup. Redaction is idempotent, so the read path may repeat it.
+	for k, v := range fields {
+		fields[k] = httpsec.RedactSecrets(v)
+	}
 	e := LogEntry{
 		TS:        rec.Time,
 		Level:     rec.Level.String(),
 		Component: component,
-		Message:   rec.Message,
+		Message:   httpsec.RedactSecrets(rec.Message),
 		Fields:    fields,
 	}
 	if e.TS.IsZero() {

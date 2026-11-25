@@ -96,7 +96,22 @@ type runner func(ctx context.Context, name string, args ...string) ([]byte, erro
 
 func defaultRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = calibreEnv(os.Environ())
 	return cmd.CombinedOutput()
+}
+
+// calibreEnv returns env without the BINDERY_* variables. calibredb is an
+// operator-chosen executable and needs none of them, but they hold the API key,
+// OIDC client secrets and the session secret.
+func calibreEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(strings.ToUpper(kv), "BINDERY_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // Client calls calibredb. The zero value is not usable; construct with New.

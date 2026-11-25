@@ -200,3 +200,39 @@ func TestRequestRepo_AutoApproveQuota(t *testing.T) {
 		t.Fatalf("claim past the window: %v", err)
 	}
 }
+
+// Claims that are still in flight ('approving', decided_at not yet stamped)
+// count against the quota, so a burst of claims before the first Complete
+// cannot overshoot it.
+func TestRequestRepo_AutoApproveQuotaCountsInFlightClaims(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	ctx := context.Background()
+	owner, err := NewUserRepo(database).Create(ctx, "reader", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRequestRepo(database)
+	dayStart := time.Now().UTC().Truncate(24 * time.Hour)
+
+	var ids []int64
+	for _, fid := range []string{"OL1", "OL2", "OL3"} {
+		r := &models.LibraryRequest{OwnerUserID: owner.ID, Kind: models.RequestKindBook, ForeignID: fid, PayloadJSON: "{}"}
+		if err := repo.Create(ctx, r, 100); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, r.ID)
+	}
+	// Quota of 2: claim two without completing either, then a third.
+	for _, id := range ids[:2] {
+		if _, err := repo.ClaimAutoApprove(ctx, id, owner.ID, dayStart, 2); err != nil {
+			t.Fatalf("claim %d under the quota: %v", id, err)
+		}
+	}
+	if _, err := repo.ClaimAutoApprove(ctx, ids[2], owner.ID, dayStart, 2); !errors.Is(err, ErrRequestAutoApproveQuota) {
+		t.Fatalf("third in-flight claim error = %v, want ErrRequestAutoApproveQuota", err)
+	}
+}

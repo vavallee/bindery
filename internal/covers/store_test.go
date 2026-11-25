@@ -127,3 +127,25 @@ func TestStore_PutBytes(t *testing.T) {
 		t.Errorf("PutBytes(oversize) err = %v, want ErrTooLarge", err)
 	}
 }
+
+// Put must not follow a symlink: a cover.jpg in a hostile Calibre library that
+// links to an image elsewhere would otherwise be copied into the served store.
+func TestStore_PutRefusesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	png := jpegHeader
+	target := filepath.Join(dir, "real.png")
+	if err := os.WriteFile(target, png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "cover.jpg")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	s := NewStore(filepath.Join(dir, "store"))
+	if _, err := s.Put(link); err == nil {
+		t.Fatal("Put followed a symlink")
+	}
+	if _, err := s.Put(target); err != nil {
+		t.Fatalf("Put of the regular file: %v", err)
+	}
+}

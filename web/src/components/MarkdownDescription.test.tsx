@@ -53,4 +53,24 @@ describe('MarkdownDescription citation noise', () => {
     renderText(line)
     expect(performance.now() - start).toBeLessThan(250)
   })
+
+  // The link URL group `[^)\s]+` rescanned the rest of the line from every
+  // `[a](` that never found its `)`: a 320,000 character description took
+  // about 23 s of the browser's main thread.
+  it.each([
+    ['[a]( repeated', '[a]('.repeat(80_000)],
+    ['[a](http://x repeated', '[a](http://x'.repeat(30_000)],
+    ['one unclosed link with a long tail', '[a](' + 'x'.repeat(320_000)],
+  ])('renders an unclosed link run (%s) in linear time', (_case, line) => {
+    const start = performance.now()
+    renderText(line)
+    expect(performance.now() - start).toBeLessThan(200)
+  })
+
+  it('still renders an ordinary link, and leaves a URL over the 2048 cap as text', () => {
+    const ok = render(<MarkdownDescription text="[w](https://example.org/a_b?c=d)" showMoreLabel="more" showLessLabel="less" />)
+    expect(ok.container.querySelector('a')?.getAttribute('href')).toBe('https://example.org/a_b?c=d')
+    const long = render(<MarkdownDescription text={`[w](https://example.org/${'a'.repeat(3000)})`} showMoreLabel="more" showLessLabel="less" />)
+    expect(long.container.querySelector('a')).toBeNull()
+  })
 })

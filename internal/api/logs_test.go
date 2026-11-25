@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -271,5 +272,23 @@ func TestLogSetLevel_PropagatestoDBHandler(t *testing.T) {
 	}
 	if dbHandler.Level() != slog.LevelDebug {
 		t.Errorf("dbHandler level: want DEBUG, got %s", dbHandler.Level())
+	}
+}
+
+// GET /system/logs is admin-only but its JSON is copied into bug reports, and
+// rows written before write-side redaction may still hold a secret.
+func TestLogList_RedactsSecretsInStoredRows(t *testing.T) {
+	h, _, repo := logHandlerWithDB(t)
+	insertDBEntryFields(t, repo, time.Now().UTC(), "ERROR", "indexer",
+		"fetch failed: https://idx.example/api?t=search&apikey=s3cr3tvalue",
+		map[string]string{"url": "https://idx.example/dl?token=anothersecret"})
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/system/logs", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "s3cr3tvalue") || strings.Contains(body, "anothersecret") {
+		t.Fatalf("log list leaked a secret: %s", body)
 	}
 }

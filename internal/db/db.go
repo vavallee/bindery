@@ -42,6 +42,13 @@ func Open(dbPath string) (*sql.DB, error) {
 	if err := ApplyPendingRestore(dbPath); err != nil {
 		return nil, err
 	}
+	// SQLite gives the -wal and -shm files the mode of the main database file
+	// at the moment it creates them, and the chmod below runs after the first
+	// WAL write, so a file created under a 022 umask left both sidecars 0644
+	// beside a 0600 database. Create the file private first.
+	if err := precreatePrivate(dbPath); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", dbPath+connectionPragmaDSN)
 	if err != nil {
 		return nil, fmt.Errorf("open database %q: %w", dbPath, err)
@@ -62,8 +69,10 @@ func Open(dbPath string) (*sql.DB, error) {
 
 	// The DB file holds auth rows (bcrypt hashes, session secrets, API key).
 	// Lock its mode to 0600 defensively — umask might otherwise leave it 0644.
-	if err := os.Chmod(dbPath, 0o600); err != nil && !os.IsNotExist(err) {
-		slog.Warn("chmod database file", "path", dbPath, "error", err)
+	for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+		if err := os.Chmod(p, 0o600); err != nil && !os.IsNotExist(err) {
+			slog.Warn("chmod database file", "path", p, "error", err)
+		}
 	}
 
 	slog.Info("database ready", "path", dbPath)
@@ -174,6 +183,16 @@ func withRawConn(db *sql.DB, fn func(memConn) error) error {
 // (`SQLITE_CANTOPEN` → "unable to open database file (14)"), so we check
 // first and emit a much clearer message with the resolved absolute path,
 // parent-directory permissions, and ownership.
+// precreatePrivate creates dbPath with mode 0600 when it does not exist yet. An
+// existing file is left alone (Open chmods it afterwards).
+func precreatePrivate(dbPath string) error {
+	f, err := os.OpenFile(dbPath, os.O_CREATE|os.O_RDWR, 0o600) // #nosec G304 -- the operator-configured database path
+	if err != nil {
+		return fmt.Errorf("create database file %q: %w", dbPath, err)
+	}
+	return f.Close()
+}
+
 func preflight(dbPath string) error {
 	abs, err := filepath.Abs(dbPath)
 	if err != nil {

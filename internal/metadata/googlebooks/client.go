@@ -114,7 +114,7 @@ func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, e
 	// SearchBooks/volumeToBook stamp ForeignID as "gb:<volumeID>"; strip the
 	// prefix before building the volumes URL or the request 404s.
 	id := strings.TrimPrefix(foreignID, "gb:")
-	u := fmt.Sprintf("%s/volumes/%s", baseURL, id)
+	u := fmt.Sprintf("%s/volumes/%s", baseURL, url.PathEscape(id))
 	if key := c.key(); key != "" {
 		u += "?key=" + url.QueryEscape(key)
 	}

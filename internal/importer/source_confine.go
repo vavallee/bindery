@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,4 +70,69 @@ func requireRegularFile(f *os.File, src string) error {
 		return fmt.Errorf("source is not a regular file: %s", src)
 	}
 	return nil
+}
+
+// resolvedForCompare returns p with symlinks resolved, or p cleaned when it
+// cannot be resolved (a path that does not exist yet).
+func resolvedForCompare(p string) string {
+	p = filepath.Clean(p)
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
+// swallowedStorage returns the first of roots that src is, or sits above. A
+// folder placement moves, copies or hardlinks the whole source folder, so a
+// source that is a library root, or an ancestor of one, would pull the library
+// itself into a book's folder (and in move mode delete it from where it was).
+// The path comes from a download client's own report, which is not trusted to
+// be a job folder. Empty roots are ignored.
+func swallowedStorage(src string, roots []string) string {
+	if strings.TrimSpace(src) == "" {
+		return ""
+	}
+	s := resolvedForCompare(src)
+	for _, root := range roots {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		rel, err := filepath.Rel(s, resolvedForCompare(root))
+		if err == nil && relInside(rel) {
+			return root
+		}
+	}
+	return ""
+}
+
+// isDownloadRoot reports whether src is exactly one of the configured download
+// folders. A client that reports the shared download folder as a job's folder
+// would otherwise get every other job's files imported (and, in move mode,
+// removed) as part of this book.
+func isDownloadRoot(src string, roots []string) bool {
+	if strings.TrimSpace(src) == "" {
+		return false
+	}
+	s := resolvedForCompare(src)
+	for _, root := range roots {
+		if strings.TrimSpace(root) != "" && resolvedForCompare(root) == s {
+			return true
+		}
+	}
+	return false
+}
+
+// storageRoots lists the library folders an audiobook source must not contain
+// or equal: the configured ebook and audiobook directories and every root
+// folder.
+func (s *Scanner) storageRoots(ctx context.Context) []string {
+	roots := []string{s.libraryDir, s.audiobookDir}
+	if s.rootFolders != nil {
+		if list, err := s.rootFolders.List(ctx); err == nil {
+			for _, rf := range list {
+				roots = append(roots, rf.Path)
+			}
+		}
+	}
+	return roots
 }

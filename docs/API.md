@@ -1317,7 +1317,7 @@ POST   /api/v1/library/unmatched/{id}/undo        reverse an adoption exactly (a
 POST   /api/v1/library/unmatched/{id}/ignore      set a pending row aside (admin)
 POST   /api/v1/library/unmatched/{id}/unignore    return an ignored row to pending (admin)
 POST   /api/v1/library/unmatched/ignore           ignore pending rows by {"ids":[..]} or {"authorFolder":"..."} (admin)
-GET    /api/v1/system/logs                        app log lines (admin)
+GET    /api/v1/system/logs                        app log lines (admin); URLs and values in them are redacted of credentials (apikey, token, userinfo), both when a line is stored and when it is listed
 GET    /api/v1/system/logs/export                 the same rows as a downloadable file (admin)
 GET    /api/v1/system/loglevel                    current log level (admin)
 PUT    /api/v1/system/loglevel                    runtime log-level switch, debug/info/warn/error (admin)
@@ -2114,7 +2114,7 @@ POST   /api/v1/requests/{id}/decline              decline, body {"reason": "..."
 {"kind": "book", "foreignId": "OL27482W", "mediaType": "ebook"}
 ```
 
-`kind` is `book` or `author`, `foreignId` is the provider id a metadata search
+`kind` is `book` or `author`, `foreignId` (letters, digits and `: _ . - /` only, at most 128 characters, no `..`; anything else is 400) is the provider id a metadata search
 returned, and `mediaType` is `ebook`, `audiobook`, `both` or empty. Bindery
 looks the id up at the metadata provider and stores the title and author the
 provider reports.

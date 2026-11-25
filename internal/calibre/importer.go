@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -565,6 +566,15 @@ func (i *Importer) registerBookFiles(ctx context.Context, runID int64, book *mod
 		}
 		if !models.IsCalibreBookFilePath(path) {
 			slog.Debug("calibre import: not tracking a format Bindery cannot use",
+				"calibre_id", cb.CalibreID, "book_id", book.ID, "format", f.Format, "path", path)
+			stats.FormatsSkipped++
+			continue
+		}
+		// A format file that is a symlink could name any file on the host, and a
+		// tracked path is served and uploaded. A file that does not exist yet
+		// (Lstat error) is still tracked, as before.
+		if info, lerr := os.Lstat(path); lerr == nil && !info.Mode().IsRegular() {
+			slog.Warn("calibre import: not tracking a format file that is a symlink or special file",
 				"calibre_id", cb.CalibreID, "book_id", book.ID, "format", f.Format, "path", path)
 			stats.FormatsSkipped++
 			continue
