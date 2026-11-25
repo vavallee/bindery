@@ -428,3 +428,41 @@ func BenchmarkLogWrite(b *testing.B) {
 		}
 	})
 }
+
+// The logs table is part of every backup, so a logged URL must not reach it
+// with an indexer apikey, a token or a password in it.
+func TestLogSlogHandler_RedactsSecretsBeforeWrite(t *testing.T) {
+	database, err := OpenMemory()
+	if err != nil {
+		t.Fatalf("open memory db: %v", err)
+	}
+	defer database.Close()
+	repo := NewLogRepo(database)
+	h := NewLogSlogHandler(repo, slog.LevelDebug)
+	logger := slog.New(h)
+
+	logger.Info("fetch failed: https://idx.example/api?t=search&apikey=s3cr3tvalue",
+		"url", "https://idx.example/dl?token=anothersecret", "client", "http://user:hunter2@host/x")
+
+	deadline := time.Now().Add(3 * time.Second)
+	var entries []LogEntry
+	for time.Now().Before(deadline) {
+		entries, _ = repo.Query(context.Background(), LogFilter{Limit: 10})
+		if len(entries) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	all := entries[0].Message
+	for _, v := range entries[0].Fields {
+		all += " " + v
+	}
+	for _, secret := range []string{"s3cr3tvalue", "anothersecret", "hunter2"} {
+		if strings.Contains(all, secret) {
+			t.Errorf("stored log row contains %q: %s", secret, all)
+		}
+	}
+}

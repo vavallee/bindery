@@ -303,15 +303,18 @@ func (r *RequestRepo) Claim(ctx context.Context, id, adminID int64) (*models.Lib
 // ClaimAutoApprove claims a pending request for an automatic approval by
 // ownerID, but only while the owner is under their daily auto-approve quota.
 // The quota counts the owner's automatic approvals — the rows with decided_by
-// NULL — at or after since, and it is enforced in the same statement as the
-// claim, the way pendingBelowCap guards Create, so a burst of creates cannot
-// all pass a separate count. Returns ErrRequestAutoApproveQuota when the quota
+// NULL — approved at or after since, plus those still being approved
+// (status 'approving', decided_at not yet stamped), so a burst of claims
+// cannot all pass before the first one completes. It is enforced in the same
+// statement as the claim, the way pendingBelowCap guards Create, so a burst of
+// creates cannot all pass a separate count. Returns ErrRequestAutoApproveQuota when the quota
 // is reached, leaving the request pending for a human.
 func (r *RequestRepo) ClaimAutoApprove(ctx context.Context, id, ownerID int64, since time.Time, quota int) (*models.LibraryRequest, error) {
 	req, err := r.claimPending(ctx, id, 0,
 		`owner_user_id = ? AND (SELECT COUNT(*) FROM requests
-			WHERE owner_user_id = ? AND status = 'approved' AND decided_by IS NULL AND decided_at >= ?) < ?`,
-		[]any{ownerID, ownerID, since, quota})
+			WHERE owner_user_id = ? AND id <> ? AND decided_by IS NULL
+			  AND (status = 'approving' OR (status = 'approved' AND decided_at >= ?))) < ?`,
+		[]any{ownerID, ownerID, id, since, quota})
 	if errors.Is(err, ErrRequestNotPending) {
 		// Tell "no longer pending" apart from "at the quota", so the caller
 		// leaves the latter queued instead of reporting a lost claim.
@@ -329,7 +332,8 @@ func (r *RequestRepo) countAutoApprovedSince(ctx context.Context, ownerID int64,
 	var n int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM requests
-		WHERE owner_user_id = ? AND status = 'approved' AND decided_by IS NULL AND decided_at >= ?`,
+		WHERE owner_user_id = ? AND decided_by IS NULL
+		  AND (status = 'approving' OR (status = 'approved' AND decided_at >= ?))`,
 		ownerID, since).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count auto approved requests: %w", err)
