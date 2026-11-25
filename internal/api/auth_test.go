@@ -1052,3 +1052,29 @@ func TestLogin_RepeatedSuccessIsNeverThrottled(t *testing.T) {
 		}
 	}
 }
+
+// A user provisioned through OIDC or proxy auth has an empty password_hash.
+// Verifying against "" returns before any KDF runs, so the login answered
+// about 10,000 times faster than for any other name and showed which
+// usernames were SSO accounts. The hash handed to the verifier must always be
+// a full argon2id hash.
+func TestLogin_EmptyStoredHash_VerifiesAgainstDummy(t *testing.T) {
+	h, users, _, ctx := newAuthFixture(t)
+	if _, err := users.Create(ctx, "sso-user", ""); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	h.verifyPassword = func(_ context.Context, pw, phc string) (bool, error) {
+		seen = append(seen, phc)
+		return auth.VerifyPasswordContext(context.Background(), pw, phc)
+	}
+	rec := httptest.NewRecorder()
+	h.Login(rec, httptest.NewRequest(http.MethodPost, "/auth/login",
+		jsonBody(t, loginRequest{Username: "sso-user", Password: "whatever"})))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d, want 401", rec.Code)
+	}
+	if len(seen) != 1 || strings.Count(seen[0], "$") != 5 || !strings.HasPrefix(seen[0], "$argon2id$") {
+		t.Fatalf("verifier got %q, want a full argon2id hash", seen)
+	}
+}

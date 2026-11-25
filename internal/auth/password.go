@@ -171,6 +171,20 @@ var dummyPasswordHash = sync.OnceValue(func() string {
 // by measuring response time.
 func DummyPasswordHash() string { return dummyPasswordHash() }
 
+// HashOrDummy returns phc when it is an argon2id PHC string and the dummy hash
+// otherwise. Accounts created through OIDC or proxy auth have an empty
+// password_hash; verifying against "" returns before any KDF runs, so a login
+// for such a username answered in about a microsecond against ~12 ms for every
+// other name and revealed which usernames are SSO-provisioned. Callers pass the
+// stored hash through this so every attempt pays the same KDF cost.
+func HashOrDummy(phc string) string {
+	parts := strings.Split(phc, "$")
+	if len(parts) != 6 || parts[1] != "argon2id" {
+		return DummyPasswordHash()
+	}
+	return phc
+}
+
 // RandomHex returns 2*n hex characters from crypto/rand.
 func RandomHex(n int) (string, error) {
 	b := make([]byte, n)

@@ -40,3 +40,11 @@ func TestMultiUserNoTenancyWarning_NamesTheEnvVar(t *testing.T) {
 		t.Errorf("warning must name %s; got %q", EnforceTenancyEnv, MultiUserNoTenancyWarning)
 	}
 }
+
+// Deleting another account's book with deleteFiles=true removes the files, which
+// is the part an operator would not guess from "modify".
+func TestMultiUserNoTenancyWarning_NamesFileDeletion(t *testing.T) {
+	if !strings.Contains(MultiUserNoTenancyWarning, "files on disk") {
+		t.Errorf("warning must say accounts can delete each other's files; got %q", MultiUserNoTenancyWarning)
+	}
+}

@@ -140,7 +140,12 @@ func (h *CalibreBridgeHandler) unauthorized(w http.ResponseWriter, msg string) {
 func (h *CalibreBridgeHandler) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := opdsClientIP(r)
-		if h.limiter != nil && !h.limiter.Allow(ip) {
+		// Acquire counts and checks under one lock. Allow followed by Record let
+		// a concurrent burst of wrong keys all pass before the first failure
+		// was recorded. The reservation stands as a failure unless Reset clears
+		// it after a correct key, or Release refunds it when the key was never
+		// compared.
+		if h.limiter != nil && !h.limiter.Acquire(ip) {
 			secs := int(h.retryAfter / time.Second)
 			if secs < 1 {
 				secs = 60
@@ -153,14 +158,14 @@ func (h *CalibreBridgeHandler) Authenticate(next http.Handler) http.Handler {
 		if len(stored) < minBridgeKeyLen {
 			// Not the caller's fault, so not counted against it: the
 			// operator has to set a longer key in Bindery first.
+			if h.limiter != nil {
+				h.limiter.Release(ip)
+			}
 			h.unauthorized(w, "the Calibre plugin API key in Bindery is unset or shorter than 16 characters")
 			return
 		}
 		presented, ok := bearerToken(r)
 		if !ok || !bridgeKeyMatches(presented, stored) {
-			if h.limiter != nil {
-				h.limiter.Record(ip)
-			}
 			slog.Debug("calibre bridge: refused a request with a missing or wrong key", "remote", ip, "path", r.URL.Path)
 			h.unauthorized(w, "missing or wrong plugin API key")
 			return

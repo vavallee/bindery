@@ -128,6 +128,23 @@ func ResolveClientIP(r *http.Request, trusted []*net.IPNet) string {
 	// entry. Walk right-to-left, discarding trusted-proxy hops; the first
 	// non-trusted hop is the genuine client.
 	xff := parseXFF(r.Header.Values("X-Forwarded-For"))
+	if len(xff) == 0 {
+		// A proxy that sets only True-Client-IP or X-Real-IP (a bare nginx
+		// `proxy_set_header X-Real-IP $remote_addr;`) still names the client.
+		// httpsec/realip.TrustedRealIP honours the same headers in the same
+		// order for rate limiting; without this the two code paths disagreed
+		// and the proxy's own private address was judged "local".
+		for _, h := range []string{"True-Client-IP", "X-Real-IP"} {
+			if v := strings.TrimSpace(r.Header.Get(h)); v != "" {
+				if ip := net.ParseIP(hostOnly(v)); ip != nil {
+					return ip.String()
+				}
+				// Present but unparseable: fail closed like an unparseable
+				// XFF hop, so a garbage value is never "local".
+				return v
+			}
+		}
+	}
 	for i := len(xff) - 1; i >= 0; i-- {
 		ip := net.ParseIP(xff[i])
 		if ip == nil {

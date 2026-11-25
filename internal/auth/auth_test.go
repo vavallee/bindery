@@ -1995,3 +1995,65 @@ func TestRequireCSRFToken_RejectionIsLogged(t *testing.T) {
 	}
 	assertNoSecretsLogged(t, logged, "super-secret-wrong-token", sessionVal)
 }
+
+// A trusted proxy that sets only True-Client-IP or X-Real-IP (a bare nginx
+// `proxy_set_header X-Real-IP $remote_addr;`) names the client. Before this
+// was honoured ResolveClientIP returned the proxy's own private address, so
+// local-only mode served every internet client as a trusted local one.
+func TestResolveClientIP_TrustedProxyWithoutXFF_UsesRealIPHeaders(t *testing.T) {
+	trusted := cidrs(t, "10.0.0.0/8")
+	for _, hdr := range []string{"X-Real-IP", "True-Client-IP"} {
+		r := mkReq("10.0.0.5:44321", "")
+		r.Header.Set(hdr, "203.0.113.9")
+		if got := ResolveClientIP(r, trusted); got != "203.0.113.9" {
+			t.Errorf("%s only: ResolveClientIP = %q, want 203.0.113.9", hdr, got)
+		}
+		if IsLocalRequestTrusted(r, trusted) {
+			t.Errorf("%s only: an internet client behind the proxy must not be local", hdr)
+		}
+	}
+	// A genuine LAN client named by the header stays local.
+	r := mkReq("10.0.0.5:44321", "")
+	r.Header.Set("X-Real-IP", "192.168.1.20")
+	if !IsLocalRequestTrusted(r, trusted) {
+		t.Error("a LAN client named by X-Real-IP should stay local")
+	}
+	// A garbage value fails closed, like an unparseable XFF hop.
+	r = mkReq("10.0.0.5:44321", "")
+	r.Header.Set("X-Real-IP", "not-an-ip")
+	if IsLocalRequestTrusted(r, trusted) {
+		t.Error("an unparseable X-Real-IP must not be treated as local")
+	}
+	// XFF still wins over the single-value headers.
+	r = mkReq("10.0.0.5:44321", "198.51.100.4")
+	r.Header.Set("X-Real-IP", "192.168.1.20")
+	if got := ResolveClientIP(r, trusted); got != "198.51.100.4" {
+		t.Errorf("XFF must take precedence, got %q", got)
+	}
+	// No header at all: unchanged, the trusted peer itself.
+	if got := ResolveClientIP(mkReq("10.0.0.5:44321", ""), trusted); got != "10.0.0.5" {
+		t.Errorf("no headers: got %q, want the peer", got)
+	}
+}
+
+func TestHashOrDummy(t *testing.T) {
+	real, err := HashPassword("pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := HashOrDummy(real); got != real {
+		t.Error("a valid hash must pass through unchanged")
+	}
+	for _, bad := range []string{"", "x", "$bcrypt$a$b$c$d", "$argon2i$v=19$m=1,t=1,p=1$c2FsdA$aGFzaA"} {
+		got := HashOrDummy(bad)
+		if got != DummyPasswordHash() {
+			t.Errorf("HashOrDummy(%q) = %q, want the dummy hash", bad, got)
+		}
+	}
+	// The substituted hash must cost a real KDF run, which is the point.
+	start := time.Now()
+	_, _ = VerifyPasswordContext(context.Background(), "x", HashOrDummy(""))
+	if time.Since(start) < time.Millisecond {
+		t.Error("verifying against the substituted hash returned without running the KDF")
+	}
+}
