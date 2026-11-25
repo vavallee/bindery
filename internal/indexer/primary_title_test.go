@@ -82,7 +82,7 @@ func TestPrimaryTitleFallbackRejectsAnotherBook(t *testing.T) {
 			name:  "a numbered subtitle and a release naming a different number",
 			title: "Dune: Part Two", author: "Frank Herbert",
 			releases:    []string{"Frank Herbert - Dune III (Unabridged) MP3"},
-			wantDropped: map[string]string{"Frank Herbert - Dune III (Unabridged) MP3": reasonMainTitleOnlySequel},
+			wantDropped: map[string]string{"Frank Herbert - Dune III (Unabridged) MP3": reasonLaterNumber},
 		},
 	}
 	for _, c := range cases {

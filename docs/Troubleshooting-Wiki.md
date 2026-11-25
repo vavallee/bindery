@@ -71,14 +71,26 @@ Numbers that are not series numbers never drop a release: `01` (the first book),
 "of"), a four digit year, and a number equal to the book's own position (or
 inside a stored range such as `1-3`).
 
-**The limit that matters most:** with no stored series position, a number after
-the title is not judged at all, because nothing in the release name can tell
+When the book has no stored position but its own title numbers it (`Corruption
+Wielder: Book 1`, `Stone vs. Viper, Book 2`), that number stands in for the
+position, so `Corruption Wielder 04` and `Stone vs. Viper 15` are dropped with
+the same reason. The number may follow the whole title or just its main title.
+
+**The limit that matters most:** with no stored series position and a title that
+carries no volume number, a number after the title is not judged by the filter, because nothing in the release name can tell
 `Title 02 - Rule of Wolves` from `Title 02 - Scott Brick` or `Title 02 -
 Dramatized`. Such a release is caught only through a library title after the
 number. So `Rotten School 12` and `Percy Jackson and the Olympians 04` are
 caught only when the book has a series position (it comes from the series data,
 see the Hardcover series page) or the later book is in your library. Set the
 series position on the book to turn the number check on.
+
+Such a release is not dropped but ranked lower: with no position, a plain title
+may be any volume (`Words of Radiance #2` is the right release for `Words of
+Radiance`). A release that names a volume of 2 or more straight after the title
+(`Title 02`, `Title 2 by Author`, `Title Book Four`) loses 150 points of score,
+so an unnumbered or `1` release of the same quality is picked first. If it is
+the only release offered it is still offered, and still grabbed.
 
 Stored series position and release numbering can disagree, and Bindery cannot
 tell which is right: Discworld book 4 stored as position 1 of the `Death`
