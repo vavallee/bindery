@@ -285,3 +285,18 @@ func TestDoTransportBackoffRespectsDeadline(t *testing.T) {
 		t.Errorf("requests = %d, want 1", got)
 	}
 }
+
+func TestDoCapsSuccessBody(t *testing.T) {
+	c := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return respond(http.StatusOK, strings.Repeat("a", MaxResponseBytes+4096), nil), nil
+	})}
+	resp, err := Do(context.Background(), c, nil, Request{URL: "https://example.invalid/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	n, _ := io.Copy(io.Discard, resp.Body)
+	if n != MaxResponseBytes {
+		t.Fatalf("read %d bytes, want the cap %d", n, MaxResponseBytes)
+	}
+}

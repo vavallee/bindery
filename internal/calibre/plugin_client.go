@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/vavallee/bindery/internal/httpsec"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -108,7 +110,14 @@ func NewPluginClient(baseURL, apiKey string) *PluginClient {
 	return &PluginClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
-		http:    &http.Client{Timeout: pluginHTTPTimeout},
+		// Dialled directly and every dial and redirect hop re-checked, so a
+		// rebound hostname or a redirect cannot reach a metadata or link-local
+		// address. PolicyService still allows the LAN targets a plugin needs.
+		http: &http.Client{
+			Timeout:       pluginHTTPTimeout,
+			Transport:     httpsec.DirectGuardedTransport(httpsec.PolicyService),
+			CheckRedirect: httpsec.RedirectGuard(httpsec.PolicyService),
+		},
 	}
 }
 
@@ -262,7 +271,7 @@ func (c *PluginClient) addWithRetry(ctx context.Context, filePath string, meta M
 	}
 
 	var result pluginResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil && resp.StatusCode < 400 {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONResponseBytes)).Decode(&result); err != nil && resp.StatusCode < 400 {
 		return AddResult{}, fmt.Errorf("plugin client: decode response: %w", err)
 	}
 	if !legacyPayload && !meta.empty() && shouldRetryLegacy(resp.StatusCode, result) {
@@ -422,7 +431,7 @@ func (c *PluginClient) UpdateMetadata(ctx context.Context, id int64, meta Metada
 		return nil, fmt.Errorf("plugin client: authentication failed, check api_key in Settings then Calibre")
 	}
 	var result pluginResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil && resp.StatusCode < 400 {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONResponseBytes)).Decode(&result); err != nil && resp.StatusCode < 400 {
 		return nil, fmt.Errorf("plugin client: decode update response: %w", err)
 	}
 	if resp.StatusCode == http.StatusNotFound {
@@ -471,7 +480,7 @@ func (c *PluginClient) ProbePath(ctx context.Context, path string) (PathProbe, e
 		Error string `json:"error"`
 		Code  string `json:"code"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil && resp.StatusCode < 400 {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONResponseBytes)).Decode(&result); err != nil && resp.StatusCode < 400 {
 		return PathProbe{}, fmt.Errorf("plugin client: decode path probe: %w", err)
 	}
 	if resp.StatusCode >= 400 {
@@ -759,8 +768,12 @@ func (c *PluginClient) fetchHealth(ctx context.Context) (pluginHealth, error) {
 		return pluginHealth{}, fmt.Errorf("plugin client: health: server error %d", resp.StatusCode)
 	}
 	var h pluginHealth
-	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONResponseBytes)).Decode(&h); err != nil {
 		return pluginHealth{}, fmt.Errorf("plugin client: decode health: %w", err)
 	}
 	return h, nil
 }
+
+// maxJSONResponseBytes caps a decoded response body so a hostile or broken
+// endpoint cannot stream unbounded JSON into memory.
+const maxJSONResponseBytes = 16 << 20

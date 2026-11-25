@@ -281,6 +281,10 @@ func FormatPublishedDate(t *time.Time) string {
 // exactly when there are the most covers to fetch.
 var coverFetchClient = &http.Client{
 	Timeout: 15 * time.Second,
+	// Dial-time check: ValidateOutboundURL resolves once, so a name that
+	// answers a public address there and a private one at connect time
+	// would otherwise reach the LAN.
+	Transport: httpsec.DirectGuardedTransport(httpsec.PolicyStrict),
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if err := httpsec.ValidateOutboundURL(req.URL.String(), httpsec.PolicyStrict); err != nil {
 			return fmt.Errorf("redirect blocked: %w", err)
@@ -332,6 +336,10 @@ func MaterializeCover(ctx context.Context, cacheDir, rawURL string) (string, err
 	}
 	if len(body) > coverMaxBytes {
 		return "", fmt.Errorf("cover exceeds %d bytes", coverMaxBytes)
+	}
+	// The Content-Type header is chosen by the remote host; the bytes decide.
+	if !strings.HasPrefix(http.DetectContentType(body), "image/") {
+		return "", fmt.Errorf("cover response is not an image")
 	}
 	if err := os.MkdirAll(cacheDir, coverDirMode); err != nil {
 		return "", err

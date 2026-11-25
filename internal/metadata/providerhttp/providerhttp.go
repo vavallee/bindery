@@ -290,6 +290,10 @@ func Do(ctx context.Context, client *http.Client, gate *Gate, r Request) (*http.
 		}
 
 		if resp.StatusCode == http.StatusOK || passes(r.Pass, resp.StatusCode) {
+			// Cap what a provider can make a caller read. Every metadata
+			// client decodes straight from resp.Body, and four of them had
+			// no limit of their own.
+			resp.Body = &cappedBody{Reader: io.LimitReader(resp.Body, MaxResponseBytes), Closer: resp.Body}
 			return resp, nil
 		}
 
@@ -430,4 +434,13 @@ func sleep(ctx context.Context, d time.Duration) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// MaxResponseBytes is the most a successful provider response body yields to
+// the caller; reads past it return EOF.
+const MaxResponseBytes = 8 << 20
+
+type cappedBody struct {
+	io.Reader
+	io.Closer
 }

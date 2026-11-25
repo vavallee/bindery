@@ -349,7 +349,7 @@ func (c *Client) apiCall(ctx context.Context, params url.Values, target interfac
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	return json.NewDecoder(resp.Body).Decode(target)
+	return json.NewDecoder(io.LimitReader(resp.Body, maxJSONResponseBytes)).Decode(target)
 }
 
 // apiUpload POSTs a multipart body to the SAB /api endpoint. The api-key
@@ -379,7 +379,7 @@ func (c *Client) apiUpload(ctx context.Context, params url.Values, body *bytes.B
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	return json.NewDecoder(resp.Body).Decode(target)
+	return json.NewDecoder(io.LimitReader(resp.Body, maxJSONResponseBytes)).Decode(target)
 }
 
 // WrapTransport replaces the client's API transport with wrap applied to it.
@@ -388,3 +388,7 @@ func (c *Client) apiUpload(ctx context.Context, params url.Values, body *bytes.B
 func (c *Client) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
 	c.http.Transport = wrap(c.http.Transport)
 }
+
+// maxJSONResponseBytes caps a decoded response body so a hostile or broken
+// endpoint cannot stream unbounded JSON into memory.
+const maxJSONResponseBytes = 16 << 20

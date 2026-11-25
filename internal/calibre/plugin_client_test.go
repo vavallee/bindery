@@ -289,3 +289,14 @@ func TestPluginClient_AddAppliesPushPathRemap(t *testing.T) {
 		}
 	})
 }
+
+func TestPluginClient_RefusesMetadataEndpointRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+	}))
+	defer srv.Close()
+	c := NewPluginClient(srv.URL, "k")
+	if _, err := c.Add(context.Background(), "/library/book.epub", Metadata{Title: "x"}); err == nil {
+		t.Fatal("plugin client followed a redirect to the metadata address")
+	}
+}

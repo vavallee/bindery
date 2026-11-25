@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -113,7 +114,7 @@ func covResponse(status int, contentType string, body []byte) *http.Response {
 const covPublicCover = "https://93.184.216.34/covers/dune.png"
 
 func TestMaterializeCover_DownloadsIntoTheCache(t *testing.T) {
-	png := []byte("\x89PNG fake image bytes")
+	png := []byte("\x89PNG\r\n\x1a\n fake image bytes")
 	rt := covStubCoverClient(t, func(r *http.Request) (*http.Response, error) {
 		if r.URL.String() != covPublicCover {
 			return nil, fmt.Errorf("unexpected url %s", r.URL)
@@ -240,5 +241,27 @@ func TestMaterializeCover_CancelledContext(t *testing.T) {
 	cancel()
 	if _, err := MaterializeCover(ctx, t.TempDir(), covPublicCover); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestMaterializeCover_RefusesBytesThatAreNotAnImage(t *testing.T) {
+	covStubCoverClient(t, func(r *http.Request) (*http.Response, error) {
+		return covResponse(http.StatusOK, "image/png", []byte("<html>internal admin page</html>")), nil
+	})
+	if _, err := MaterializeCover(context.Background(), t.TempDir(), covPublicCover); err == nil {
+		t.Fatal("a response labelled image/png but holding HTML was cached")
+	}
+}
+
+func TestCoverFetchClient_DialsThroughTheGuard(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("\x89PNG\r\n\x1a\n"))
+	}))
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if resp, err := coverFetchClient.Do(req); err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("cover client connected to a loopback address")
 	}
 }

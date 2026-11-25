@@ -769,10 +769,20 @@ func SetImageProxyBase(base string) { imageProxyBase = base }
 // <base>/api/v1/images?url=<encoded>. Returns raw unchanged when it is empty or
 // already a relative URL (already proxied or intentionally local).
 func ProxyImageURL(raw string) string {
-	if raw == "" || strings.HasPrefix(raw, "/") {
+	if raw == "" || isLocalImagePath(raw) {
 		return raw
 	}
 	return imageProxyBase + "/api/v1/images?url=" + url.QueryEscape(raw)
+}
+
+// isLocalImagePath reports whether raw is a same-origin path. A value starting
+// with "//" or "/\\" is a protocol-relative URL that a browser resolves to
+// another host, so it is not local and must go through the proxy.
+func isLocalImagePath(raw string) bool {
+	if !strings.HasPrefix(raw, "/") {
+		return false
+	}
+	return !strings.HasPrefix(raw, "//") && !strings.HasPrefix(raw, "/\\")
 }
 
 // OPDSImageURL is ProxyImageURL for the OPDS catalogue: same handler, same
@@ -787,7 +797,7 @@ func ProxyImageURL(raw string) string {
 // same ImageProxyHandler mounted inside the OPDS group so it inherits
 // OPDSAuth instead.
 func OPDSImageURL(raw string) string {
-	if raw == "" || strings.HasPrefix(raw, "/") {
+	if raw == "" || isLocalImagePath(raw) {
 		return raw
 	}
 	return imageProxyBase + "/opds/images?url=" + url.QueryEscape(raw)

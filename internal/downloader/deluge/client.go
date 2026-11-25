@@ -611,7 +611,7 @@ func (c *Client) doCall(ctx context.Context, method string, params []any) (json.
 	}
 
 	var rpcResp rpcResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONResponseBytes)).Decode(&rpcResp); err != nil {
 		return nil, fmt.Errorf("decode rpc response: %w", err)
 	}
 	if rpcResp.Error != nil {
@@ -626,3 +626,7 @@ func (c *Client) doCall(ctx context.Context, method string, params []any) (json.
 func (c *Client) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
 	c.http.Transport = wrap(c.http.Transport)
 }
+
+// maxJSONResponseBytes caps a decoded response body so a hostile or broken
+// endpoint cannot stream unbounded JSON into memory.
+const maxJSONResponseBytes = 16 << 20
