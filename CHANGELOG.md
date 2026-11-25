@@ -4,6 +4,33 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
+## [v1.53.2] - 2026-11-24
+
+A security hardening patch from a review of v1.53.1. Most changes tighten what Bindery accepts from remote services and from files it did not write. There is nothing to configure and no migration. The behaviour changes that could affect an existing install are in the upgrade notes. Anyone running `auth.mode` `local-only` behind a reverse proxy should update.
+
+### Upgrade notes
+- **`local-only` mode behind a proxy that sets only `X-Real-IP` or `True-Client-IP` let any client in as admin.** Bindery now reads those headers, in the same order as the rate limiter, when a trusted proxy sends no `X-Forwarded-For`. If you run `local-only` behind a proxy, check that `BINDERY_TRUSTED_PROXY` lists the proxy and that the proxy sends the real client address.
+- **The image proxy and the Calibre cover fetch refuse more addresses.** `100.64.0.0/10` (shared address space, including Tailscale), `198.18.0.0/15`, `192.0.0.0/24`, and the IPv4 address inside a NAT64 (`64:ff9b::/96`) or 6to4 (`2002::/16`) address are now blocked under the strict policy. Indexers, download clients and plugin URLs on those ranges are not affected.
+- **A grab whose indexer does not match the download host is now sent unsigned.** Bindery used to fall back to another indexer's API key when the named indexer could not sign the URL, which let one indexer obtain another's key. The named indexer still signs a URL on its own host name whatever the port (#2505).
+- **A request's `foreignId` is limited to letters, digits and `: _ . - /`, with no `..`.** Ids from the built-in providers are unchanged.
+- **Zip downloads rewrite unsafe entry names.** A file name containing `\` or a control character is written with `_` instead, and a leading `C:` is defanged.
+- **An audiobook import is refused when the folder the download client reports is, or contains, a library folder, or is the shared download folder itself.** The download is marked import blocked with the reason. Folders inside a library (Fix match, manual import) work as before.
+- **`calibredb` no longer inherits `BINDERY_*` environment variables.** If a wrapper script around `calibredb` read one of them, pass it another way.
+
+### Fixed
+- **Login and OPDS Basic no longer reveal which usernames come from SSO or a proxy.** A user with no local password answered in about a millisecond, against about 15 ms for every other name. Every attempt now runs the password hash.
+- **The Calibre bridge failure limiter counts a burst of wrong keys.** It checked before it recorded, so a parallel burst all got compared. It now reserves the attempt first.
+- **Calibre `metadata.db` paths must stay inside the library.** A `books.path` or `data.name` that escaped the library root, or a format file that is a symlink, is no longer tracked. A cover that is a symlink is not stored.
+- **Secrets in log lines are redacted before they are stored,** and again when the log list is returned. The database file and its `-wal` and `-shm` files are created `0600`.
+- **Requests in the middle of approval count against a user's auto-approve quota,** so a burst can no longer approve about twice the limit.
+- **Protocol-relative image URLs (`//host/x.jpg`) go through the image proxy** instead of being sent to the browser as they are.
+- **Redirects that leave the host drop `X-Api-Key` and similar credential headers.** Go already dropped `Authorization` and cookies.
+- **The Calibre plugin client dials through the same guard as the other integrations,** follows redirects through the redirect guard, and reads at most 16 MiB of JSON. The SABnzbd, Deluge and metadata provider clients cap response bodies the same way (8 MiB for providers).
+- **A cover fetched for Calibre must be an image by its bytes,** not only by the `Content-Type` the remote host chose.
+- **Comparing archive volumes on an import retry streams the files** instead of reading both into memory.
+- **A description with a long run of unclosed `[a](` no longer freezes the page.** The link matcher was quadratic: 320,000 characters took 22 seconds in a browser engine, now about a millisecond.
+- **The tenancy warning at startup now says accounts can delete each other's books and their files on disk.** The default is unchanged. A new warning names a reverse proxy missing from `BINDERY_TRUSTED_PROXY`.
+
 ## [v1.53.1] - 2026-11-24
 
 A patch release for the import, search and metadata profile bugs reported since v1.53.0, plus one small feature: OIDC client secrets can come from the environment. One database migration runs on its own at startup, and there are three behaviour changes, listed below.
