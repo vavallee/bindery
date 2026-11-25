@@ -429,23 +429,29 @@ func (h *QueueHandler) signNZBURL(ctx context.Context, rawURL string, indexerID 
 			if signed := newznab.SignDownloadURLFor(rawURL, idx.URL, idx.APIKey); signed != rawURL {
 				return signed, nil
 			}
-			// The named indexer could not sign it, so its host does not match
-			// the download URL or it has no key stored. Prowlarr builds
-			// download links from its own application URL, which need not
-			// carry the same host:port as the indexer URL Bindery recorded,
-			// and u.Host includes the port, so "prowlarr:9696" and "prowlarr"
-			// are a mismatch.
+			// The named indexer could not sign it. Prowlarr builds download
+			// links from its own application URL, which need not carry the
+			// same port as the indexer URL Bindery recorded ("prowlarr:9696"
+			// against "prowlarr"), and returning the URL unsigned made the
+			// indexer answer 401 with the grab recorded as successful (#2505).
+			// So when the host NAME matches the named indexer, sign with the
+			// named indexer's own key, ignoring the port.
 			//
-			// Returning here shipped the URL unsigned, the indexer answered
-			// 401, and the grab was recorded as successful anyway: the queue
-			// item sat at downloading forever with an empty errorMessage and
-			// nothing was logged at any level (#2505). The web UI always sends
-			// an indexer id, so this was the path every browser grab took.
-			// Fall through to the host match, which can still find the right
-			// credential, and say so.
-			slog.Warn("the indexer named on the grab could not sign the download URL, trying a host match",
+			// When the host belongs to some other indexer, the key of that
+			// other indexer must not be appended: the named indexer's release
+			// URL is attacker-influenced (it comes from the indexer's own
+			// response), so falling through to a host match let indexer A
+			// obtain indexer B's apikey on a URL it chose. The URL is left
+			// unsigned instead.
+			if idx.APIKey != "" && newznab.DownloadHostMatchesIndexer(rawURL, idx.URL) {
+				if signed := newznab.SignDownloadURLFor(rawURL, rawURL, idx.APIKey); signed != rawURL {
+					return signed, nil
+				}
+			}
+			slog.Warn("the indexer named on the grab could not sign the download URL; leaving it unsigned",
 				"indexer_id", *indexerID, "indexer_url", idx.URL,
 				"url", newznab.RedactDownloadURL(rawURL))
+			return rawURL, nil
 		}
 	}
 	idxs, err := h.indexers.List(ctx)

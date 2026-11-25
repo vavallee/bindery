@@ -292,6 +292,14 @@ func DirectGuardedTransport(policy Policy) http.RoundTripper {
 	return t
 }
 
+// credentialHeaders are removed from a request when a redirect changes scheme,
+// host or port.
+var credentialHeaders = []string{"Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Auth-Token", "Apikey"}
+
+func sameRedirectOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
 // RedirectGuard returns an http.Client.CheckRedirect that stops after 10 hops
 // (net/http's own limit) and re-validates each hop's URL against policy, so a
 // redirect off a control endpoint cannot be used to reach a link-local or
@@ -304,6 +312,14 @@ func RedirectGuard(policy Policy) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 redirects")
+		}
+		// net/http strips only Authorization, Cookie and WWW-Authenticate when
+		// a redirect leaves the host; API-key headers such as X-Api-Key are
+		// forwarded. Drop every credential header once the origin changes.
+		if len(via) > 0 && !sameRedirectOrigin(req.URL, via[0].URL) {
+			for _, h := range credentialHeaders {
+				req.Header.Del(h)
+			}
 		}
 		hop := policy
 		if policy == PolicyService {

@@ -206,9 +206,23 @@ func checkIP(ip net.IP, policy Policy) error {
 	}
 
 	if policy == PolicyStrict {
+		// NAT64 (64:ff9b::/96) and 6to4 (2002::/16) addresses embed an IPv4
+		// address. A host that routes them reaches that IPv4 address, so the
+		// embedded address is checked as if it had been written directly.
+		if emb := embeddedIPv4(ip); emb != nil {
+			if err := checkIP(emb, policy); err != nil {
+				return err
+			}
+		}
 		// Block RFC1918 private ranges.
 		if isRFC1918(ip) {
 			return errors.New("url not allowed: points to private network")
+		}
+		// Block shared address space (100.64.0.0/10: CGNAT, Tailscale, the
+		// Alibaba metadata address 100.100.100.200) and the reserved
+		// benchmarking and IETF protocol ranges.
+		if isReservedIPv4(ip) {
+			return errors.New("url not allowed: points to reserved address range")
 		}
 		// Block IPv6 ULA (fc00::/7).
 		if isIPv6ULA(ip) {
@@ -234,6 +248,51 @@ func isRFC1918(ip net.IP) bool {
 		return true
 	}
 	return false
+}
+
+// isReservedIPv4 returns true for 100.64.0.0/10, 198.18.0.0/15 and
+// 192.0.0.0/24, none of which are public destinations.
+func isReservedIPv4(ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	switch {
+	case ip4[0] == 100 && ip4[1]&0xc0 == 64:
+		return true
+	case ip4[0] == 198 && ip4[1]&0xfe == 18:
+		return true
+	case ip4[0] == 192 && ip4[1] == 0 && ip4[2] == 0:
+		return true
+	}
+	return false
+}
+
+// embeddedIPv4 returns the IPv4 address carried by a NAT64 (64:ff9b::/96) or
+// 6to4 (2002::/16) address, or nil for any other address.
+func embeddedIPv4(ip net.IP) net.IP {
+	if ip.To4() != nil {
+		return nil
+	}
+	ip16 := ip.To16()
+	if ip16 == nil {
+		return nil
+	}
+	if ip16[0] == 0x00 && ip16[1] == 0x64 && ip16[2] == 0xff && ip16[3] == 0x9b {
+		zero := true
+		for _, b := range ip16[4:12] {
+			if b != 0 {
+				zero = false
+			}
+		}
+		if zero {
+			return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15]).To4()
+		}
+	}
+	if ip16[0] == 0x20 && ip16[1] == 0x02 {
+		return net.IPv4(ip16[2], ip16[3], ip16[4], ip16[5]).To4()
+	}
+	return nil
 }
 
 // isCloudMetadata returns true for known cloud-metadata IP addresses:
