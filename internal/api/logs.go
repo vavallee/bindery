@@ -131,6 +131,10 @@ func (h *LogHandler) List(w http.ResponseWriter, r *http.Request) {
 		if entries == nil {
 			entries = []db.LogEntry{}
 		}
+		// Rows written before write-side redaction may still hold secrets.
+		for i := range entries {
+			entries[i] = redactLogEntry(entries[i])
+		}
 		writeJSON(w, http.StatusOK, entries)
 		return
 	}
@@ -139,6 +143,16 @@ func (h *LogHandler) List(w http.ResponseWriter, r *http.Request) {
 	entries := h.ring.Snapshot(f.Level, f.Limit)
 	if entries == nil {
 		entries = []logbuf.Entry{}
+	}
+	for i := range entries {
+		entries[i].Msg = httpsec.RedactSecrets(entries[i].Msg)
+		if len(entries[i].Attrs) > 0 {
+			attrs := make(map[string]string, len(entries[i].Attrs))
+			for k, v := range entries[i].Attrs {
+				attrs[k] = httpsec.RedactSecrets(v)
+			}
+			entries[i].Attrs = attrs
+		}
 	}
 	writeJSON(w, http.StatusOK, entries)
 }
@@ -395,6 +409,20 @@ func exportToken(s string) string {
 		return strconv.Quote(s)
 	}
 	return s
+}
+
+// redactLogEntry returns e with secrets stripped from its message and field
+// values. The Fields map is copied, never edited in place.
+func redactLogEntry(e db.LogEntry) db.LogEntry {
+	e.Message = httpsec.RedactSecrets(e.Message)
+	if len(e.Fields) > 0 {
+		fields := make(map[string]string, len(e.Fields))
+		for k, v := range e.Fields {
+			fields[k] = httpsec.RedactSecrets(v)
+		}
+		e.Fields = fields
+	}
+	return e
 }
 
 // exportValue prepares a message or attr value for the text export: secrets

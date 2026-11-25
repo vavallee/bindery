@@ -782,6 +782,33 @@ func pathContains(root, p string) bool {
 	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
 }
 
+// zipEntryName makes a path from the walk safe to store as a zip entry name.
+// A Linux file name may hold a backslash, a colon or a control character, and
+// naive Windows extractors treat "..\..\x.bat" as a path to follow out of
+// the target folder and "C:x" as a drive-relative one. Each segment gets its
+// backslashes and control characters replaced with "_" and a leading "X:" drive
+// prefix defanged; separators stay "/".
+func zipEntryName(rel string) string {
+	segs := strings.Split(rel, "/")
+	out := segs[:0]
+	for i, seg := range segs {
+		seg = strings.Map(func(r rune) rune {
+			if r == '\\' || r < 0x20 || r == 0x7f {
+				return '_'
+			}
+			return r
+		}, seg)
+		if i == 0 && len(seg) >= 2 && seg[1] == ':' && (seg[0]|0x20) >= 'a' && (seg[0]|0x20) <= 'z' {
+			seg = seg[:1] + "_" + seg[2:]
+		}
+		if seg == "" || seg == "." || seg == ".." {
+			continue
+		}
+		out = append(out, seg)
+	}
+	return strings.Join(out, "/")
+}
+
 // streamZip writes a zip archive of every regular file under dir (a path
 // inside root) to the ResponseWriter, named name.zip. An entry skip reports
 // true for is left out, and a folder it reports true for is not entered; skip
@@ -836,7 +863,7 @@ func streamZip(w http.ResponseWriter, root *os.Root, dir, name string, skip func
 		if info, serr := f.Stat(); serr != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		rel := relOf(p)
+		rel := zipEntryName(relOf(p))
 		zf, zerr := zw.CreateHeader(&zip.FileHeader{Name: rel, Method: zipMethod(rel)})
 		if zerr != nil {
 			return zerr

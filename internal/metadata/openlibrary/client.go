@@ -231,7 +231,7 @@ func (c *Client) SearchBooks(ctx context.Context, query string) ([]models.Book, 
 
 func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Author, error) {
 	// foreignID is like "OL123A"
-	u := fmt.Sprintf("%s/authors/%s.json", baseURL, foreignID)
+	u := fmt.Sprintf("%s/authors/%s.json", baseURL, url.PathEscape(foreignID))
 	var resp authorResponse
 	if err := c.getJSON(ctx, u, &resp); err != nil {
 		return nil, fmt.Errorf("get author %s: %w", foreignID, err)
@@ -261,7 +261,7 @@ func (c *Client) GetAuthor(ctx context.Context, foreignID string) (*models.Autho
 }
 
 func (c *Client) GetBook(ctx context.Context, foreignID string) (*models.Book, error) {
-	u := fmt.Sprintf("%s/works/%s.json", baseURL, foreignID)
+	u := fmt.Sprintf("%s/works/%s.json", baseURL, url.PathEscape(foreignID))
 	var resp workResponse
 	if err := c.getJSON(ctx, u, &resp); err != nil {
 		return nil, fmt.Errorf("get book %s: %w", foreignID, err)
@@ -1058,7 +1058,7 @@ func (c *Client) sampleWorkEditions(ctx context.Context, workID string) workEdit
 		return sample
 	}
 
-	u := fmt.Sprintf("%s/works/%s/editions.json?limit=%d", baseURL, workID, editionSampleCap)
+	u := fmt.Sprintf("%s/works/%s/editions.json?limit=%d", baseURL, url.PathEscape(workID), editionSampleCap)
 	var resp editionsResponse
 	if err := c.getJSON(ctx, u, &resp); err != nil {
 		slog.Debug("openlibrary: edition sampling failed", "work", workID, "error", err)
