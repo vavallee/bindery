@@ -3,6 +3,7 @@ package importer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -411,26 +412,58 @@ func removeFlattenedSource(srcRoot string, placed []string, skip func(string) bo
 }
 
 // sameFileContent reports whether the file called name is readable and byte for
-// byte equal in dirA and dirB. Both are read through os.Root, so a symlink in
-// either tree cannot lead the read out of it.
+// byte equal in dirA and dirB. Both are opened through os.Root, so a symlink in
+// either tree cannot lead the read out of it. The sizes are compared first and
+// the contents in fixed-size chunks, so a multi-gigabyte archive volume costs
+// no memory beyond two buffers.
 func sameFileContent(dirA, dirB, name string) bool {
-	read := func(dir string) ([]byte, bool) {
+	open := func(dir string) (*os.File, int64, bool) {
 		root, err := os.OpenRoot(dir)
 		if err != nil {
-			return nil, false
+			return nil, 0, false
 		}
 		defer func() { _ = root.Close() }()
 		f, err := root.Open(name)
 		if err != nil {
-			return nil, false
+			return nil, 0, false
 		}
-		defer func() { _ = f.Close() }()
-		b, err := io.ReadAll(f)
-		return b, err == nil
+		info, err := f.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			_ = f.Close()
+			return nil, 0, false
+		}
+		return f, info.Size(), true
 	}
-	a, okA := read(dirA)
-	b, okB := read(dirB)
-	return okA && okB && bytes.Equal(a, b)
+	a, sizeA, okA := open(dirA)
+	if !okA {
+		return false
+	}
+	defer func() { _ = a.Close() }()
+	b, sizeB, okB := open(dirB)
+	if !okB {
+		return false
+	}
+	defer func() { _ = b.Close() }()
+	if sizeA != sizeB {
+		return false
+	}
+	bufA := make([]byte, 64<<10)
+	bufB := make([]byte, 64<<10)
+	for {
+		nA, errA := io.ReadFull(a, bufA)
+		nB, errB := io.ReadFull(b, bufB)
+		if nA != nB || !bytes.Equal(bufA[:nA], bufB[:nB]) {
+			return false
+		}
+		endA := errors.Is(errA, io.EOF) || errors.Is(errA, io.ErrUnexpectedEOF)
+		endB := errors.Is(errB, io.EOF) || errors.Is(errB, io.ErrUnexpectedEOF)
+		if (errA != nil && !endA) || (errB != nil && !endB) {
+			return false
+		}
+		if endA || endB {
+			return endA && endB
+		}
+	}
 }
 
 // removeFlattenDest undoes a failed flatten by removing the files it placed

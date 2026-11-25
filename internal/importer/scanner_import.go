@@ -597,6 +597,23 @@ func (s *Scanner) tryImportInternal(ctx context.Context, dl *models.Download, do
 		// client's shared save path, which an operator may well reach
 		// through a link of their own.
 		if !usePerFile {
+			// The path is what the download client reported. A client (or a
+			// network peer altering its plain-HTTP reply) that names a library
+			// root, a folder above one, or the shared download folder would
+			// have the whole of it placed as this book's folder, and in move
+			// mode removed from where it was. A source inside the library (Fix
+			// match, a manual import) stays allowed; heldFolderReason below
+			// guards what that folder holds.
+			if root := swallowedStorage(audiobookSource, s.storageRoots(ctx)); root != "" {
+				slog.Error("refusing audiobook import from a folder that is or holds a library folder", "path", audiobookSource, "library", root)
+				s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook import refused: %s is, or contains, the library folder %s", audiobookSource, root))
+				return
+			}
+			if isDownloadRoot(audiobookSource, []string{s.downloadDir, s.audiobookDownloadDir}) {
+				slog.Error("refusing audiobook import from the shared download folder itself", "path", audiobookSource)
+				s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook import refused: %s is the download folder, not a job folder", audiobookSource))
+				return
+			}
 			if err := refuseSymlinkedDownloadDir(audiobookSource); err != nil {
 				slog.Error("refusing audiobook import from a symlinked download folder", "path", audiobookSource, "mode", mode)
 				s.failImport(ctx, dl, models.StateImportBlocked, fmt.Sprintf("audiobook %s refused: %v", mode, err))
