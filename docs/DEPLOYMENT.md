@@ -247,13 +247,15 @@ The frontend is embedded in the binary via `go:embed` — no separate static-fil
 
 Deleting a book or an author with its files removes only files inside a root folder, `BINDERY_LIBRARY_DIR` or `BINDERY_AUDIOBOOK_DIR`, after resolving symlinks on both sides. A root that is itself a symlink to another volume works, but a symlink inside a root that points outside it is not followed. A path outside every root is skipped with a warning in the log (`path containment: refusing to delete file`) and the database row is still removed. With no root at all every file delete is refused until one is set; a default install cannot reach that state, because `BINDERY_LIBRARY_DIR` defaults to `/books`. A Calibre library that lives outside your roots is not covered by deletes from Bindery, as before.
 
+An audiobook import is refused (the download goes to Import blocked, nothing is moved or copied) when the folder the download client reports is a library folder (`BINDERY_LIBRARY_DIR`, `BINDERY_AUDIOBOOK_DIR`, a root folder), a folder that contains one, or `BINDERY_DOWNLOAD_DIR` / the audiobook download folder itself. A job folder inside the download folder, and a folder inside a library (Fix match, manual import), import as before.
+
 **Linked author folders.** If an author folder in your library is a symlink to another disk (`/books/Author -> /mnt/disk2/Author`), the file's real location is `/mnt/disk2/Author/...`, which is outside `/books`. Add the target (`/mnt/disk2` or the folder you link to) as an additional root folder (Settings, Root Folders), otherwise deleting a book from Bindery removes the row and leaves its files on disk, with the warning above in the log.
 
 ## Caching and large downloads behind a reverse proxy
 
 The web app's build files under `/assets/` carry a content hash in their name, and Bindery serves them with `Cache-Control: public, max-age=31536000, immutable`. A proxy or CDN in front of Bindery may cache them for as long as it likes, because a new release changes the names. Nothing else is cached this way: `index.html` is `no-store`, and files such as the favicon and the manifest carry no cache headers, so clients fetch them again. If your proxy rewrites `Cache-Control` on `/assets/`, leave the long lifetime alone.
 
-Book downloads (`/api/v1/book/{id}/file` and the OPDS equivalent) are not bound by Bindery's 120 second response limit, so a large audiobook can take as long as the client needs. Bindery only drops a download when the client has stopped taking data for five minutes. Downloads honour `Range` requests, so a client can resume. An audiobook folder comes down as a zip that stores the audio, ebook and image files uncompressed, since they are compressed already. If a proxy sits in front, make sure its own read and send timeouts (`proxy_read_timeout` and `proxy_send_timeout` in nginx) are long enough for a slow link, and consider turning proxy response buffering off for that path.
+Book downloads (`/api/v1/book/{id}/file` and the OPDS equivalent) are not bound by Bindery's 120 second response limit, so a large audiobook can take as long as the client needs. Bindery only drops a download when the client has stopped taking data for five minutes. Downloads honour `Range` requests, so a client can resume. An audiobook folder comes down as a zip that stores the audio, ebook and image files uncompressed, since they are compressed already. Entry names in that zip have backslashes and control characters replaced with `_` and a leading `C:` style drive prefix defanged, so an extractor that treats them as path separators cannot write outside its target folder. If a proxy sits in front, make sure its own read and send timeouts (`proxy_read_timeout` and `proxy_send_timeout` in nginx) are long enough for a slow link, and consider turning proxy response buffering off for that path.
 
 ## Running as a specific UID/GID
 
@@ -537,7 +539,7 @@ Several variables below have a database equivalent that overrides them once it i
 |----------|---------|-------------|
 | `BINDERY_PORT` | `8787` | HTTP server port |
 | `BINDERY_URL_BASE` | _(empty)_ | URL path prefix when hosting Bindery under a reverse-proxy subpath (e.g. `/bindery`). Accepts a bare path or full URL — only the path component is used. No trailing slash needed. See the [Reverse-proxy & SSO wiki](https://github.com/vavallee/bindery/wiki/Reverse-proxy-and-SSO) for Nginx / Caddy / Traefik examples. |
-| `BINDERY_DB_PATH` | `/config/bindery.db` on Linux; `%APPDATA%\Bindery\bindery.db` on Windows; `~/Library/Application Support/Bindery/bindery.db` on macOS | SQLite database path |
+| `BINDERY_DB_PATH` | `/config/bindery.db` on Linux; `%APPDATA%\Bindery\bindery.db` on Windows; `~/Library/Application Support/Bindery/bindery.db` on macOS | SQLite database path. The database file and its `-wal` and `-shm` files are created with mode 0600; existing ones are tightened at startup. |
 | `BINDERY_DATA_DIR` | `/config` on Linux; `%APPDATA%\Bindery` on Windows; `~/Library/Application Support/Bindery` on macOS | Config directory. Backups live here, as do the proxied cover cache (`image-cache/`, evicted after 30 days and refetched on demand) and the covers Bindery owns outright (`covers/`, the `cover.jpg` copied from each book of an imported Calibre library, never evicted). Keep it on persistent storage. |
 | `BINDERY_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `BINDERY_API_KEY` | _(empty)_ | **Seed only.** Bootstraps the initial API key on first launch if set; after that the key lives in the database and can be regenerated from the UI. |
@@ -1030,6 +1032,8 @@ auth:
 
 **Calibre (optional, off by default).** If you want the new `calibredb` post-import hook, you need the `calibredb` binary reachable from the Bindery process:
 
+- Bindery runs `calibredb` with its own environment minus every `BINDERY_*` variable, so the API key, OIDC client secrets and session secret never reach the executable. Variables such as `PATH`, `HOME` and `CALIBRE_*` still pass.
+- When Bindery imports a Calibre library it reads each book's folder and format file names from `metadata.db`; a `books.path` that is not a plain relative path inside the library folder, a `data.name` with a path separator, and a format file that is a symbolic link are skipped with a warning instead of being tracked.
 - The distroless official image does **not** ship `calibredb`. Either bind-mount a calibre install into the container or run Bindery outside the distroless image until a `bindery-calibre` variant lands.
 - Enable via Settings → Calibre → set library path + binary path → Test connection.
 - Existing imports continue to work unchanged while the toggle is off.
