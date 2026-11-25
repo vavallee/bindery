@@ -243,8 +243,10 @@ func (r *Reader) Books(ctx context.Context, fn func(CalibreBook) error) error {
 			return err
 		}
 
-		if cover := filepath.Join(cb.LibraryPath, "cover.jpg"); fileExists(cover) {
-			cb.CoverPath = cover
+		if cb.LibraryPath != "" {
+			if cover := filepath.Join(cb.LibraryPath, "cover.jpg"); fileExists(cover) {
+				cb.CoverPath = cover
+			}
 		}
 
 		if err := fn(cb); err != nil {
@@ -283,7 +285,17 @@ func (r *Reader) listBookHeaders(ctx context.Context) ([]CalibreBook, error) {
 			return nil, fmt.Errorf("scan book: %w", err)
 		}
 		cb.PublishDate = parseCalibreDate(pubdate.String)
-		cb.LibraryPath = filepath.Join(r.libraryPath, relPath)
+		// books.path comes from a metadata.db that may not be trusted (a shared
+		// NAS, a downloaded library): "../../data" would otherwise place the
+		// book, its cover and every format file outside the library root and
+		// get them tracked, delivered and uploaded from there.
+		if relPath != "" && !filepath.IsLocal(filepath.FromSlash(relPath)) {
+			slog.Warn("calibre import: book path escapes the library root, not reading its files",
+				"calibre_id", cb.CalibreID, "path", relPath)
+			out = append(out, cb)
+			continue
+		}
+		cb.LibraryPath = filepath.Join(r.libraryPath, filepath.FromSlash(relPath))
 		if seriesName != "" {
 			cb.Series = &CalibreSeries{
 				Name:     seriesName,
@@ -347,7 +359,9 @@ func (r *Reader) loadFormats(ctx context.Context, bookID int64, bookPath string)
 		// Calibre stores the format file as `<name>.<format>` inside the
 		// per-book directory. Build the absolute path so callers don't have
 		// to replicate the convention.
-		if f.Format != "" && f.FileName != "" && bookPath != "" {
+		// data.name is a bare file name; a separator or ".." in it would walk
+		// out of the per-book directory the same way books.path can.
+		if f.Format != "" && f.FileName != "" && bookPath != "" && filepath.IsLocal(f.FileName) && filepath.Base(f.FileName) == f.FileName {
 			f.AbsolutePath = filepath.Join(bookPath, f.FileName+"."+strings.ToLower(f.Format))
 		}
 		out = append(out, f)

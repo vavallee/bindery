@@ -89,6 +89,13 @@ func (s *Store) Put(src string) (string, error) {
 	if s == nil || s.dir == "" {
 		return "", errors.New("covers: store not configured")
 	}
+	// Lstat first, as Resolve does: a cover.jpg that is a symlink in a hostile
+	// library would otherwise copy any readable image into the served store.
+	if info, err := os.Lstat(src); err != nil {
+		return "", err
+	} else if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("covers: %s is not a regular file", src)
+	}
 	f, err := os.Open(src) // #nosec G304 -- the importer passes the cover path it read from the Calibre library it was pointed at
 	if err != nil {
 		return "", err
