@@ -83,32 +83,36 @@ func parse(raw string) os.FileMode {
 // Directories that already existed are left alone. A failed chmod does not
 // fail the import (some network and FUSE mounts refuse it); it is logged.
 func MkdirAll(path string) error {
-	want := Library()
-	var created []string
-	for p := filepath.Clean(path); ; {
-		if _, err := os.Lstat(p); err == nil || !errors.Is(err, fs.ErrNotExist) {
-			break
+	return mkdirAll(filepath.Clean(path), Library())
+}
+
+func mkdirAll(path string, want os.FileMode) error {
+	err := os.Mkdir(path, want)
+	switch {
+	case err == nil:
+		if fi, serr := os.Lstat(path); serr == nil && fi.Mode().Perm() != want {
+			if cerr := os.Chmod(path, want); cerr != nil {
+				slog.Warn("dirperm: could not set the configured directory mode",
+					"path", path, "mode", want.String(), "error", cerr)
+			}
 		}
-		created = append(created, p)
-		parent := filepath.Dir(p)
-		if parent == p {
-			break
+		return nil
+	case errors.Is(err, fs.ErrNotExist):
+		parent := filepath.Dir(path)
+		if parent == path {
+			return err
 		}
-		p = parent
-	}
-	if err := os.MkdirAll(path, want); err != nil {
+		if perr := mkdirAll(parent, want); perr != nil {
+			return perr
+		}
+		return mkdirAll(path, want)
+	default:
+		// Already exists, or a real failure: os.MkdirAll semantics.
+		if fi, serr := os.Stat(path); serr == nil && fi.IsDir() {
+			return nil
+		}
 		return err
 	}
-	for _, p := range created {
-		fixMode(p, want, func(m os.FileMode) error { return os.Chmod(p, m) }, func() (os.FileMode, error) {
-			fi, err := os.Lstat(p)
-			if err != nil {
-				return 0, err
-			}
-			return fi.Mode(), nil
-		})
-	}
-	return nil
 }
 
 // Mkdir creates one directory inside root like root.Mkdir, then applies
