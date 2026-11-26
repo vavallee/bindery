@@ -167,3 +167,55 @@ func TestMkdirAllLeavesExistingDirsAlone(t *testing.T) {
 		t.Fatalf("existing dir changed to %#o", fi.Mode().Perm())
 	}
 }
+
+func TestParentReferenceRefused(t *testing.T) {
+	base := t.TempDir()
+	if err := MkdirAll(filepath.Join(base, "a") + "/../b"); err == nil {
+		t.Fatal("MkdirAll accepted a parent reference")
+	}
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := Mkdir(root, "../x"); err == nil {
+		t.Fatal("Mkdir accepted a parent reference")
+	}
+	if err := MkdirAll(filepath.Join(base, "Vol..1")); err != nil {
+		t.Fatalf("dots inside a name must be fine: %v", err)
+	}
+}
+
+func TestMkdirAllErrors(t *testing.T) {
+	base := t.TempDir()
+	file := filepath.Join(base, "f")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := MkdirAll(filepath.Join(file, "sub")); err == nil {
+		t.Fatal("MkdirAll under a regular file should fail")
+	}
+	if err := MkdirAll(file); err == nil {
+		t.Fatal("MkdirAll on an existing regular file should fail")
+	}
+	if err := MkdirAll(base); err != nil {
+		t.Fatalf("existing dir should be fine: %v", err)
+	}
+	root, err := os.OpenRoot(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := Mkdir(root, "missing/child"); err == nil {
+		t.Fatal("Mkdir with a missing parent should fail")
+	}
+}
+
+func TestFixModeChmodFailureIsNotFatal(t *testing.T) {
+	fixMode("x", 0o770,
+		func(os.FileMode) error { return os.ErrPermission },
+		func() (os.FileMode, error) { return os.ModeDir | 0o750, nil })
+	fixMode("x", 0o770,
+		func(os.FileMode) error { t.Fatal("chmod called"); return nil },
+		func() (os.FileMode, error) { return 0, os.ErrNotExist })
+}

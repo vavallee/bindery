@@ -83,7 +83,23 @@ func parse(raw string) os.FileMode {
 // Directories that already existed are left alone. A failed chmod does not
 // fail the import (some network and FUSE mounts refuse it); it is logged.
 func MkdirAll(path string) error {
+	if hasParentRef(path) {
+		return errParentRef
+	}
 	return mkdirAll(filepath.Clean(path), Library())
+}
+
+var errParentRef = errors.New("dirperm: path contains a parent directory reference")
+
+// hasParentRef reports whether any element of p is "..". The importer joins
+// cleaned library paths, so this only ever refuses a traversal attempt.
+func hasParentRef(p string) bool {
+	for _, el := range strings.Split(filepath.ToSlash(p), "/") {
+		if el == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func mkdirAll(path string, want os.FileMode) error {
@@ -119,6 +135,9 @@ func mkdirAll(path string, want os.FileMode) error {
 // Library() exactly. An already existing directory is returned as an error
 // satisfying os.IsExist and is not modified.
 func Mkdir(root *os.Root, name string) error {
+	if hasParentRef(name) {
+		return errParentRef
+	}
 	want := Library()
 	if err := root.Mkdir(name, want); err != nil {
 		return err
