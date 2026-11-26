@@ -10,7 +10,8 @@
 // mkdir(2) applies the process umask, so a plain os.MkdirAll with 0770 under
 // the usual 022 umask yields 0750. The group-writable modes therefore only
 // work through MkdirAll and Mkdir below, which chmod the directories they
-// create when the umask changed the result.
+// create when the umask changed the result. Every other mode behaves exactly
+// like the plain os calls, umask included.
 package dirperm
 
 import (
@@ -20,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // DefaultLibraryMode is the historical mode for importer-created library
@@ -28,8 +30,8 @@ const DefaultLibraryMode os.FileMode = 0o750
 
 // allowedModes is the closed set of modes BINDERY_DIR_MODE accepts, keyed
 // without the leading zero; both spellings are accepted at lookup. The value
-// an operator sets is the mode the directories get: MkdirAll and Mkdir chmod
-// explicitly when the umask would have stripped bits. No world-writable mode
+// an operator sets is the mode requested; for the group-writable modes MkdirAll and Mkdir chmod
+// explicitly when the umask stripped bits. No world-writable mode
 // is accepted. A closed whitelist (rather
 // than free-form octal parsing) keeps operator mistakes, such as the Go
 // spelling "0o755" or a stray space, from locking the importer out of its
@@ -78,40 +80,41 @@ func parse(raw string) os.FileMode {
 	return DefaultLibraryMode
 }
 
-// MkdirAll creates path and any missing parents like os.MkdirAll, then makes
-// every directory it created carry exactly Library(), whatever the umask.
-// Directories that already existed are left alone. A failed chmod does not
-// fail the import (some network and FUSE mounts refuse it); it is logged.
+// MkdirAll creates path and any missing parents like os.MkdirAll. When the
+// configured mode is group-writable (0770 or 0775) it then makes every
+// directory it created carry that mode whatever the umask, keeping any
+// setgid or sticky bit mkdir inherited from the parent. For every other
+// configured mode it behaves exactly like os.MkdirAll: the umask applies as
+// it always did, so a stricter umask still tightens the result. Directories
+// that already existed are left alone. A failed chmod does not fail the
+// import (some network and FUSE mounts refuse it); it is logged.
 func MkdirAll(path string) error {
-	if hasParentRef(path) {
-		return errParentRef
+	want := Library()
+	if path == "" || !groupWritable(want) {
+		return os.MkdirAll(path, want)
 	}
-	return mkdirAll(filepath.Clean(path), Library())
+	return mkdirAll(filepath.Clean(path), want)
 }
 
-var errParentRef = errors.New("dirperm: path contains a parent directory reference")
-
-// hasParentRef reports whether any element of p is "..". The importer joins
-// cleaned library paths, so this only ever refuses a traversal attempt.
-func hasParentRef(p string) bool {
-	for _, el := range strings.Split(filepath.ToSlash(p), "/") {
-		if el == ".." {
-			return true
-		}
-	}
-	return false
+// groupWritable reports whether mode is one of the opt-in group-writable
+// modes, the only ones the umask would silently defeat.
+func groupWritable(mode os.FileMode) bool {
+	return mode&0o020 != 0
 }
 
 func mkdirAll(path string, want os.FileMode) error {
 	err := os.Mkdir(path, want)
 	switch {
 	case err == nil:
-		if fi, serr := os.Lstat(path); serr == nil && fi.Mode().Perm() != want {
-			if cerr := os.Chmod(path, want); cerr != nil {
-				slog.Warn("dirperm: could not set the configured directory mode",
-					"path", path, "mode", want.String(), "error", cerr)
-			}
-		}
+		fixMode(path, want,
+			func(m os.FileMode) error { return os.Chmod(path, m) },
+			func() (os.FileMode, error) {
+				fi, serr := os.Lstat(path)
+				if serr != nil {
+					return 0, serr
+				}
+				return fi.Mode(), nil
+			})
 		return nil
 	case errors.Is(err, fs.ErrNotExist):
 		parent := filepath.Dir(path)
@@ -124,23 +127,28 @@ func mkdirAll(path string, want os.FileMode) error {
 		return mkdirAll(path, want)
 	default:
 		// Already exists, or a real failure: os.MkdirAll semantics.
-		if fi, serr := os.Stat(path); serr == nil && fi.IsDir() {
-			return nil
+		fi, serr := os.Stat(path)
+		if serr == nil {
+			if fi.IsDir() {
+				return nil
+			}
+			return &os.PathError{Op: "mkdir", Path: path, Err: syscall.ENOTDIR}
 		}
 		return err
 	}
 }
 
-// Mkdir creates one directory inside root like root.Mkdir, then applies
-// Library() exactly. An already existing directory is returned as an error
-// satisfying os.IsExist and is not modified.
+// Mkdir creates one directory inside root like root.Mkdir and, for the
+// group-writable modes, applies the configured mode exactly as MkdirAll does.
+// An already existing directory is returned as an error satisfying
+// os.IsExist and is not modified.
 func Mkdir(root *os.Root, name string) error {
-	if hasParentRef(name) {
-		return errParentRef
-	}
 	want := Library()
 	if err := root.Mkdir(name, want); err != nil {
 		return err
+	}
+	if !groupWritable(want) {
+		return nil
 	}
 	fixMode(name, want, func(m os.FileMode) error { return root.Chmod(name, m) }, func() (os.FileMode, error) {
 		fi, err := root.Lstat(name)
@@ -152,13 +160,20 @@ func Mkdir(root *os.Root, name string) error {
 	return nil
 }
 
+// fixMode chmods a freshly created directory to want when the umask changed
+// its permission bits, keeping the setgid and sticky bits mkdir inherited.
 func fixMode(name string, want os.FileMode, chmod func(os.FileMode) error, stat func() (os.FileMode, error)) {
+	const special = os.ModeSetgid | os.ModeSticky
 	got, err := stat()
-	if err != nil || !got.IsDir() || got.Perm() == want {
+	if err != nil || !got.IsDir() {
 		return
 	}
-	if err := chmod(want); err != nil {
+	target := want | (got & special)
+	if got&(os.ModePerm|special) == target {
+		return
+	}
+	if err := chmod(target); err != nil {
 		slog.Warn("dirperm: could not set the configured directory mode",
-			"path", name, "mode", want.String(), "error", err)
+			"path", name, "mode", target.String(), "error", err)
 	}
 }

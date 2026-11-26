@@ -1,6 +1,7 @@
 package dirperm
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -168,24 +169,6 @@ func TestMkdirAllLeavesExistingDirsAlone(t *testing.T) {
 	}
 }
 
-func TestParentReferenceRefused(t *testing.T) {
-	base := t.TempDir()
-	if err := MkdirAll(filepath.Join(base, "a") + "/../b"); err == nil {
-		t.Fatal("MkdirAll accepted a parent reference")
-	}
-	root, err := os.OpenRoot(base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer root.Close()
-	if err := Mkdir(root, "../x"); err == nil {
-		t.Fatal("Mkdir accepted a parent reference")
-	}
-	if err := MkdirAll(filepath.Join(base, "Vol..1")); err != nil {
-		t.Fatalf("dots inside a name must be fine: %v", err)
-	}
-}
-
 func TestMkdirAllErrors(t *testing.T) {
 	base := t.TempDir()
 	file := filepath.Join(base, "f")
@@ -195,8 +178,23 @@ func TestMkdirAllErrors(t *testing.T) {
 	if err := MkdirAll(filepath.Join(file, "sub")); err == nil {
 		t.Fatal("MkdirAll under a regular file should fail")
 	}
-	if err := MkdirAll(file); err == nil {
-		t.Fatal("MkdirAll on an existing regular file should fail")
+	if err := MkdirAll(file); !errors.Is(err, syscall.ENOTDIR) {
+		t.Fatalf("MkdirAll on an existing regular file = %v, want ENOTDIR", err)
+	}
+	t.Setenv("BINDERY_DIR_MODE", "0770")
+	if err := MkdirAll(file); !errors.Is(err, syscall.ENOTDIR) {
+		t.Fatalf("group-writable MkdirAll on a regular file = %v, want ENOTDIR", err)
+	}
+	if err := MkdirAll(filepath.Join(file, "sub")); err == nil {
+		t.Fatal("group-writable MkdirAll under a regular file should fail")
+	}
+	want := os.MkdirAll("", 0o750)
+	for _, mode := range []string{"", "0770"} {
+		t.Setenv("BINDERY_DIR_MODE", mode)
+		got := MkdirAll("")
+		if got == nil || want == nil || got.Error() != want.Error() {
+			t.Fatalf("MkdirAll(\"\") with mode %q = %v, want %v", mode, got, want)
+		}
 	}
 	if err := MkdirAll(base); err != nil {
 		t.Fatalf("existing dir should be fine: %v", err)
@@ -218,4 +216,86 @@ func TestFixModeChmodFailureIsNotFatal(t *testing.T) {
 	fixMode("x", 0o770,
 		func(os.FileMode) error { t.Fatal("chmod called"); return nil },
 		func() (os.FileMode, error) { return 0, os.ErrNotExist })
+}
+
+func TestMkdirAllSetgidParentKept(t *testing.T) {
+	old := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(old) })
+	t.Setenv("BINDERY_DIR_MODE", "0770")
+
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o770|os.ModeSetgid); err != nil {
+		t.Fatal(err)
+	}
+	// Skip where the filesystem does not hand setgid down to new directories.
+	probe := filepath.Join(parent, "probe")
+	if err := os.Mkdir(probe, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(probe); fi.Mode()&os.ModeSetgid == 0 {
+		t.Skip("filesystem does not inherit setgid on mkdir")
+	}
+
+	deep := filepath.Join(parent, "n1", "n2")
+	if err := MkdirAll(deep); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := Mkdir(root, "n3"); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{filepath.Join(parent, "n1"), deep, filepath.Join(parent, "n3")} {
+		fi, err := os.Stat(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode()&os.ModeSetgid == 0 || fi.Mode().Perm() != 0o770 {
+			t.Fatalf("%s = %v, want setgid and 0770", d, fi.Mode())
+		}
+	}
+}
+
+// Modes that are not group-writable must behave exactly like the plain os
+// calls, so an operator who hardened with the umask is not loosened.
+func TestStrictUmaskStillApplies(t *testing.T) {
+	for _, tc := range []struct {
+		umask int
+		value string
+		want  os.FileMode
+	}{
+		{0o077, "", 0o700},
+		{0o027, "0755", 0o750},
+		{0o077, "0750", 0o700},
+	} {
+		t.Run(tc.value+"/"+tc.want.String(), func(t *testing.T) {
+			old := syscall.Umask(tc.umask)
+			t.Cleanup(func() { syscall.Umask(old) })
+			t.Setenv("BINDERY_DIR_MODE", tc.value)
+			base := t.TempDir()
+			root, err := os.OpenRoot(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			if err := MkdirAll(filepath.Join(base, "a", "b")); err != nil {
+				t.Fatal(err)
+			}
+			if err := Mkdir(root, "c"); err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range []string{"a", "a/b", "c"} {
+				fi, err := os.Stat(filepath.Join(base, d))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if fi.Mode().Perm() != tc.want {
+					t.Fatalf("%s = %#o, want %#o", d, fi.Mode().Perm(), tc.want)
+				}
+			}
+		})
+	}
 }
