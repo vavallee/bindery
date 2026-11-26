@@ -226,6 +226,18 @@ matches a release named `Path of the Deathless Book 1`, and the reverse.
   if one failed. Nothing more is sent to an indexer after a failure, and a rate
   limit on one of these queries puts the indexer in cooldown like any other.
   Spellings that would leave next to nothing (`It's` as `Its`) are not sent.
+- **Abbreviated volume markers.** A title such as `Under the Oak Tree (Novel),
+  Vol. 1` never matches an indexer that needs every query word in a release
+  named `Under the Oak Tree: Volume 1`, because `Vol` is not `Volume`. When a
+  search still has nothing relevant after everything above, Bindery sends ONE
+  more title only query per indexer with the marker spelled out (`Under the Oak
+  Tree, Volume 1`). `Vol` and `Vol.` become `Volume`, `Bk` becomes `Book` and
+  `Pt` becomes `Part`, and only when a digit follows, so `Volcano 1` and `Chapter
+  2` are left alone. A title that already says `Volume`, or has no marker, never
+  pays for it, and it counts against the daily query cap like any other query. It
+  shows in the debug panel's indexer row as `volumeMarkerQuery`, with
+  `volumeMarkerResults` and `volumeMarkerError`. The reverse direction (`Volume`
+  to `Vol.`) is not sent.
 - **Relevance.** A different position still does not match: `Book One` is not
   `Book 10`, `Book 2` or `Book Two`, and the part and set rules (`Book 1 of 2`,
   `Part 3 of 5`, box sets) judge a `Book One` title exactly as they judge `Book 1`.
