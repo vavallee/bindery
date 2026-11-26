@@ -258,7 +258,7 @@ func WriteOPFSidecarFile(dir string, roots []string, book *models.Book, author *
 	if err != nil {
 		return fmt.Errorf("opfsidecar: build xml: %w", err)
 	}
-	if err := os.MkdirAll(target, dirperm.Library()); err != nil {
+	if err := dirperm.MkdirAll(target); err != nil {
 		return fmt.Errorf("opfsidecar: create dir %q: %w", target, err)
 	}
 	dest := filepath.Join(target, opfSidecarFileName)

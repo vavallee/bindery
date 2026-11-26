@@ -120,7 +120,7 @@ func (c *Config) Validate(logger *slog.Logger) error {
 	if raw := os.Getenv("BINDERY_DIR_MODE"); strings.TrimSpace(raw) != "" && !dirperm.Valid(raw) {
 		logger.Warn("config: BINDERY_DIR_MODE has an unrecognised value, importer-created library directories keep the 0750 default",
 			"provided", raw,
-			"accepted", "0700, 0750, 0755 (leading zero optional)")
+			"accepted", "0700, 0750, 0755, 0770, 0775 (leading zero optional)")
 	}
 
 	return nil

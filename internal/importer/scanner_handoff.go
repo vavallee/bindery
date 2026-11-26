@@ -829,7 +829,7 @@ func (s *Scanner) dropPlaceEbook(ctx context.Context, bookID int64, folder, dest
 	if err != nil || !filepath.IsLocal(rel) {
 		return "", fmt.Errorf("drop destination %q is outside the drop folder %q", dest, folder)
 	}
-	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(rel)), dirperm.Library()); err != nil {
+	if err := dirperm.MkdirAll(filepath.Join(root, filepath.Dir(rel))); err != nil {
 		return "", fmt.Errorf("create drop dir: %w", err)
 	}
 	ext := filepath.Ext(rel)
@@ -903,7 +903,7 @@ func dropCreateFile(ctx context.Context, src, dst, linkMode string) error {
 // deterministic. Only audiobooks use it, inside a folder of their own (see
 // UniqueDir). Ebooks share the drop folder and go through dropPlaceEbook.
 func dropPlaceFile(ctx context.Context, src, dst, linkMode string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), dirperm.Library()); err != nil {
+	if err := dirperm.MkdirAll(filepath.Dir(dst)); err != nil {
 		return fmt.Errorf("create drop dir: %w", err)
 	}
 	if _, err := os.Lstat(dst); err == nil {
@@ -952,7 +952,7 @@ func (s *Scanner) dropPlaceAudiobook(ctx context.Context, downloadPath string, b
 		if err := checkPerFileCollisions(destDir, bookFiles); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(destDir, dirperm.Library()); err != nil {
+		if err := dirperm.MkdirAll(destDir); err != nil {
 			return fmt.Errorf("create drop dir: %w", err)
 		}
 		placed := make([]string, 0, len(bookFiles))
