@@ -53,6 +53,7 @@ type releaseTag struct {
 	joinNext bool
 	group    int
 	afterAnd bool
+	cap      bool // the word began with a capital letter in the release name
 }
 
 // tagWords splits s into folded words. Apostrophes stay inside a word ("Ender's"
@@ -69,6 +70,7 @@ func tagWords(s string) []releaseTag {
 		if len(run) == 0 {
 			return
 		}
+		isCap := unicode.IsUpper(run[0])
 		words := strings.Fields(textutil.FoldForTitleMatch(string(run)))
 		run = run[:0]
 		for _, w := range words {
@@ -76,7 +78,7 @@ func tagWords(s string) []releaseTag {
 				andSeen = true
 				continue
 			}
-			out = append(out, releaseTag{w: w, group: cur, afterAnd: andSeen})
+			out = append(out, releaseTag{w: w, group: cur, afterAnd: andSeen, cap: isCap})
 			andSeen = false
 		}
 	}
@@ -268,64 +270,102 @@ func phraseSpan(tokens, phrase []string, from int) (int, int) {
 }
 
 // creditWords introduce a credit ("narrated by Travis Baldree", "with ...").
-// The words that follow are names, whatever they are, until the name stops.
 var creditWords = map[string]bool{
 	"narrated": true, "narrator": true, "narrators": true, "read": true, "performed": true,
 	"performer": true, "with": true, "featuring": true, "feat": true, "ft": true,
 }
 
-// bracketLanguages are languages, as words and ISO tags, that refuse a release
-// when they appear in a bracketed segment. English is not among them.
-var bracketLanguages = map[string]bool{
-	"german": true, "deutsch": true, "french": true, "francais": true, "spanish": true, "espanol": true,
-	"italian": true, "italiano": true, "dutch": true, "nederlands": true, "russian": true, "japanese": true,
-	"chinese": true, "portuguese": true, "polish": true, "swedish": true, "danish": true, "norwegian": true,
-	"finnish": true, "czech": true, "korean": true, "turkish": true, "hungarian": true, "latin": true,
-	"de": true, "ger": true, "deu": true, "fr": true, "fre": true, "fra": true, "es": true, "spa": true,
-	"it": true, "ita": true, "nl": true, "dut": true, "ru": true, "rus": true, "ja": true, "jpn": true,
-	"zh": true, "chi": true, "pt": true, "por": true, "pl": true, "pol": true, "sv": true, "swe": true,
+// bracketVocabulary is every word a [..] or (..) segment after the subtitle may
+// hold. It is an allowlist on purpose: accepting an unknown bracket costs a wrong
+// book (a "[Sequel]", "[Companion]" or "[Study Guide]" is another product that
+// holds the same title words), refusing one costs a missed grab, and a missed
+// grab can still be made by hand. A segment is accepted only when EVERY word of
+// it is here, or is a year, a duration ("12h", "30m") or a bitrate ("64 kbps").
+//
+// "unabridged" is in and "abridged" is not: the second is a different product.
+// Languages other than English are not in, nor is any word that names a
+// position, an omnibus or another title.
+var bracketVocabulary = map[string]bool{
+	// Formats.
+	"m4b": true, "m4a": true, "mp3": true, "mp4": true, "flac": true, "aac": true, "ogg": true, "opus": true,
+	"epub": true, "mobi": true, "azw": true, "azw3": true, "kepub": true, "pdf": true, "kbps": true,
+	"audiobook": true, "ebook": true, "unabridged": true, "retail": true, "complete": true,
+	// Seller and language.
+	"audible": true, "english": true, "eng": true, "en": true, "us": true, "uk": true,
+	// A few audiobook publishers; see bracketFollowers for the word after one.
+	"podium": true, "tantor": true, "blackstone": true, "brilliance": true, "recorded": true,
+	// Genre tags.
+	"litrpg": true, "gamelit": true, "progression": true, "fantasy": true, "sci": true, "fi": true,
+	"cultivation": true, "aud": true,
 }
 
-var positionMarkers = map[string]bool{
-	"book": true, "books": true, "bk": true, "vol": true, "vols": true, "volume": true, "volumes": true,
-	"part": true, "parts": true, "pt": true,
+// bracketFollowers are words that are in a bracket only right after one of the
+// listed words: "Podium Audio", "Recorded Books", "Tantor Audio", "Aud. Book".
+var bracketFollowers = map[string][]string{
+	"audio": {"podium", "tantor", "blackstone", "brilliance", "recorded"}, "audiobooks": {"podium", "tantor", "blackstone", "brilliance", "recorded"},
+	"publishing": {"podium", "tantor", "blackstone", "brilliance", "recorded"}, "press": {"podium", "tantor", "blackstone", "brilliance", "recorded"},
+	"books": {"recorded"}, "book": {"aud"},
 }
 
-// carriesPosition reports whether the words hold a series or position marker: a
-// book, volume or part word followed by a number or number word, an omnibus or
-// trilogy, or a box set.
-func carriesPosition(words []string) bool {
+var durationRe = regexp.MustCompile(`^\d{1,3}(h|hr|hrs|m|min|mins)$`)
+
+// bracketAllowed reports whether every word of a bracketed segment is in the
+// vocabulary.
+func bracketAllowed(words []string) bool {
 	for i, w := range words {
-		switch w {
-		case "omnibus", "trilogy", "duology", "quartet":
-			return true
-		case "box":
-			if i+1 < len(words) && words[i+1] == "set" {
-				return true
-			}
+		switch {
+		case bracketVocabulary[w], yearRe.MatchString(w), durationRe.MatchString(w), bitrateRe.MatchString(w):
+		case isAllDigits(w) && i+1 < len(words) && words[i+1] == "kbps":
+		case i > 0 && followsAny(w, words[i-1]):
+		default:
+			return false
 		}
-		if positionMarkers[w] && i+1 < len(words) {
-			n := words[i+1]
-			if _, ok := numberWords[n]; ok || isAllDigits(n) {
-				return true
-			}
+	}
+	return true
+}
+
+func followsAny(w, prev string) bool {
+	for _, p := range bracketFollowers[w] {
+		if p == prev {
+			return true
 		}
 	}
 	return false
 }
 
-// bracketRefused reports whether a bracketed segment names another book, a
-// position or a language other than English.
-func bracketRefused(words []string) bool {
-	if carriesPosition(words) {
-		return true
+// creditStop are words a credited name does not hold.
+var creditStop = map[string]bool{"the": true, "of": true, "a": true, "an": true, "in": true, "on": true, "to": true}
+
+// creditParticles are lowercase parts of a name.
+var creditParticles = map[string]bool{
+	"van": true, "von": true, "de": true, "la": true, "del": true, "der": true, "bin": true,
+	"jr": true, "sr": true, "ii": true, "iii": true,
+}
+
+// creditName reports whether the unbracketed words that end a release name are
+// one credited person: two to four words, each capitalised or a name particle,
+// none a stop word or holding a digit. One word is refused ("with Dragons"). A
+// name cannot be told apart from a two word title fragment ("and Rising Storm"),
+// so such a fragment still passes this step; the author check and the relevance
+// filter that runs afterwards are what judge it.
+func creditName(toks []releaseTag) bool {
+	if len(toks) < 2 || len(toks) > 4 {
+		return false
 	}
-	for _, w := range words {
-		if bracketLanguages[w] {
-			return true
+	caps := 0
+	for _, t := range toks {
+		if creditStop[t.w] || strings.ContainsFunc(t.w, unicode.IsDigit) {
+			return false
+		}
+		switch {
+		case creditParticles[t.w]:
+		case t.cap:
+			caps++
+		default:
+			return false
 		}
 	}
-	return false
+	return caps >= 1
 }
 
 // subtitleOnlyAccepts reports whether a result from the subtitle only query is
@@ -390,27 +430,49 @@ func subtitleOnlyAccepts(p subtitleOnlyPlan, r SearchResult) bool {
 		}
 	}
 	for _, gw := range groupWords {
-		if bracketRefused(gw) {
+		if !bracketAllowed(gw) {
 			return false
 		}
 	}
-	names := false
+	surnameWords := map[string]bool{}
+	for _, t := range tagWords(p.Surname) {
+		surnameWords[t.w] = true
+	}
+	attrAuthor := false
+	if s0, _ := phraseSpan(tagStrings(tagWords(r.Author)), tagStrings(tagWords(p.Surname)), 0); s0 >= 0 {
+		attrAuthor = true
+	}
+	authorSeen := attrAuthor
+	for _, w := range words[:start] {
+		if surnameWords[w] {
+			authorSeen = true
+		}
+	}
 	for i := end; i < len(rel); i++ {
 		t := rel[i]
 		if t.group > 0 {
 			continue
 		}
 		switch {
-		case names:
-			// Names of a credit: anything but a number or a position word.
-			if isAllDigits(t.w) || positionMarkers[t.w] || carriesPosition([]string{t.w}) {
-				return false
+		case authorSeen && (creditWords[t.w] || t.afterAnd):
+			from := i
+			if !t.afterAnd {
+				from = i + 1
+				if from < len(rel) && rel[from].w == "by" {
+					from++
+				}
 			}
-		case creditWords[t.w]:
-			names = true
-		case t.afterAnd:
-			names = true
+			var name []releaseTag
+			for _, n := range rel[from:] {
+				if n.group == 0 {
+					name = append(name, n)
+				}
+			}
+			return creditName(name)
 		case plain(t.w):
+			if surnameWords[t.w] {
+				authorSeen = true
+			}
 		case isAllDigits(t.w) && len(t.w) >= 2 && len(t.w) <= 3 && i+1 < len(rel) && rel[i+1].w == "kbps":
 		default:
 			return false

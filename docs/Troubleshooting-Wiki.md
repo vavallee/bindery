@@ -286,16 +286,23 @@ matches a release named `Path of the Deathless Book 1`, and the reverse.
   - Before the subtitle there is only the author's name, `by` or a language or
     format tag (`ENG`, `M4B`, `epub`, a year); a leading `The` is allowed when the
     subtitle starts with it.
-  - After it, outside brackets, there is the author's name, `by`, a tag, or a
-    credit: `narrated by`, `read by`, `performed by`, `with`, or `and` or `&` after
-    the author's name, plus the names that follow. Any other word or a number
+  - After it, outside brackets, there is the author's name, `by`, a tag, or, once
+    the author's name has been seen, a credit that ends the name: `narrated by`,
+    `read by`, `performed by`, `with`, or `and` or `&`, followed by two to four
+    capitalised name words (`van`, `von`, `de`, `la`, `del`, `der`, `bin`, `Jr`
+    and the like may be lowercase), with no stop word (`the`, `of`, `a`...) and no
+    digit. One word (`with Dragons`) is refused. Any other word or a number
     refuses the release.
-  - After it, a `[...]` or `(...)` segment may say anything (`[Audible]`, `[Podium
-    Audio]`, `[LitRPG]`, `[Complete]`, `(Audiobook)`, `[12h 30m]`), unless it
-    carries a position (`Book`, `Vol` or `Part` followed by a number, `Books
-    1-3`), `Omnibus`, `Trilogy`, `Box Set`, or a language other than English
-    (`German`, `[FR]`). `[Vol. 1]` is refused as a position marker, which is a
-    known limit.
+  - After it, a `[...]` or `(...)` segment is accepted only when EVERY word in it
+    is a known tag: a format (`M4B`, `MP3`, `epub`, `PDF`...), `audiobook`,
+    `ebook`, `unabridged`, `retail`, `complete`, `Audible`, `English`, `ENG`, `US`,
+    `UK`, a year, a duration (`12h 30m`), a bitrate (`64 kbps`), a publisher
+    (`Podium`, `Tantor`, `Blackstone`, `Brilliance`, `Recorded Books`, with `Audio`,
+    `Publishing` or `Press` after it) or a genre tag (`LitRPG`, `GameLit`,
+    `Progression Fantasy`, `Fantasy`, `Sci-Fi`, `Cultivation`). The list is closed
+    on purpose: accepting an unknown bracket costs a wrong book, refusing one costs
+    a missed grab you can still make by hand. `unabridged` is in, `abridged` is
+    not (a different product).
   - The author's surname is a whole word elsewhere in the name, or in the
     indexer's author attribute (`Lee-Smith` is not `Lee`).
 
@@ -306,13 +313,18 @@ matches a release named `Path of the Deathless Book 1`, and the reverse.
   [M4B]`, `Ryan Arelius - Will of Mana (Audiobook) [12h 30m]`. Refused: `Will of
   Mana by Jane Doe` (another author, the loose reading removed in #3268), `Will of
   Mana Rising`, `The Will of Mana Wars`, `Will of Mana 2`, `Will of Mana Companion
-  Guide`, `Ryan Arelius - Will of Mana (Other Saga Book 5)`, `Dragon Saga, Book 1
-  Will of Mana`, an omnibus, `Will of Mana (German)`. The usual relevance filter
-  still judges what is kept.
+  Guide`, `(Other Saga Book 5)`, `Dragon Saga, Book 1 Will of Mana`, an omnibus,
+  `(German)`, `[Vol. 1]`, `[Sequel]`, `[Companion]`, `[Prequel Novella]`, `[Study
+  Guide]`, `[Abridged]`, `(Graphic Novel)`, `(Movie Tie-In)`, `with Dragons`, `and
+  the Dragon Queen`. The usual relevance filter still judges what is kept.
 
   Known limits: a release that spells the position another way (`Fifth` for
   `5th`), writes an apostrophe as a space, names the author only by a non-Latin
-  alias, or carries `[Vol. 1]` is refused. A different author with the same first
+  alias, carries `[Vol. 1]` or a bracket with a publisher or tag not in the list,
+  or credits a narrator in lowercase scene style is refused. A credit such as `...
+  and Rising Storm` (two capitalised words) can still pass, because a name cannot
+  be told apart from a title fragment; the author check and the relevance filter
+  still judge it. A different author with the same first
   name and surname is not told apart. If the cascade already returned something
   that looks relevant (another book of the same series, say), this query is not
   sent.
