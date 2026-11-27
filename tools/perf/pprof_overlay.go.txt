@@ -1,0 +1,29 @@
+// This file is not part of the Bindery tree that ships. The performance
+// harness adds it to package main at build time with `go build -overlay`, so
+// the profiled binary is cmd/bindery plus this one listener and the released
+// binary never contains it. See docs/performance-testing.md.
+
+package main
+
+import (
+	"log/slog"
+	"net"
+	"net/http"
+	_ "net/http/pprof" //nolint:gosec // loopback only, harness build only
+	"os"
+	"time"
+)
+
+func init() {
+	addr := os.Getenv("BINDERY_PERF_PPROF_ADDR")
+	if addr == "" {
+		return
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
+		slog.Error("BINDERY_PERF_PPROF_ADDR must be a loopback address such as 127.0.0.1:6060; profiling listener not started", "addr", addr)
+		return
+	}
+	srv := &http.Server{Addr: addr, Handler: http.DefaultServeMux, ReadHeaderTimeout: 10 * time.Second}
+	go func() { _ = srv.ListenAndServe() }()
+}

@@ -1,4 +1,4 @@
-.PHONY: build dev test test-race test-web lint lint-go lint-web docker-push clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog licenses licenses-check go-version-check screenshots
+.PHONY: build dev test test-race test-web lint lint-go lint-web docker-push clean docker-build web-build web-dev help security helm-lint sbom smoke predeploy-smoke abs-contract check changelog licenses licenses-check go-version-check screenshots bench perf-quick perf-full
 
 # Pinned so local regeneration and the CI drift check classify licenses
 # identically — a classifier bump would otherwise look like dependency drift.
@@ -113,6 +113,28 @@ helm-lint: ## Lint Helm chart + run helm-unittest cases
 
 smoke: build ## Boot the real binary and exercise the critical golden paths via HTTP
 	go test -count=1 -timeout=60s ./tests/smoke/...
+
+# Performance. Nothing here writes inside the repository: seeds, the built
+# binary and results all go under PERF_DATA. See docs/performance-testing.md.
+PERF_DATA ?= $(or $(TMPDIR),/tmp)/bindery-perf
+BENCH_COUNT ?= 10
+BENCH ?= .
+BENCH_OUT ?= $(PERF_DATA)/bench/$(shell git rev-parse --short HEAD).txt
+BENCH_PKGS = $(shell grep -rl --include='*_test.go' '^func Benchmark' ./cmd ./internal ./tools | xargs -n1 dirname | sort -u)
+
+bench: ## Run every Go benchmark (benchstat input lands in BENCH_OUT)
+	@mkdir -p $(dir $(BENCH_OUT))
+	@go test -p 1 -run '^$$' -bench '$(BENCH)' -benchmem -count=$(BENCH_COUNT) -timeout=3h $(BENCH_PKGS) > $(BENCH_OUT).raw 2>&1 \
+	  || { tail -40 $(BENCH_OUT).raw; echo "benchmarks failed, full output in $(BENCH_OUT).raw"; exit 1; }
+	@# go test merges what the code under test logs into the benchmark lines. Cut the log lines out, newline included, so each result is one line again.
+	@perl -0pe 's{\d{4}/\d\d/\d\d \d\d:\d\d:\d\d (?:DEBUG|INFO|WARN|ERROR) [^\n]*\n}{}g' $(BENCH_OUT).raw > $(BENCH_OUT) && rm $(BENCH_OUT).raw
+	@echo "benchmarks written to $(BENCH_OUT); compare two files with: benchstat old.txt new.txt"
+
+perf-quick: ## Performance harness, every scenario once over lightly (about 5 minutes)
+	go run ./tools/perf run -mode quick -data $(PERF_DATA) $(PERF_ARGS)
+
+perf-full: ## Performance harness, full measurement at 1k, 10k and 40k books (about an hour)
+	go run ./tools/perf run -mode full -data $(PERF_DATA) $(PERF_ARGS)
 
 predeploy-smoke: ## Run pre-deploy smoke tests against a live instance (requires BINDERY_URL and BINDERY_API_KEY)
 	go test -v -count=1 -timeout=120s ./tests/predeploy/...
