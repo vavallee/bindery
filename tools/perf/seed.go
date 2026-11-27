@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -188,9 +189,9 @@ func epubBytes(title, author string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func xmlEscape(s string) string {
-	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
-}
+// xmlEscape escapes text for an XML document. html.EscapeString produces only
+// entities and numeric references that XML also defines.
+func xmlEscape(s string) string { return html.EscapeString(s) }
 
 // m4bBytes is an MPEG-4 file type box followed by an empty media data box. It
 // is a file named and shaped like an audiobook container with no audio in it,

@@ -123,7 +123,7 @@ func writeReleases(b *strings.Builder, name string, indexer int, query int64, ho
 		}
 		guid := fmt.Sprintf("perf-%d-%d-%d", indexer, query, j)
 		fmt.Fprintf(b, `<item><title>%s</title><guid isPermaLink="false">%s</guid><link>http://%s/dl/%s.torrent</link><pubDate>Mon, 02 Mar 2026 10:00:00 +0000</pubDate><size>%d</size><enclosure url="http://%s/dl/%s.torrent" length="%d" type="application/x-bittorrent"/><torznab:attr name="category" value="%d"/><torznab:attr name="seeders" value="%d"/><torznab:attr name="peers" value="%d"/></item>`,
-			xmlEscape(title), guid, host, guid, (j+1)<<20, host, guid, (j+1)<<20, cat, 3+j, 5+j)
+			xmlEscape(title), guid, xmlEscape(host), guid, (j+1)<<20, xmlEscape(host), guid, (j+1)<<20, cat, 3+j, 5+j)
 	}
 }
 
@@ -195,7 +195,9 @@ func (f *FakeQbittorrent) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 	switch r.URL.Path {
 	case "/api/v2/auth/login":
-		http.SetCookie(w, &http.Cookie{Name: "SID", Value: "perf-session", Path: "/"})
+		// Not marked Secure: the fake speaks plain HTTP on loopback, and a
+		// client would not send a Secure cookie back over it.
+		w.Header().Set("Set-Cookie", "SID=perf-session; Path=/; HttpOnly")
 		_, _ = w.Write([]byte("Ok."))
 	case "/api/v2/app/version":
 		_, _ = w.Write([]byte("v5.0.0"))
