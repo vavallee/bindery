@@ -18,11 +18,12 @@ type bookRef struct {
 	AuthorName string `json:"authorName"`
 }
 
-// loadBookRefs dedupes and drops zero/negative ids, batch-loads the matching
-// books (each with its Author projection via BookRepo.GetByIDs), and returns a
-// lookup of book id -> bookRef. Books that no longer exist (deleted) are simply
-// absent from the map. Best-effort by contract: on a query error it returns an
-// empty map plus the error so callers can still render rows without links.
+// loadBookRefs dedupes and drops zero/negative ids, batch-loads the title and
+// author of the matching books (BookRepo.RefsByIDs, which reads only those
+// columns), and returns a lookup of book id -> bookRef. Books that no longer
+// exist (deleted) are simply absent from the map. Best-effort by contract: on a
+// query error it returns an empty map plus the error so callers can still
+// render rows without links.
 func loadBookRefs(ctx context.Context, books *db.BookRepo, ids []int64) (map[int64]*bookRef, error) {
 	uniq := make([]int64, 0, len(ids))
 	seen := make(map[int64]struct{}, len(ids))
@@ -40,16 +41,12 @@ func loadBookRefs(ctx context.Context, books *db.BookRepo, ids []int64) (map[int
 	if len(uniq) == 0 {
 		return refs, nil
 	}
-	loaded, err := books.GetByIDs(ctx, uniq)
+	loaded, err := books.RefsByIDs(ctx, uniq)
 	if err != nil {
 		return refs, err
 	}
 	for id, b := range loaded {
-		ref := &bookRef{ID: b.ID, Title: b.Title, AuthorID: b.AuthorID}
-		if b.Author != nil {
-			ref.AuthorName = b.Author.Name
-		}
-		refs[id] = ref
+		refs[id] = &bookRef{ID: b.ID, Title: b.Title, AuthorID: b.AuthorID, AuthorName: b.AuthorName}
 	}
 	return refs, nil
 }

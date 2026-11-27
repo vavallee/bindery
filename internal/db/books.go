@@ -738,6 +738,62 @@ func (r *BookRepo) GetByIDs(ctx context.Context, ids []int64) (map[int64]*models
 	return out, nil
 }
 
+// BookRef is the part of a book a list row links to: its id and title and its
+// author's id and name. See BookRepo.RefsByIDs.
+type BookRef struct {
+	ID         int64
+	Title      string
+	AuthorID   int64
+	AuthorName string
+}
+
+// bookRefsChunk is how many ids one RefsByIDs statement names, well under
+// SQLite's bound parameter limit.
+const bookRefsChunk = 500
+
+// RefsByIDs returns the title and author of each book in ids, keyed by book
+// id. It is GetByIDs for a caller that only links to the book: four columns
+// instead of the whole row, and none of the file path subqueries bookColumns
+// runs per book. The queue endpoint asks for one ref per listed download on
+// every 5 second poll, and loading whole books for that was half its cost.
+//
+// Unscoped like GetByIDs. An id with no row is absent from the map, repeated
+// ids are answered once, and a book whose author row is gone keeps its
+// author_id with an empty name, which is what GetByIDs yields for it.
+func (r *BookRepo) RefsByIDs(ctx context.Context, ids []int64) (map[int64]BookRef, error) {
+	out := make(map[int64]BookRef, len(ids))
+	for start := 0; start < len(ids); start += bookRefsChunk {
+		chunk := ids[start:min(start+bookRefsChunk, len(ids))]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		if err := r.refsChunk(ctx, args, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (r *BookRepo) refsChunk(ctx context.Context, args []any, out map[int64]BookRef) error {
+	//nolint:gosec // G202: the statement is fixed text plus generated ? placeholders; every id is bound via args
+	q := "SELECT books.id, books.title, books.author_id, COALESCE(au.name, '') FROM books " + bookJoins +
+		" WHERE books.id IN (?" + strings.Repeat(",?", len(args)-1) + ")"
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return fmt.Errorf("book refs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ref BookRef
+		if err := rows.Scan(&ref.ID, &ref.Title, &ref.AuthorID, &ref.AuthorName); err != nil {
+			return fmt.Errorf("scan book ref: %w", err)
+		}
+		out[ref.ID] = ref
+	}
+	return rows.Err()
+}
+
 // GetByForeignIDs loads the books with the given foreign ids in one query,
 // unscoped like GetByForeignID, keyed by foreign id. Blank and repeated ids are
 // ignored and ids with no row are absent. It lets a page of requests be checked
