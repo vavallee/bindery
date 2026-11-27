@@ -54,10 +54,39 @@ func (r *DownloadRepo) ListByUser(ctx context.Context, userID int64) ([]models.D
 	return r.query(ctx, q, args...)
 }
 
-// activeWhere selects the rows the queue view shows: every row except an
-// imported one that finished before the bound time. Its two arguments are the
-// imported state and that time. See ListActive.
-const activeWhere = "WHERE (status <> ? OR COALESCE(imported_at, completed_at, added_at) >= ?)"
+// The queue view's list is two selects joined by UNION ALL, one per kind of
+// row it shows, so that each can use its own index (migration 138) and neither
+// reads an import that is too old to list:
+//
+//   - activeOpenSelect: every row that is not imported, however old. The state
+//     is written into the SQL rather than bound because SQLite only uses the
+//     partial index idx_downloads_not_imported when the query repeats the
+//     index's own predicate.
+//   - activeRecentSelect: imported rows that finished at or after the bound
+//     time, found through idx_downloads_status_finished. The COALESCE must stay
+//     identical to the one in that index.
+//
+// As one statement with an OR between the two conditions, SQLite walked
+// idx_downloads_added_at and fetched every row of the table to test it.
+// TestActiveQueueSelectsMatchStateImported pins the literal to
+// models.StateImported.
+const (
+	activeOpenSelect   = "SELECT " + downloadSelectColumns + " FROM downloads WHERE status <> 'imported'"
+	activeRecentSelect = "SELECT " + downloadSelectColumns + " FROM downloads WHERE status = 'imported'" +
+		" AND COALESCE(imported_at, completed_at, added_at) >= ?"
+)
+
+// activeQuery builds the queue view's statement and its arguments. userID 0
+// lists every owner's rows; any other value adds QueryScope's strict owner
+// equality to both selects. Rows come back newest first, and rows added at the
+// same instant highest id first, which is the order the single index walk this
+// replaced produced.
+func activeQuery(userID int64, importedSince time.Time) (string, []any) {
+	open, openArgs := QueryScope(activeOpenSelect, userID)
+	recent, recentArgs := QueryScope(activeRecentSelect, userID, importedSince.UTC())
+	return "SELECT * FROM (" + open + " UNION ALL " + recent + ") ORDER BY added_at DESC, id DESC",
+		append(openArgs, recentArgs...)
+}
 
 // ListActive returns the downloads the queue view shows, newest first: every
 // row EXCEPT an imported one that finished before importedSince.
@@ -75,18 +104,19 @@ const activeWhere = "WHERE (status <> ? OR COALESCE(imported_at, completed_at, a
 // then added_at for a row written before imported_at was stamped.
 //
 // It exists so the queue endpoint, which the UI polls every 5 seconds, does not
-// load and serialise the whole table on every request. The table gains a row
-// per grab and nothing removed old ones before TrimTerminal.
+// load and serialise the whole table on every request, and since migration 138
+// does not read the hidden rows either. The table gains a row per grab and
+// nothing removed old ones before TrimTerminal.
 func (r *DownloadRepo) ListActive(ctx context.Context, importedSince time.Time) ([]models.Download, error) {
-	return r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads "+activeWhere+" ORDER BY added_at DESC",
-		models.StateImported, importedSince.UTC())
+	q, args := activeQuery(0, importedSince)
+	return r.query(ctx, q, args...)
 }
 
 // ListActiveByUser is ListActive scoped to one owner with the strict equality
 // ListByUser uses.
 func (r *DownloadRepo) ListActiveByUser(ctx context.Context, userID int64, importedSince time.Time) ([]models.Download, error) {
-	where, args := QueryScope(activeWhere, userID, models.StateImported, importedSince.UTC())
-	return r.query(ctx, "SELECT "+downloadSelectColumns+" FROM downloads "+where+" ORDER BY added_at DESC", args...)
+	q, args := activeQuery(userID, importedSince)
+	return r.query(ctx, q, args...)
 }
 
 // ListByNzoIDs returns the downloads whose sabnzbd_nzo_id is one of ids, keyed
