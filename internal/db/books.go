@@ -707,6 +707,7 @@ func (r *BookRepo) RefsByIDs(ctx context.Context, ids []int64) (map[int64]BookRe
 }
 
 func (r *BookRepo) refsChunk(ctx context.Context, args []any, out map[int64]BookRef) error {
+	//nolint:gosec // G202: the statement is fixed text plus generated ? placeholders; every id is bound via args
 	q := "SELECT books.id, books.title, books.author_id, COALESCE(au.name, '') FROM books " + bookJoins +
 		" WHERE books.id IN (?" + strings.Repeat(",?", len(args)-1) + ")"
 	rows, err := r.db.QueryContext(ctx, q, args...)
