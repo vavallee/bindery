@@ -293,7 +293,9 @@ func itemFileCandidates(item NormalizedLibraryItem) []string {
 //   - Author. The book's author must be the item's author: the same row, or a
 //     name that MatchAuthorName auto matches. "Chapterhouse: Dune" by Brian
 //     Herbert is not claimed by an item that credits Frank Herbert, whatever
-//     file both point at. The caller keeps the book's own author and title.
+//     file both point at. Any other credited author counts as the item's
+//     author too, on an exact match only (#4189). The caller keeps the
+//     book's own author and title.
 func (i *Importer) findBookByItemFiles(ctx context.Context, cfg ImportConfig, author *models.Author, item NormalizedLibraryItem) (*models.Book, *models.Author, error) {
 	if i.books == nil || i.authors == nil || author == nil {
 		return nil, nil, nil
@@ -328,6 +330,14 @@ func (i *Importer) findBookByItemFiles(ctx context.Context, cfg ImportConfig, au
 		}
 		switch textutil.MatchAuthorName(author.Name, bookAuthor.Name).Kind {
 		case textutil.AuthorMatchExact, textutil.AuthorMatchFuzzyAuto:
+			return book, bookAuthor, nil
+		}
+		// Another credited author holds the book (#4189): conflictingTrackedBook
+		// lets such an item through, so link it here instead of creating a
+		// second, wanted book that could never take the file.
+		if credited, err := i.creditedAuthorHolds(ctx, item, nil, bookAuthor); err != nil {
+			return nil, nil, err
+		} else if credited {
 			return book, bookAuthor, nil
 		}
 	}
@@ -423,11 +433,59 @@ func (i *Importer) conflictingTrackedBook(ctx context.Context, cfg ImportConfig,
 		if foreignIDAuthor != nil && foreignIDAuthor.ID == book.AuthorID {
 			return nil, nil, nil
 		}
+		// Any other credited author counts too (#4189): a co-authored or
+		// anthology item names every contributor, and Bindery files the book
+		// under one of them. Exact only, never the fuzzy tiers.
+		if credited, err := i.creditedAuthorHolds(ctx, item, matcher, bookAuthor); err != nil {
+			return nil, nil, err
+		} else if credited {
+			return nil, nil, nil
+		}
 		if firstConflictBook == nil {
 			firstConflictBook, firstConflictAuthor = book, bookAuthor
 		}
 	}
 	return firstConflictBook, firstConflictAuthor, nil
+}
+
+// creditedAuthorHolds reports whether one of the item's credited authors
+// after the first is the person bookAuthor names (#4189). The first author is
+// the caller's own check. A credited author counts only on an exact match:
+// the same spelling after textutil.MatchAuthorName's exact normalisation
+// (initials, suffixes, a signposted last-first swap), a trusted alias or name
+// resolved by matcher through its exact tiers, or the stable foreign id.
+// Fuzzy matches never count, so "Heather Gray" does not stand in for "Heather
+// Graham". Callers keep their own owner guard; this decides authorship only.
+func (i *Importer) creditedAuthorHolds(ctx context.Context, item NormalizedLibraryItem, matcher *authorMatcher, bookAuthor *models.Author) (bool, error) {
+	for idx, credited := range item.Authors {
+		if idx == 0 {
+			continue
+		}
+		name := strings.TrimSpace(credited.Name)
+		if name != "" && textutil.MatchAuthorName(name, bookAuthor.Name).Kind == textutil.AuthorMatchExact {
+			return true, nil
+		}
+		if name != "" && matcher != nil {
+			resolved, matchedBy, _, err := matcher.findAuthorByName(ctx, name)
+			if err != nil {
+				return false, err
+			}
+			if resolved != nil && resolved.ID == bookAuthor.ID {
+				switch matchedBy {
+				case "name", "alias", "normalized_name", "normalized_alias":
+					return true, nil
+				}
+			}
+		}
+		existing, err := i.authors.GetByAnyForeignID(ctx, absForeignID("author", item.LibraryID, authorExternalID(credited)))
+		if err != nil {
+			return false, err
+		}
+		if existing != nil && existing.ID == bookAuthor.ID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (i *Importer) remapABSPath(cfg ImportConfig, candidatePath string) string {
