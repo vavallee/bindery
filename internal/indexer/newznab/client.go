@@ -436,6 +436,16 @@ type SearchTrace struct {
 	// or none was sent. No further spelling is sent after a failure. A rate
 	// limit or an auth rejection is also returned as the search's error.
 	ApostropheError string
+	// VolumeMarkerQuery is the title with its abbreviated volume marker spelled
+	// out ("... Volume 1") when that one extra query was sent (#4176), empty
+	// when it was not.
+	VolumeMarkerQuery string
+	// VolumeMarkerResults is how many results that query returned.
+	VolumeMarkerResults int
+	// VolumeMarkerError is why that query failed, empty when it succeeded or
+	// was not sent. A rate limit or an auth rejection is also returned as the
+	// search's error.
+	VolumeMarkerError string
 }
 
 // BookSearchTraced is BookSearch plus a SearchTrace.
@@ -458,7 +468,83 @@ func (c *Client) BookSearchTraced(ctx context.Context, title, author string, cat
 	if relevant {
 		return results, trace, nil
 	}
-	return c.apostropheVariants(ctx, title, results, categories, trace)
+	results, trace, err = c.apostropheVariants(ctx, title, results, categories, trace)
+	if err != nil || trace.ApostropheResults > 0 {
+		return results, trace, err
+	}
+	return c.volumeMarkerVariant(ctx, title, results, categories, trace)
+}
+
+// volumeMarkerRe finds an abbreviated volume style marker directly followed by
+// a number: "Vol. 1", "Vol 2", "Bk 3", "Pt. 4". The number is required, and so
+// is the word boundary before the marker, so "Volcano 1", "Volk 2", "Chapter 2"
+// and a bare "Pt" are left alone. "Pt" is also the Portuguese language tag,
+// which is why the matching side does not treat it as "part" (see
+// volumeMarkers); here it only becomes "Part" next to a digit.
+var volumeMarkerRe = regexp.MustCompile(`(?i)\b(vol|bk|pt)\b\.?\s*(\d)`)
+
+var volumeMarkerWords = map[string]string{"vol": "Volume", "bk": "Book", "pt": "Part"}
+
+// spellOutVolumeMarkers writes an abbreviated marker out ("Vol. 1" as "Volume
+// 1"). It returns "" when the title has nothing to spell out, so a title that
+// already says "Volume" or carries no marker never earns a variant.
+func spellOutVolumeMarkers(title string) string {
+	out := volumeMarkerRe.ReplaceAllStringFunc(title, func(m string) string {
+		sub := volumeMarkerRe.FindStringSubmatch(m)
+		return volumeMarkerWords[strings.ToLower(sub[1])] + " " + sub[2]
+	})
+	if out == title {
+		return ""
+	}
+	return out
+}
+
+// volumeMarkerVariant is the volume marker fallback (#4176). A metadata title
+// that abbreviates its marker ("Under the Oak Tree (Novel), Vol. 1") never
+// finds a release named "Volume 1" on an indexer that requires every query word
+// in the release name, because every tier and every earlier fallback keeps
+// "Vol.". Like the number word (#3476) and apostrophe (#3895) fallbacks it is
+// sent only after all of them have ended without a relevant result, title only,
+// one query per indexer, through the same query budget, so a search that was
+// finding its book pays nothing. Nothing is sent after an earlier fallback
+// failed or hit the daily cap, since that applies to this query too.
+//
+// Only the abbreviated to spelled out direction exists. The reverse ("Volume 1"
+// to "Vol. 1") would add a query to every failing search of the much more common
+// spelled out title, with no report of an indexer that needs it.
+//
+// Errors are handled as in apostropheVariants: a rate limit or an auth
+// rejection is returned as the search's error, anything else is recorded on the
+// trace and the search carries on with the results in hand.
+func (c *Client) volumeMarkerVariant(ctx context.Context, title string, results []SearchResult, categories []int, trace SearchTrace) ([]SearchResult, SearchTrace, error) {
+	origTitle := primaryTitleForQuery(title)
+	spelled := spellOutVolumeMarkers(origTitle)
+	if spelled == "" || trace.BudgetExhausted || trace.NumberWordError != "" || trace.ApostropheError != "" || ctx.Err() != nil {
+		return results, trace, nil
+	}
+	if len(results) > 0 && titleHasRelevantResult(TransliterateQuery(origTitle), results) {
+		return results, trace, nil
+	}
+	query := TransliterateQuery(spelled)
+	slog.Debug("indexer query volume marker variant", "title", query)
+	trace.VolumeMarkerQuery = query
+	extra, err := c.Search(ctx, query, categories)
+	if err != nil {
+		slog.Debug("indexer query volume marker variant failed", "error", err)
+		trace.VolumeMarkerError = err.Error()
+		if errors.Is(err, ErrQueryBudgetExhausted) {
+			trace.BudgetExhausted = true
+		}
+		if IsHardIndexerError(err) {
+			return nil, trace, err
+		}
+		return results, trace, nil
+	}
+	trace.VolumeMarkerResults = len(extra)
+	if len(extra) > 0 && titleHasRelevantResult(query, extra) {
+		return extra, trace, nil
+	}
+	return results, trace, nil
 }
 
 // possessiveSRe matches the possessive "'s" ending a word. In the spaced
@@ -898,8 +984,14 @@ func StripFormatQualifiers(title string) string {
 	if !strings.Contains(title, "(") {
 		return title
 	}
-	return strings.Join(strings.Fields(formatQualifierRe.ReplaceAllString(title, " ")), " ")
+	out := strings.Join(strings.Fields(formatQualifierRe.ReplaceAllString(title, " ")), " ")
+	// Removing "(Novel)" from "Tree (Novel), Vol. 1" left "Tree , Vol. 1", a
+	// stray space that went out in every query (#4176).
+	return spaceBeforeCommaRe.ReplaceAllString(out, ",")
 }
+
+// spaceBeforeCommaRe is the gap a removed qualifier leaves before a comma.
+var spaceBeforeCommaRe = regexp.MustCompile(`\s+,`)
 
 // parenSuffixRe matches a trailing parenthesised qualifier used by metadata
 // providers to distinguish editions of the same work, e.g. "(German Edition)",

@@ -133,6 +133,14 @@ type IndexerDebug struct {
 	// limit is also the row's Error, since it fails the search for this
 	// indexer.
 	ApostropheError string `json:"apostropheError,omitempty"`
+	// VolumeMarkerQuery is the title with its abbreviated volume marker spelled
+	// out, sent as one extra query after the search found nothing relevant
+	// (#4176), and VolumeMarkerResults how many results it returned. Empty on
+	// the common search.
+	VolumeMarkerQuery   string `json:"volumeMarkerQuery,omitempty"`
+	VolumeMarkerResults int    `json:"volumeMarkerResults,omitempty"`
+	// VolumeMarkerError is why that query failed, if it did.
+	VolumeMarkerError string `json:"volumeMarkerError,omitempty"`
 }
 
 // PipelineDebug counts how results flowed through each filter stage in the
@@ -243,6 +251,8 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			entry.NumberWordError = trace.NumberWordError
 			entry.ApostropheQueries, entry.ApostropheResults = trace.ApostropheQueries, trace.ApostropheResults
 			entry.ApostropheError = trace.ApostropheError
+			entry.VolumeMarkerQuery, entry.VolumeMarkerResults = trace.VolumeMarkerQuery, trace.VolumeMarkerResults
+			entry.VolumeMarkerError = trace.VolumeMarkerError
 			if trace.BudgetExhausted {
 				s.flushQuota(ctx, idx, true)
 			}
