@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,20 +18,6 @@ type fakeBooks struct {
 	all []models.Book
 }
 
-func (f *fakeBooks) List(_ context.Context) ([]models.Book, error) {
-	out := make([]models.Book, len(f.all))
-	copy(out, f.all)
-	return out, nil
-}
-func (f *fakeBooks) ListByUser(_ context.Context, userID int64) ([]models.Book, error) {
-	var out []models.Book
-	for _, b := range f.all {
-		if b.OwnerUserID == 0 || b.OwnerUserID == userID {
-			out = append(out, b)
-		}
-	}
-	return out, nil
-}
 func (f *fakeBooks) ListByAuthor(_ context.Context, authorID int64) ([]models.Book, error) {
 	var out []models.Book
 	for _, b := range f.all {
@@ -53,27 +40,27 @@ func (f *fakeBooks) ListByAuthorAndUser(_ context.Context, authorID, userID int6
 	}
 	return out, nil
 }
-func (f *fakeBooks) ListByStatus(_ context.Context, status string) ([]models.Book, error) {
+
+// ListRecentDownloadable mirrors the real store: imported books with a file,
+// newest first with the higher id winning a tie, scoped, trimmed to limit.
+func (f *fakeBooks) ListRecentDownloadable(_ context.Context, userID int64, limit int) ([]models.Book, error) {
 	var out []models.Book
 	for _, b := range f.all {
-		if b.Status == status {
-			out = append(out, b)
-		}
-	}
-	return out, nil
-}
-func (f *fakeBooks) ListByStatusAndUser(_ context.Context, status string, userID int64) ([]models.Book, error) {
-	var out []models.Book
-	for _, b := range f.all {
-		if b.Status != status {
+		if b.Status != models.BookStatusImported || b.FilePath == "" {
 			continue
 		}
-		if b.OwnerUserID != 0 && b.OwnerUserID != userID {
+		if userID != 0 && b.OwnerUserID != 0 && b.OwnerUserID != userID {
 			continue
 		}
 		out = append(out, b)
 	}
-	return out, nil
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].UpdatedAt.After(out[j].UpdatedAt)
+	})
+	return out[:min(limit, len(out))], nil
 }
 
 // SearchImported is a plain substring match on the title over imported books,
@@ -105,16 +92,33 @@ func (f *fakeBooks) GetByID(_ context.Context, id int64) (*models.Book, error) {
 	return nil, nil
 }
 
-type fakeAuthors struct{ all []models.Author }
-
-func (f *fakeAuthors) List(_ context.Context) ([]models.Author, error) {
-	out := make([]models.Author, len(f.all))
-	copy(out, f.all)
-	return out, nil
+// fakeAuthors answers ListWithDownloadableBooks from books, so a test that
+// builds the authors feed must set it.
+type fakeAuthors struct {
+	all   []models.Author
+	books *fakeBooks
 }
-func (f *fakeAuthors) ListByUser(_ context.Context, _ int64) ([]models.Author, error) {
-	out := make([]models.Author, len(f.all))
-	copy(out, f.all)
+
+func (f *fakeAuthors) ListWithDownloadableBooks(_ context.Context, userID int64) ([]models.Author, error) {
+	var out []models.Author
+	for _, a := range f.all {
+		if userID != 0 && a.OwnerUserID != 0 && a.OwnerUserID != userID {
+			continue
+		}
+		if f.books == nil {
+			continue
+		}
+		for _, b := range f.books.all {
+			if b.AuthorID != a.ID || b.Status != models.BookStatusImported || b.FilePath == "" {
+				continue
+			}
+			if userID != 0 && b.OwnerUserID != 0 && b.OwnerUserID != userID {
+				continue
+			}
+			out = append(out, a)
+			break
+		}
+	}
 	return out, nil
 }
 func (f *fakeAuthors) GetByID(_ context.Context, id int64) (*models.Author, error) {
@@ -127,8 +131,28 @@ func (f *fakeAuthors) GetByID(_ context.Context, id int64) (*models.Author, erro
 	return nil, nil
 }
 
+// fakeSeries answers IDsWithBooksVisibleTo from books, so a test that builds
+// a user's series list must set it.
 type fakeSeries struct {
-	all []models.Series
+	all   []models.Series
+	books *fakeBooks
+}
+
+func (f *fakeSeries) IDsWithBooksVisibleTo(_ context.Context, userID int64) (map[int64]struct{}, error) {
+	ids := map[int64]struct{}{}
+	for _, s := range f.all {
+		for _, sb := range s.Books {
+			if f.books == nil {
+				continue
+			}
+			for _, b := range f.books.all {
+				if b.ID == sb.BookID && (b.OwnerUserID == 0 || b.OwnerUserID == userID) {
+					ids[s.ID] = struct{}{}
+				}
+			}
+		}
+	}
+	return ids, nil
 }
 
 func (f *fakeSeries) List(_ context.Context) ([]models.Series, error) {
@@ -183,7 +207,8 @@ func fixture() (*fakeBooks, *fakeAuthors, *fakeSeries) {
 		{SeriesID: 100, BookID: 11, PositionInSeries: "3", PrimarySeries: true},
 	}}
 
-	return &fakeBooks{all: []models.Book{b1, b2, b3}}, &fakeAuthors{all: []models.Author{a1, a2}}, &fakeSeries{all: []models.Series{s1}}
+	books := &fakeBooks{all: []models.Book{b1, b2, b3}}
+	return books, &fakeAuthors{all: []models.Author{a1, a2}, books: books}, &fakeSeries{all: []models.Series{s1}, books: books}
 }
 
 func newBuilder() *Builder {
@@ -259,7 +284,7 @@ func TestBuildAuthors_Paging(t *testing.T) {
 	}
 	books.all = bigBooks
 
-	b := NewBuilder(Config{PageSize: 2}, books, &fakeAuthors{all: bigAuthors}, series)
+	b := NewBuilder(Config{PageSize: 2}, books, &fakeAuthors{all: bigAuthors, books: books}, series)
 
 	page1, _ := b.BuildAuthors(context.Background(), "http://h", 1, 0)
 	if len(page1.Entries) != 2 {

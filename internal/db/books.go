@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -661,6 +662,74 @@ func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userI
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
 }
 
+// recentDownloadableWhere selects the books a reader can download and that
+// ListByStatus(imported) returns. It must stay identical, term for term, to the
+// WHERE clause of idx_books_recently_imported (migration 138): SQLite uses a
+// partial index only for a query that repeats its predicate.
+const recentDownloadableWhere = `%[1]s.status = 'imported' AND %[1]s.monitored = 1 AND %[1]s.excluded = 0 AND %[1]s.file_path != ''`
+
+// ListRecentDownloadable returns the limit most recently updated books a reader
+// can download (imported, monitored, not excluded, with a file), newest first,
+// ties broken by the higher id. It is the OPDS "Recently Added" feed's source.
+// userID 0 is unscoped; otherwise only the caller's and unowned books count, as
+// in ListByStatusAndUser.
+//
+// The feed used to load every imported book and sort in Go. This reads the top
+// of idx_books_recently_imported instead, so the cost follows limit and not the
+// library.
+//
+// updated_at is RFC3339Nano text with trailing zeros dropped, so comparing two
+// stored values as text is right down to the second and no further
+// ("…43.5Z" sorts above "…43.55Z"). The query therefore finds the stored
+// second of the limit-th row and returns every book from that second on, and
+// the exact order is settled here on the parsed times. That is limit rows plus
+// however many books share one second, which a bulk import can make a few
+// hundred. Rows in a legacy layout (a space where the T is, see
+// timeParseLayouts) compare below RFC3339 rows of the same day.
+func (r *BookRepo) ListRecentDownloadable(ctx context.Context, userID int64, limit int) ([]models.Book, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	q, args := recentDownloadableQuery(userID, limit)
+	books, err := r.query(ctx, q, args)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(books, func(i, j int) bool {
+		if books[i].UpdatedAt.Equal(books[j].UpdatedAt) {
+			return books[i].ID > books[j].ID
+		}
+		return books[i].UpdatedAt.After(books[j].UpdatedAt)
+	})
+	if len(books) > limit {
+		books = books[:limit]
+	}
+	return books, nil
+}
+
+// recentDownloadableQuery is ListRecentDownloadable's statement: every
+// downloadable book from the stored second of the limit-th newest one onwards.
+func recentDownloadableQuery(userID int64, limit int) (string, []any) {
+	outer := fmt.Sprintf(recentDownloadableWhere, "books")
+	inner := fmt.Sprintf(recentDownloadableWhere, "b2")
+	var args []any
+	if userID != 0 {
+		outer += " AND (books.owner_user_id = ? OR books.owner_user_id IS NULL)"
+		inner += " AND (b2.owner_user_id = ? OR b2.owner_user_id IS NULL)"
+		args = append(args, userID, userID)
+	}
+	args = append(args, limit-1)
+	return "SELECT " + bookColumns + " FROM books INDEXED BY idx_books_recently_imported " + bookJoins + `
+		WHERE ` + outer + `
+		  AND books.updated_at >= COALESCE((
+			SELECT substr(b2.updated_at, 1, 19)
+			FROM books b2 INDEXED BY idx_books_recently_imported
+			WHERE ` + inner + `
+			ORDER BY b2.updated_at DESC, b2.id DESC
+			LIMIT 1 OFFSET ?), '')
+		ORDER BY books.updated_at DESC, books.id DESC`, args
+}
+
 // ListByStatusIncludingExcludedAndUser is ListByStatusIncludingExcluded scoped
 // to a user's own + unowned books (userID 0 leaves it unscoped, for admins and
 // single-tenant deployments). The excluded-aware counterpart to
@@ -707,6 +776,62 @@ func (r *BookRepo) GetByIDs(ctx context.Context, ids []int64) (map[int64]*models
 		out[books[i].ID] = &books[i]
 	}
 	return out, nil
+}
+
+// BookRef is the part of a book a list row links to: its id and title and its
+// author's id and name. See BookRepo.RefsByIDs.
+type BookRef struct {
+	ID         int64
+	Title      string
+	AuthorID   int64
+	AuthorName string
+}
+
+// bookRefsChunk is how many ids one RefsByIDs statement names, well under
+// SQLite's bound parameter limit.
+const bookRefsChunk = 500
+
+// RefsByIDs returns the title and author of each book in ids, keyed by book
+// id. It is GetByIDs for a caller that only links to the book: four columns
+// instead of the whole row, and none of the file path subqueries bookColumns
+// runs per book. The queue endpoint asks for one ref per listed download on
+// every 5 second poll, and loading whole books for that was half its cost.
+//
+// Unscoped like GetByIDs. An id with no row is absent from the map, repeated
+// ids are answered once, and a book whose author row is gone keeps its
+// author_id with an empty name, which is what GetByIDs yields for it.
+func (r *BookRepo) RefsByIDs(ctx context.Context, ids []int64) (map[int64]BookRef, error) {
+	out := make(map[int64]BookRef, len(ids))
+	for start := 0; start < len(ids); start += bookRefsChunk {
+		chunk := ids[start:min(start+bookRefsChunk, len(ids))]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		if err := r.refsChunk(ctx, args, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (r *BookRepo) refsChunk(ctx context.Context, args []any, out map[int64]BookRef) error {
+	//nolint:gosec // G202: the statement is fixed text plus generated ? placeholders; every id is bound via args
+	q := "SELECT books.id, books.title, books.author_id, COALESCE(au.name, '') FROM books " + bookJoins +
+		" WHERE books.id IN (?" + strings.Repeat(",?", len(args)-1) + ")"
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return fmt.Errorf("book refs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ref BookRef
+		if err := rows.Scan(&ref.ID, &ref.Title, &ref.AuthorID, &ref.AuthorName); err != nil {
+			return fmt.Errorf("scan book ref: %w", err)
+		}
+		out[ref.ID] = ref
+	}
+	return rows.Err()
 }
 
 // GetByForeignIDs loads the books with the given foreign ids in one query,
