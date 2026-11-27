@@ -250,6 +250,90 @@ matches a release named `Path of the Deathless Book 1`, and the reverse.
   shows in the debug panel's indexer row as `volumeMarkerQuery`, with
   `volumeMarkerResults` and `volumeMarkerError`. The reverse direction (`Volume`
   to `Vol.`) is not sent.
+- **Subtitle only query.** A title such as `Path to Transcendence, Book 1: Will
+  of Mana` is sometimes listed as `Will of Mana by Ryan Arelius`, and an indexer
+  that needs every query word in the release name returns nothing for a query
+  that carries the series and position. When a search still has nothing relevant
+  after everything above, Bindery sends ONE more query per indexer made of the
+  author's surname and the subtitle (`Arelius Will of Mana`). It counts against
+  the daily query cap like any other query, and shows in the debug panel's indexer
+  row as `subtitleQuery`, with `subtitleResults` (results kept) and
+  `subtitleError`. It is skipped when a relevant result exists, and after an
+  earlier extra query failed or hit the cap. It is also not sent when:
+  - The part before the first colon does not end in a position number (`Book 1`,
+    `Feral Mage 4`, `Book One`). `Dune: Messiah` and `Dune: Part Two` are not
+    sent, because the relevance filter would not approve `Messiah by Frank
+    Herbert` for them anyway.
+  - The subtitle has fewer than two significant words (three letters or more, not
+    `the`, `of`, `and` and the like), so `Mana` alone, `Go` and `To Be Or` are not
+    sent. A subtitle made only of generic words (`A Novel`, `Book Two`, `Volume
+    3`, `Omnibus Edition`) is not sent either, since it would match every book by
+    the author.
+  - The title has no author, an author such as `Various`, or one with only an
+    initial.
+
+  What the query holds: only the first colon splits, and the text after it is sent
+  as written, later colons included (`Series 2: A Big: Small Thing` by Ann Lee
+  sends `Lee A Big: Small Thing`). A trailing ` - tag` is cut (`Will of Mana - A
+  LitRPG Adventure` sends `Will of Mana`), a leading `The` is left out, and `&`
+  and `and` are left out, so both spellings of a release are found. The surname is
+  the last word of the first listed author, after notes in brackets
+  (`Ann Lee (Narrator)`) and `Jr.` are dropped; for a list (`A & B`, `A, B`, `A
+  and B`) it is the first author's.
+
+  A result from this query is kept only when all of these hold:
+  - The name holds the whole subtitle as consecutive words.
+  - Before the subtitle there is only the author's name, `by` or a language or
+    format tag (`ENG`, `M4B`, `epub`, a year); a leading `The` is allowed when the
+    subtitle starts with it.
+  - After it, outside brackets, there is the author's name, `by`, a tag, or, once
+    the author's name has been seen, a credit that ends the name: `narrated by`,
+    `read by`, `performed by`, `with`, or `and` or `&`, followed by two to four
+    capitalised name words (`van`, `von`, `de`, `la`, `del`, `der`, `bin`, `Jr`
+    and the like may be lowercase), with no stop word (`the`, `of`, `a`...) and no
+    digit. One word (`with Dragons`) is refused. Any other word or a number
+    refuses the release.
+  - After it, a `[...]` or `(...)` segment is accepted only when EVERY word in it
+    is a known tag: a format (`M4B`, `MP3`, `epub`, `PDF`...), `audiobook`,
+    `ebook`, `unabridged`, `retail`, `complete`, `Audible`, `English`, `ENG`, `US`,
+    `UK`, a year, a duration (`12h 30m`), a bitrate (`64 kbps`), a publisher
+    (`Podium`, `Tantor`, `Blackstone`, `Brilliance`, `Recorded Books`, with `Audio`,
+    `Publishing` or `Press` after it) or a genre tag (`LitRPG`, `GameLit`,
+    `Progression Fantasy`, `Fantasy`, `Sci-Fi`, `Cultivation`). The list is closed
+    on purpose: accepting an unknown bracket costs a wrong book, refusing one costs
+    a missed grab you can still make by hand. `unabridged` is in, `abridged` is
+    not (a different product).
+  - The author's surname is a whole word elsewhere in the name, or in the
+    indexer's author attribute (`Lee-Smith` is not `Lee`).
+
+  Kept: `Will of Mana by Ryan Arelius [ENG / M4B]`, `Ryan Arelius - Will of Mana`,
+  `Will.of.Mana.Ryan.Arelius.M4B`, `Will of Mana by Ryan Arelius, narrated by
+  Travis Baldree [M4B]`, `Will of Mana by Ryan Arelius & Jane Doe [M4B]`, `Ryan
+  Arelius - Will of Mana [Audible] [M4B]`, `Will of Mana - Ryan Arelius [LitRPG]
+  [M4B]`, `Ryan Arelius - Will of Mana (Audiobook) [12h 30m]`. Refused: `Will of
+  Mana by Jane Doe` (another author, the loose reading removed in #3268), `Will of
+  Mana Rising`, `The Will of Mana Wars`, `Will of Mana 2`, `Will of Mana Companion
+  Guide`, `(Other Saga Book 5)`, `Dragon Saga, Book 1 Will of Mana`, an omnibus,
+  `(German)`, `[Vol. 1]`, `[Sequel]`, `[Companion]`, `[Prequel Novella]`, `[Study
+  Guide]`, `[Abridged]`, `(Graphic Novel)`, `(Movie Tie-In)`, `with Dragons`, `and
+  the Dragon Queen`. The usual relevance filter still judges what is kept.
+
+  Known limits: a release that spells the position another way (`Fifth` for
+  `5th`), writes an apostrophe as a space, names the author only by a non-Latin
+  alias, carries `[Vol. 1]` or a bracket with a publisher or tag not in the list,
+  or credits a narrator in lowercase scene style is refused. A credit such as `...
+  and Rising Storm` (two capitalised words) can still pass, because a name cannot
+  be told apart from a title fragment; the author check and the relevance filter
+  still judge it. A different author with the same first
+  name and surname is not told apart. If the cascade already returned something
+  that looks relevant (another book of the same series, say), this query is not
+  sent.
+
+  Cost: a failing search on a qualifying title costs one extra query per indexer,
+  and the wanted sweep repeats it each time, with no per book backoff (the 90
+  second query cache does not span sweeps). 1,000 unfindable qualifying books on 5
+  indexers at the default 12 hour sweep is about 10,000 extra queries a day,
+  bounded by each indexer's daily query cap.
 - **Relevance.** A different position still does not match: `Book One` is not
   `Book 10`, `Book 2` or `Book Two`, and the part and set rules (`Book 1 of 2`,
   `Part 3 of 5`, box sets) judge a `Book One` title exactly as they judge `Book 1`.
