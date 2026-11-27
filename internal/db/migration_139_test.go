@@ -9,12 +9,12 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// TestMigrate138UpgradeAndDown runs migration 138 on a database that looks
+// TestMigrate139UpgradeAndDown runs migration 139 on a database that looks
 // like one from before it (books present, no last_auto_search_at) and checks
 // that every existing book reads as never searched, which is what makes the
 // first sweep after an upgrade run in the old title order. Then the Down
 // section is run and the books survive it.
-func TestMigrate138UpgradeAndDown(t *testing.T) {
+func TestMigrate139UpgradeAndDown(t *testing.T) {
 	database, err := OpenMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +22,7 @@ func TestMigrate138UpgradeAndDown(t *testing.T) {
 	defer database.Close()
 	ctx := context.Background()
 
-	const file = "138_books_last_auto_search_at.sql"
+	const file = "139_books_last_auto_search_at.sql"
 	content, err := migrationsFS.ReadFile("migrations/" + file)
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +30,7 @@ func TestMigrate138UpgradeAndDown(t *testing.T) {
 	s := string(content)
 	idx := strings.Index(s, "-- +migrate Down")
 	if idx < 0 {
-		t.Fatal("migration 138 has no Down section")
+		t.Fatal("migration 139 has no Down section")
 	}
 	down := func() {
 		for _, stmt := range splitSQLStatements(s[idx+len("-- +migrate Down"):]) {
@@ -51,9 +51,9 @@ func TestMigrate138UpgradeAndDown(t *testing.T) {
 		t.Fatal("Down left books.last_auto_search_at in place")
 	}
 
-	// A pre-138 database: wanted and imported books, no column.
+	// A pre-139 database: wanted and imported books, no column.
 	books := NewBookRepo(database)
-	author := &models.Author{ForeignID: "OL-M138", Name: "M138", SortName: "M138", MetadataProvider: "ol", Monitored: true}
+	author := &models.Author{ForeignID: "OL-M139", Name: "M139", SortName: "M139", MetadataProvider: "ol", Monitored: true}
 	if err := NewAuthorRepo(database).Create(ctx, author); err != nil {
 		t.Fatal(err)
 	}
@@ -71,10 +71,10 @@ func TestMigrate138UpgradeAndDown(t *testing.T) {
 		ids[title] = b.ID
 	}
 
-	// Upgrade: forget 138 and run the migrator.
+	// Upgrade: forget 139 and run the migrator.
 	mustExec(t, database, `DELETE FROM schema_migrations WHERE version = ?`, migrationVersionForTest(t, file))
 	if err := migrate(database); err != nil {
-		t.Fatalf("migrate 138: %v", err)
+		t.Fatalf("migrate 139: %v", err)
 	}
 	if columnCount() != 1 {
 		t.Fatal("Up did not add books.last_auto_search_at")

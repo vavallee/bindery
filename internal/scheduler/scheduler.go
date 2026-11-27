@@ -825,7 +825,7 @@ func (s *Scheduler) SearchAndGrabBook(ctx context.Context, book models.Book) {
 }
 
 // noteAutoSearched stamps the book with the time an automatic search for it
-// last reached an indexer (books.last_auto_search_at, migration 138). The
+// last reached an indexer (books.last_auto_search_at, migration 139). The
 // wanted sweep orders its queue by that stamp, never searched first and then
 // least recently searched, which is what lets a sweep that an indexer's daily
 // query cap or a restart ended early carry on from where it stopped. Before the

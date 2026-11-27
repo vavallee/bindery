@@ -619,7 +619,7 @@ func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Bo
 // ListByStatusLeastRecentlySearched is ListByStatus in the order the scheduled
 // wanted sweep works through it: books no automatic search has reached yet
 // first, then the least recently searched (last_auto_search_at, migration
-// 138). Ties, which is every never searched book and so the whole list on the
+// 139). Ties, which is every never searched book and so the whole list on the
 // first sweep after an upgrade, fall back to ListByStatus's title order and
 // then the id, so the order is total and repeatable.
 //
