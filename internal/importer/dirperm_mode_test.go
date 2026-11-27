@@ -282,3 +282,22 @@ func TestMoveTrackedFileHonorsDirMode(t *testing.T) {
 		assertAllDirsMode(t, filepath.Dir(dest), 0o755)
 	})
 }
+
+// TestPlacementGroupWritableUnderUsualUmask is the shared library case from
+// #4175: the process keeps its usual 022 umask and BINDERY_DIR_MODE=0770, yet
+// the created directories must end up 0770 because dirperm chmods explicitly.
+func TestPlacementGroupWritableUnderUsualUmask(t *testing.T) {
+	old := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(old) })
+	t.Setenv("BINDERY_DIR_MODE", "0770")
+
+	base := t.TempDir()
+	src := filepath.Join(base, "downloads", "book.epub")
+	writeMoveFile(t, src, "content")
+	authorDir := filepath.Join(base, "library", "Sarah J. Maas")
+	dst := filepath.Join(authorDir, "A Court of Thorns and Roses (2013)", "book.epub")
+	if err := CopyFileCtx(t.Context(), src, dst); err != nil {
+		t.Fatalf("CopyFileCtx: %v", err)
+	}
+	assertAllDirsMode(t, authorDir, 0o770)
+}

@@ -218,7 +218,7 @@ func flattenAudiobookDirFiltered(ctx context.Context, mode, srcRoot, destDir str
 	if _, statErr := os.Stat(destDir); statErr == nil {
 		return nil, fmt.Errorf("destination already exists: %s", destDir)
 	}
-	if err := os.MkdirAll(destDir, dirperm.Library()); err != nil {
+	if err := dirperm.MkdirAll(destDir); err != nil {
 		return nil, fmt.Errorf("create dest dir: %w", err)
 	}
 	placed := make([]string, 0, len(tracks))

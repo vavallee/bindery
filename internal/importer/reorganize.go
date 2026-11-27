@@ -652,7 +652,7 @@ func dedupeSidecarPreview(moves []ReorganizeMove) {
 // (atomic commit + rollback across a same-fs rename or cross-fs copy), and
 // MoveDirCtx for an audiobook folder.
 func (s *Scanner) moveTrackedFile(ctx context.Context, file models.BookFile, dest string) error {
-	if err := os.MkdirAll(filepath.Dir(dest), dirperm.Library()); err != nil {
+	if err := dirperm.MkdirAll(filepath.Dir(dest)); err != nil {
 		return fmt.Errorf("create destination directory: %w", err)
 	}
 

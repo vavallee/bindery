@@ -90,7 +90,7 @@ Mount the parent once, as `/data`, in both containers. Three separate mounts loo
 
 `BINDERY_LIBRARY_DIR` must be BookOrbit's final library, not the dock. Bindery never writes there in this mode. It only reads it during a scan. If it points at the wrong place the book stays Wanted.
 
-Bindery creates the folders it makes with mode `0750` by default, so a BookOrbit running as a different user may not be able to move files out of them. Running both as the same user avoids the question. Setting `BINDERY_DIR_MODE` to `0755` (the accepted values are `0700`, `0750` and `0755`) should open them up. Both the different user case and that fix are untested here.
+Bindery creates the folders it makes with mode `0750` by default, so a BookOrbit running as a different user may not be able to move files out of them. Running both as the same user avoids the question. Setting `BINDERY_DIR_MODE` to `0755` (the accepted values are `0700`, `0750`, `0755`, `0770` and `0775`) should open them up. Both the different user case and that fix are untested here.
 
 `BINDERY_PUID` and `BINDERY_PGID` are sanity checks only, not user switchers. Set the user on the container itself, `user: "UID:GID"` in Compose, as in the example below. See [Running as a specific UID/GID](./DEPLOYMENT.md#running-as-a-specific-uidgid).
 
