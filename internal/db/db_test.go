@@ -2840,6 +2840,9 @@ func TestMigrate_RepairsLegacyMissingExcludedColumn(t *testing.T) {
 	for _, stmt := range []string{
 		"DROP INDEX idx_books_language_excluded",
 		"DELETE FROM schema_migrations WHERE version = 127",
+		// Migration 138 indexes the column too, so it is rolled back as well.
+		"DROP INDEX idx_books_recently_imported",
+		"DELETE FROM schema_migrations WHERE version = 138",
 		"ALTER TABLE books DROP COLUMN excluded",
 	} {
 		if _, err := database.Exec(stmt); err != nil {

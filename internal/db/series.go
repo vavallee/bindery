@@ -56,6 +56,32 @@ func (r *SeriesRepo) List(ctx context.Context) ([]models.Series, error) {
 	return series, nil
 }
 
+// IDsWithBooksVisibleTo returns the ids of the series that link at least one
+// book the user can see (their own or unowned; excluded books count, as they
+// do in GetByIDForUser). It lets the OPDS series list scope itself with one
+// query where it used to re-read every series and its books.
+func (r *SeriesRepo) IDsWithBooksVisibleTo(ctx context.Context, userID int64) (map[int64]struct{}, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT DISTINCT sb.series_id
+		FROM series_books sb
+		JOIN books b ON b.id = sb.book_id
+		WHERE b.owner_user_id = ? OR b.owner_user_id IS NULL`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list series visible to user %d: %w", userID, err)
+	}
+	defer rows.Close()
+
+	ids := map[int64]struct{}{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan series id: %w", err)
+		}
+		ids[id] = struct{}{}
+	}
+	return ids, rows.Err()
+}
+
 // ListWithBooks returns all series rows with their linked books populated.
 func (r *SeriesRepo) ListWithBooks(ctx context.Context) ([]models.Series, error) {
 	return r.ListWithBooksForUser(ctx, 0)

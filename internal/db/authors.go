@@ -105,6 +105,54 @@ func (r *AuthorRepo) ListByUser(ctx context.Context, userID int64) ([]models.Aut
 	return authors, rows.Err()
 }
 
+// ListWithDownloadableBooks returns the authors that have at least one book a
+// reader can download (imported, not excluded, with a file), in List's order.
+// It is the OPDS authors feed's source: one query, where the feed used to ask
+// for each author's books in turn and took a second at 2,000 authors.
+//
+// userID 0 is unscoped. Otherwise an author counts only when the caller can see
+// it (owner_user_id = userID or NULL) and one of its downloadable books is also
+// the caller's or unowned, the same two scopes ListByUser and
+// BookRepo.ListByAuthorAndUser apply.
+//
+// The trailing id makes the order of authors that tie on both sort columns
+// fixed (ascending id, which is what List returns in practice).
+func (r *AuthorRepo) ListWithDownloadableBooks(ctx context.Context, userID int64) ([]models.Author, error) {
+	q, args := authorsWithDownloadableBooksQuery(userID)
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list authors with downloadable books: %w", err)
+	}
+	defer rows.Close()
+
+	var authors []models.Author
+	for rows.Next() {
+		a, err := scanAuthor(rows)
+		if err != nil {
+			return nil, err
+		}
+		authors = append(authors, a)
+	}
+	return authors, rows.Err()
+}
+
+// authorsWithDownloadableBooksQuery is ListWithDownloadableBooks' statement.
+func authorsWithDownloadableBooksQuery(userID int64) (string, []any) {
+	authorScope, bookScope := "", ""
+	var args []any
+	if userID != 0 {
+		authorScope = "(a.owner_user_id = ? OR a.owner_user_id IS NULL) AND "
+		bookScope = " AND (b.owner_user_id = ? OR b.owner_user_id IS NULL)"
+		args = []any{userID, userID}
+	}
+	return "SELECT " + authorSelectColsA + ` FROM authors a
+		WHERE ` + authorScope + `EXISTS (
+			SELECT 1 FROM books b
+			WHERE b.author_id = a.id AND b.excluded = 0
+			  AND b.status = 'imported' AND b.file_path != ''` + bookScope + `)
+		ORDER BY a.sort_key, a.sort_name COLLATE NOCASE, a.id`, args
+}
+
 // AuthorListFilter narrows ListPageFiltered. The zero value selects every
 // visible author in sort_name order (identical to the old ListPage).
 type AuthorListFilter struct {
