@@ -774,15 +774,26 @@ func (i *Importer) importOne(ctx context.Context, cfg ImportConfig, runID int64,
 			result.Message = err.Error()
 			return result
 		} else if conflictBook != nil {
+			detail := fmt.Sprintf("file already tracked on %q (book %d) under a different author (%q)", conflictBook.Title, conflictBook.ID, conflictAuthor.Name)
 			if queueErr := i.queueReviewItem(ctx, runID, cfg, item, reviewReasonAmbiguousBook); queueErr != nil {
 				stats.Failed++
 				result.Outcome = itemOutcomeFailed
 				result.Message = queueErr.Error()
+				// A source with no review queue (BookOrbit) fails the item
+				// with the bare reason; name the conflicting book instead
+				// (#4189) so the failure can be fixed without a database dig.
+				var reviewErr reviewRequiredError
+				if errors.As(queueErr, &reviewErr) {
+					result.Message = fmt.Sprintf("%s; %s", queueErr.Error(), detail)
+					slog.Info("import: item failed, file already tracked on a book under a different author",
+						"itemID", item.ItemID, "title", item.Title, "bookID", conflictBook.ID,
+						"bookTitle", conflictBook.Title, "bookAuthor", conflictAuthor.Name)
+				}
 				return result
 			}
 			stats.ReviewQueued++
 			result.Outcome = itemOutcomeSkipped
-			result.Message = fmt.Sprintf("%s; file already tracked on %q (book %d) under a different author (%q)", reviewQueueMessage(reviewReasonAmbiguousBook, item), conflictBook.Title, conflictBook.ID, conflictAuthor.Name)
+			result.Message = fmt.Sprintf("%s; %s", reviewQueueMessage(reviewReasonAmbiguousBook, item), detail)
 			return result
 		}
 	}
