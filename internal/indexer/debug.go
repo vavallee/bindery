@@ -141,6 +141,13 @@ type IndexerDebug struct {
 	VolumeMarkerResults int    `json:"volumeMarkerResults,omitempty"`
 	// VolumeMarkerError is why that query failed, if it did.
 	VolumeMarkerError string `json:"volumeMarkerError,omitempty"`
+	// SubtitleQuery is the author's surname and the title's subtitle, sent as
+	// one extra last resort query (#4183), and SubtitleResults how many of its
+	// results named both and were kept. Empty on the common search.
+	SubtitleQuery   string `json:"subtitleQuery,omitempty"`
+	SubtitleResults int    `json:"subtitleResults,omitempty"`
+	// SubtitleError is why that query failed, if it did.
+	SubtitleError string `json:"subtitleError,omitempty"`
 }
 
 // PipelineDebug counts how results flowed through each filter stage in the
@@ -253,6 +260,8 @@ func (s *Searcher) SearchBookWithDebug(ctx context.Context, indexers []models.In
 			entry.ApostropheError = trace.ApostropheError
 			entry.VolumeMarkerQuery, entry.VolumeMarkerResults = trace.VolumeMarkerQuery, trace.VolumeMarkerResults
 			entry.VolumeMarkerError = trace.VolumeMarkerError
+			entry.SubtitleQuery, entry.SubtitleResults = trace.SubtitleQuery, trace.SubtitleResults
+			entry.SubtitleError = trace.SubtitleError
 			if trace.BudgetExhausted {
 				s.flushQuota(ctx, idx, true)
 			}

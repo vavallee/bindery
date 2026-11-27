@@ -1,0 +1,309 @@
+package newznab
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"unicode"
+)
+
+const subtitleTitle = "Path to Transcendence, Book 1: Will of Mana"
+
+// subtitleIndexer answers like MyAnonamouse in #4183: every query word must
+// appear in a release name, and the catalogue holds the given releases.
+func subtitleIndexer(t *testing.T, releases ...string) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var queries []string
+	words := func(s string) []string {
+		return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		q := r.URL.Query()
+		term := q.Get("q")
+		if term == "" {
+			term = q.Get("title")
+		}
+		mu.Lock()
+		queries = append(queries, term)
+		mu.Unlock()
+		var hits []string
+		for _, rel := range releases {
+			have := map[string]bool{}
+			for _, w := range words(rel) {
+				have[w] = true
+			}
+			ok := true
+			for _, w := range words(term) {
+				if !have[w] {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				hits = append(hits, rel)
+			}
+		}
+		if len(hits) == 0 {
+			w.Write([]byte(emptyFeed))
+			return
+		}
+		w.Write([]byte(feedWith(hits...)))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), queries...) }
+}
+
+func countContaining(qs []string, sub string) int {
+	n := 0
+	for _, q := range qs {
+		if strings.Contains(q, sub) {
+			n++
+		}
+	}
+	return n
+}
+
+// The reporter's case: the release is named by the subtitle alone.
+func TestBookSearch_SubtitleOnlyVariant(t *testing.T) {
+	srv, queries := subtitleIndexer(t, "Will of Mana by Ryan Arelius [ENG / M4B]")
+	res, trace, err := testNew(srv.URL, "k").BookSearchTraced(context.Background(), subtitleTitle, "Ryan Arelius", []int{3030})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].Title != "Will of Mana by Ryan Arelius [ENG / M4B]" {
+		t.Fatalf("results = %+v; queries %q", res, queries())
+	}
+	if trace.SubtitleQuery != "Arelius Will of Mana" || trace.SubtitleResults != 1 || trace.SubtitleError != "" {
+		t.Errorf("trace = %+v", trace)
+	}
+	qs := queries()
+	if countContaining(qs, "Will of Mana") != 1 || qs[len(qs)-1] != "Arelius Will of Mana" {
+		t.Errorf("want exactly one subtitle query, sent last; got %q", qs)
+	}
+}
+
+// The #3268 regression guard: a different book by a different author whose
+// title equals the subtitle is returned by the indexer and must be rejected.
+func TestBookSearch_SubtitleOnlyRejectsOtherAuthor(t *testing.T) {
+	// A loose indexer that answers the subtitle query with everything that
+	// holds "Will of Mana", whoever wrote it (most indexers rank, not require).
+	var mu sync.Mutex
+	var sent []string
+	loose := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		sent = append(sent, r.URL.Query().Get("q")+r.URL.Query().Get("title"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/xml")
+		if strings.Contains(r.URL.RawQuery, "Will") {
+			w.Write([]byte(feedWith("Will of Mana by Jane Doe [ENG / M4B]", "Will of Mana", "Arelius Dragon Mana by Ryan Arelius", "Will of Mana by Ryan Arelius [ENG / M4B]")))
+			return
+		}
+		w.Write([]byte(emptyFeed))
+	}))
+	t.Cleanup(loose.Close)
+	res, trace, _ := testNew(loose.URL, "k").BookSearchTraced(context.Background(), subtitleTitle, "Ryan Arelius", []int{3030})
+	if len(res) != 1 || res[0].Title != "Will of Mana by Ryan Arelius [ENG / M4B]" {
+		t.Errorf("kept %+v, want only the release naming the author; sent %q", res, sent)
+	}
+	if trace.SubtitleQuery == "" || trace.SubtitleResults != 1 {
+		t.Errorf("trace = %+v", trace)
+	}
+
+	// Only wrong-author releases come back: nothing is accepted.
+	only := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		if strings.Contains(r.URL.RawQuery, "Will") {
+			w.Write([]byte(feedWith("Will of Mana by Jane Doe [ENG / M4B]")))
+			return
+		}
+		w.Write([]byte(emptyFeed))
+	}))
+	t.Cleanup(only.Close)
+	res, trace, _ = testNew(only.URL, "k").BookSearchTraced(context.Background(), subtitleTitle, "Ryan Arelius", []int{3030})
+	if len(res) != 0 || trace.SubtitleResults != 0 || trace.SubtitleQuery == "" {
+		t.Errorf("another author's book with the subtitle as its title was accepted: %+v %+v", res, trace)
+	}
+}
+
+func TestSubtitleOnlyAccepts(t *testing.T) {
+	p := subtitleOnlyPlan{Query: "Arelius Will of Mana", Subtitle: "Will of Mana", Surname: "Arelius"}
+	cases := []struct {
+		title, author string
+		want          bool
+	}{
+		{"Will of Mana by Ryan Arelius [ENG / M4B]", "", true},
+		{"Will.of.Mana.Ryan.Arelius.M4B", "", true},
+		{"Arelius, Ryan - Will of Mana (epub)", "", true},
+		{"Will of Mana", "Ryan Arelius", true}, // author attribute
+		{"Will of Mana by Jane Doe", "", false},
+		{"Will of Mana", "", false},
+		{"Will of Mana by Jane Doe", "Jane Doe", false},
+		{"Mana of Will by Ryan Arelius", "", false},     // words out of order
+		{"Will and Mana by Ryan Arelius", "", false},    // not the whole subtitle
+		{"Will of the Mana by Ryan Arelius", "", false}, // words between
+		{"Arelius Will of Mana", "", true},              // surname before the subtitle is outside it
+		{"Will of Mana Arelius", "", true},
+		{"Will of Mana by Ryan Arelian", "", false},    // near miss surname
+		{"Will of Manager by Ryan Arelius", "", false}, // whole words only
+	}
+	for _, c := range cases {
+		got := subtitleOnlyAccepts(p, SearchResult{Title: c.title, Author: c.author})
+		if got != c.want {
+			t.Errorf("accepts(%q, author %q) = %v, want %v", c.title, c.author, got, c.want)
+		}
+	}
+	// A surname that is also a subtitle word cannot vouch for itself.
+	self := subtitleOnlyPlan{Subtitle: "Will of Mana", Surname: "Mana"}
+	if subtitleOnlyAccepts(self, SearchResult{Title: "Will of Mana by Jane Doe"}) {
+		t.Error("the surname matched inside the subtitle's own words")
+	}
+	if !subtitleOnlyAccepts(self, SearchResult{Title: "Will of Mana by Jane Mana"}) {
+		t.Error("the surname outside the subtitle was refused")
+	}
+}
+
+func TestSubtitleOnlyQuery(t *testing.T) {
+	cases := []struct {
+		name, title, author string
+		want                string // "" means not sent
+	}{
+		{"reporter", subtitleTitle, "Ryan Arelius", "Arelius Will of Mana"},
+		{"spelled out position", "Path to Transcendence, Book One: Will of Mana", "Ryan Arelius", "Arelius Will of Mana"},
+		{"series number", "Feral Mage 4: The Mining Company Contract", "Chase Kilgore", "Kilgore The Mining Company Contract"},
+		{"trailing qualifier", "Path to Transcendence, Book 1: Will of Mana (Unabridged)", "Ryan Arelius", "Arelius Will of Mana"},
+		{"two colons", "Series 2: Will of Mana: A Tale", "Ryan Arelius", "Arelius Will of Mana: A Tale"},
+		{"name suffix", subtitleTitle, "Ryan Arelius Jr.", "Arelius Will of Mana"},
+		{"author list", subtitleTitle, "Ryan Arelius & Jane Doe", "Arelius Will of Mana"},
+		{"mononym", subtitleTitle, "Arelius", "Arelius Will of Mana"},
+		{"umlaut", "Reihe 2: Zauber der Magie", "Anna Müller", "Mueller Zauber der Magie"},
+
+		{"no subtitle", "Path to Transcendence, Book 1", "Ryan Arelius", ""},
+		{"plain subtitle, no position", "Dune: Messiah", "Frank Herbert", ""},
+		{"subtitle numbers the book", "Dune: Part Two", "Frank Herbert", ""},
+		{"generic novel", "Path to Transcendence, Book 1: A Novel", "Ryan Arelius", ""},
+		{"generic book two", "Path to Transcendence 1: Book Two", "Ryan Arelius", ""},
+		{"generic volume", "Path to Transcendence 1: Volume 3", "Ryan Arelius", ""},
+		{"generic words only", "Path to Transcendence 1: The Novel Edition", "Ryan Arelius", ""},
+		{"one significant word", "Path to Transcendence, Book 1: Mana", "Ryan Arelius", ""},
+		{"stop words only", "Path to Transcendence, Book 1: To Be Or", "Ryan Arelius", ""},
+		{"too short", "Path to Transcendence, Book 1: Go", "Ryan Arelius", ""},
+		{"no author", subtitleTitle, "", ""},
+		{"placeholder author", subtitleTitle, "Various", ""},
+		{"initial only", subtitleTitle, "R.", ""},
+		{"suffix only", subtitleTitle, "Jr.", ""},
+	}
+	for _, c := range cases {
+		p, ok := subtitleOnlyQuery(c.title, c.author)
+		if c.want == "" {
+			if ok {
+				t.Errorf("%s: query %q built, want none", c.name, p.Query)
+			}
+			continue
+		}
+		if !ok || p.Query != c.want {
+			t.Errorf("%s: got %q (ok=%v), want %q", c.name, p.Query, ok, c.want)
+		}
+	}
+}
+
+// Each skip condition sends nothing beyond the cascade.
+func TestBookSearch_SubtitleOnlyVariantSkips(t *testing.T) {
+	ctx := context.Background()
+	release := "Will of Mana by Ryan Arelius [ENG / M4B]"
+
+	// No subtitle, a plain subtitle and a generic one: no query.
+	for _, title := range []string{"Path to Transcendence, Book 1", "Dune: Messiah", "Path to Transcendence, Book 1: A Novel"} {
+		srv, queries := subtitleIndexer(t, release)
+		_, trace, _ := testNew(srv.URL, "k").BookSearchTraced(ctx, title, "Ryan Arelius", []int{3030})
+		if trace.SubtitleQuery != "" || countContaining(queries(), "Arelius Will") != 0 {
+			t.Errorf("%q: subtitle query sent: %+v %q", title, trace, queries())
+		}
+	}
+
+	// A relevant result already exists: the cascade found the series book.
+	srv, queries := subtitleIndexer(t, "Path to Transcendence, Book 1 by Ryan Arelius", release)
+	res, trace, _ := testNew(srv.URL, "k").BookSearchTraced(ctx, subtitleTitle, "Ryan Arelius", []int{3030})
+	if trace.SubtitleQuery != "" || len(res) == 0 {
+		t.Errorf("sent despite a relevant result: %+v %q", trace, queries())
+	}
+
+	// No author: no query.
+	srv, queries = subtitleIndexer(t, release)
+	_, trace, _ = testNew(srv.URL, "k").BookSearchTraced(ctx, subtitleTitle, "", []int{3030})
+	if trace.SubtitleQuery != "" {
+		t.Errorf("sent without an author: %+v %q", trace, queries())
+	}
+
+	// An earlier fallback errored: nothing more is sent to this indexer.
+	for name, trace := range map[string]SearchTrace{
+		"number word": {NumberWordError: "boom"},
+		"apostrophe":  {ApostropheError: "boom"},
+		"volume":      {VolumeMarkerError: "boom"},
+		"budget":      {BudgetExhausted: true},
+	} {
+		srv, queries := subtitleIndexer(t, release)
+		_, out, err := testNew(srv.URL, "k").subtitleOnlyVariant(ctx, subtitleTitle, "Ryan Arelius", nil, []int{3030}, trace)
+		if err != nil || out.SubtitleQuery != "" || len(queries()) != 0 {
+			t.Errorf("%s: sent after an earlier failure: %+v %q", name, out, queries())
+		}
+	}
+
+	// A cancelled search sends nothing.
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	srv, queries = subtitleIndexer(t, release)
+	_, out, _ := testNew(srv.URL, "k").subtitleOnlyVariant(cctx, subtitleTitle, "Ryan Arelius", nil, []int{3030}, SearchTrace{})
+	if out.SubtitleQuery != "" || len(queries()) != 0 {
+		t.Errorf("sent on a cancelled context: %+v", out)
+	}
+}
+
+// One extra query per failing search, no more.
+func TestBookSearch_SubtitleOnlyVariantCost(t *testing.T) {
+	srv, queries := subtitleIndexer(t)
+	_, trace, _ := testNew(srv.URL, "k").BookSearchTraced(context.Background(), subtitleTitle, "Ryan Arelius", []int{3030})
+	if trace.SubtitleQuery != "Arelius Will of Mana" || trace.SubtitleResults != 0 {
+		t.Errorf("trace = %+v", trace)
+	}
+	if n := countContaining(queries(), "Will of Mana"); n != 1 {
+		t.Errorf("%d subtitle queries, want 1: %q", n, queries())
+	}
+}
+
+// The subtitle query is a normal query: the daily cap counts it and refuses it.
+func TestBookSearch_SubtitleOnlyVariantBudget(t *testing.T) {
+	release := "Will of Mana by Ryan Arelius [ENG / M4B]"
+	srv0, q0 := subtitleIndexer(t, release)
+	_, _, _ = testNew(srv0.URL, "k").BookSearchTraced(context.Background(), subtitleTitle, "Ryan Arelius", []int{3030})
+	total := len(q0())
+
+	// A cap of the whole cascade plus the subtitle query: all of it is counted.
+	srv1, _ := subtitleIndexer(t, release)
+	b1 := newCountingBudget(total)
+	res, _, err := testNew(srv1.URL, "k").BookSearchTraced(WithQueryBudget(context.Background(), b1), subtitleTitle, "Ryan Arelius", []int{3030})
+	if err != nil || len(res) != 1 {
+		t.Fatalf("res %d err %v", len(res), err)
+	}
+	if got := int(b1.taken.Load()); got != total {
+		t.Errorf("budget took %d queries, want %d, so the subtitle query counts", got, total)
+	}
+
+	// One short of that: the subtitle query is refused, not sent.
+	srv, queries := subtitleIndexer(t, release)
+	ctx := WithQueryBudget(context.Background(), newCountingBudget(total-1))
+	res, trace, err := testNew(srv.URL, "k").BookSearchTraced(ctx, subtitleTitle, "Ryan Arelius", []int{3030})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 0 || !trace.BudgetExhausted || trace.SubtitleError == "" {
+		t.Errorf("results %d trace %+v", len(res), trace)
+	}
+	if len(queries()) > total-1 {
+		t.Errorf("sent %d queries past a budget of %d", len(queries()), total-1)
+	}
+}

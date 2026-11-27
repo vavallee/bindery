@@ -446,6 +446,17 @@ type SearchTrace struct {
 	// was not sent. A rate limit or an auth rejection is also returned as the
 	// search's error.
 	VolumeMarkerError string
+	// SubtitleQuery is the author's surname and the title's subtitle ("Arelius
+	// Will of Mana") when that one extra query was sent (#4183), empty when it
+	// was not.
+	SubtitleQuery string
+	// SubtitleResults is how many of that query's results named both the
+	// subtitle and the author and were kept. The rest are not counted.
+	SubtitleResults int
+	// SubtitleError is why that query failed, empty when it succeeded or was
+	// not sent. A rate limit or an auth rejection is also returned as the
+	// search's error.
+	SubtitleError string
 }
 
 // BookSearchTraced is BookSearch plus a SearchTrace.
@@ -472,7 +483,11 @@ func (c *Client) BookSearchTraced(ctx context.Context, title, author string, cat
 	if err != nil || trace.ApostropheResults > 0 {
 		return results, trace, err
 	}
-	return c.volumeMarkerVariant(ctx, title, results, categories, trace)
+	results, trace, err = c.volumeMarkerVariant(ctx, title, results, categories, trace)
+	if err != nil {
+		return results, trace, err
+	}
+	return c.subtitleOnlyVariant(ctx, title, author, results, categories, trace)
 }
 
 // volumeMarkerRe finds an abbreviated volume style marker directly followed by

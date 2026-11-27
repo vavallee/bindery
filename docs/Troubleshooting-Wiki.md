@@ -250,6 +250,39 @@ matches a release named `Path of the Deathless Book 1`, and the reverse.
   shows in the debug panel's indexer row as `volumeMarkerQuery`, with
   `volumeMarkerResults` and `volumeMarkerError`. The reverse direction (`Volume`
   to `Vol.`) is not sent.
+- **Subtitle only query.** A title such as `Path to Transcendence, Book 1: Will
+  of Mana` is sometimes listed as `Will of Mana by Ryan Arelius`, and an indexer
+  that needs every query word in the release name returns nothing for a query
+  that carries the series and position. When a search still has nothing relevant
+  after everything above, Bindery sends ONE more query per indexer made of the
+  author's surname and the subtitle (`Arelius Will of Mana`). It counts against
+  the daily query cap like any other query, and shows in the debug panel's indexer
+  row as `subtitleQuery`, with `subtitleResults` (results kept) and
+  `subtitleError`. It is skipped when a relevant result exists, after an earlier
+  extra query failed or hit the cap, and in these cases:
+  - The part before the first colon must end in a position number (`Book 1`,
+    `Feral Mage 4`, `Book One`). `Dune: Messiah` and `Dune: Part Two` are not
+    sent, because the relevance filter would not approve `Messiah by Frank
+    Herbert` for them anyway.
+  - The subtitle needs at least two significant words (three letters or more, not
+    `the`, `of`, `and` and the like), so `Mana` alone, `Go` and `To Be Or` are not
+    sent. A subtitle made only of generic words (`A Novel`, `Book Two`, `Volume
+    3`, `Omnibus Edition`) is not sent either, since it would match every book by
+    the author.
+  - With more than one colon only the first splits (`Series 2: A: B` sends `A B`).
+  - A title with no author, an author such as `Various`, or one with only an
+    initial is not sent. For `Ryan Arelius Jr.` and for a list (`A & B`, `A, B`,
+    `A and B`) the first author's surname is used.
+  - Ebook and audiobook searches send the same query; only the categories differ.
+
+  A result from this query is kept only when its name holds the whole subtitle as
+  consecutive words and the author's surname as a separate word (or in the
+  indexer's author attribute). `Will of Mana by Jane Doe` is dropped. This is on
+  purpose: accepting a bare subtitle was the loose reading removed in #3268. The
+  usual relevance filter still judges what is kept. A different author who shares
+  the surname is not told apart at this step.
+  When the cascade already returned something that looks relevant (another book
+  in the same series, say), this query is not sent.
 - **Relevance.** A different position still does not match: `Book One` is not
   `Book 10`, `Book 2` or `Book Two`, and the part and set rules (`Book 1 of 2`,
   `Part 3 of 5`, box sets) judge a `Book One` title exactly as they judge `Book 1`.
