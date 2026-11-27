@@ -74,7 +74,13 @@ jobs:
         with:
           go-version: "1.26.11"
           cache: true
+      # A normal run takes about 5 minutes. On 2026-11-24 and 2026-11-25 this
+      # step stalled with no output on four runs (two on one PR), ran 43 to
+      # 55 minutes and was only ended by hand. golangci-lint's own
+      # --timeout=5m never fired, so the stall is outside the linter. A step
+      # limit ends such a run in 15 minutes so it can be re-run.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        timeout-minutes: 15
         with:
           version: v2.11.4
           args: --timeout=5m
