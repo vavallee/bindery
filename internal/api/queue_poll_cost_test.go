@@ -14,11 +14,11 @@ import (
 	"github.com/vavallee/bindery/internal/models"
 )
 
-// queuePin is what the pin test compares for each listed row.
+// queuePin is what the pin test compares for each listed row. The owner is not
+// part of the response; each fixture row names its owner in its guid.
 type queuePin struct {
 	GUID   string
 	Status models.DownloadState
-	Owner  int64
 	Book   string // "title / author name", empty for a row with no book ref
 }
 
@@ -95,24 +95,24 @@ func TestQueueList_PinsRowsPerCaller(t *testing.T) {
 	}
 
 	const linked = "Kindred / Octavia E. Butler"
-	pin := func(guid string, status models.DownloadState, owner int64, hasBook bool) queuePin {
-		p := queuePin{GUID: guid, Status: status, Owner: owner}
+	pin := func(guid string, status models.DownloadState, hasBook bool) queuePin {
+		p := queuePin{GUID: guid, Status: status}
 		if hasBook {
 			p.Book = linked
 		}
 		return p
 	}
 	aliceRows := []queuePin{
-		pin("alice-downloading", models.StateDownloading, alice.ID, true),
-		pin("alice-imported-yesterday", models.StateImported, alice.ID, true),
-		pin("alice-import-failed", models.StateImportFailed, alice.ID, false),
-		pin("alice-import-blocked", models.StateImportBlocked, alice.ID, true),
-		pin("alice-failed", models.StateFailed, alice.ID, true),
+		pin("alice-downloading", models.StateDownloading, true),
+		pin("alice-imported-yesterday", models.StateImported, true),
+		pin("alice-import-failed", models.StateImportFailed, false),
+		pin("alice-import-blocked", models.StateImportBlocked, true),
+		pin("alice-failed", models.StateFailed, true),
 	}
 	bobRows := []queuePin{
-		pin("bob-downloading", models.StateDownloading, bob.ID, false),
-		pin("bob-imported-yesterday", models.StateImported, bob.ID, true),
-		pin("bob-failed", models.StateFailed, bob.ID, true),
+		pin("bob-downloading", models.StateDownloading, false),
+		pin("bob-imported-yesterday", models.StateImported, true),
+		pin("bob-failed", models.StateFailed, true),
 	}
 	everyone := []queuePin{
 		aliceRows[0], bobRows[0], aliceRows[1], bobRows[1], aliceRows[2], aliceRows[3], aliceRows[4], bobRows[2],
@@ -131,7 +131,7 @@ func TestQueueList_PinsRowsPerCaller(t *testing.T) {
 		}
 		out := make([]queuePin, len(resp.Items))
 		for i, it := range resp.Items {
-			out[i] = queuePin{GUID: it.GUID, Status: it.Status, Owner: it.OwnerUserID}
+			out[i] = queuePin{GUID: it.GUID, Status: it.Status}
 			if it.Book != nil {
 				if it.Book.ID != book.ID || it.Book.AuthorID != author.ID {
 					t.Errorf("%s: book ref ids %+v, want book %d by author %d", it.GUID, it.Book, book.ID, author.ID)
