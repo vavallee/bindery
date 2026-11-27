@@ -810,12 +810,44 @@ func (s *Scheduler) Stop() {
 // with no run id registers nothing: nobody holds an id to poll it by, and a
 // background sweep would push the runs people are polling out of the bounded
 // store.
+//
+// A search that reached an indexer stamps the book as searched, the same stamp
+// the wanted sweep writes, so the sweep does not open its next run by repeating
+// a search an add or a Search button just made (see noteAutoSearched).
 func (s *Scheduler) SearchAndGrabBook(ctx context.Context, book models.Book) {
 	if runID := searchruns.RunIDFrom(ctx); runID != "" {
 		s.searchRuns.Running(runID)
 		defer s.searchRuns.Finish(runID)
 	}
-	s.searchAndGrabFormats(ctx, book, neededFormats(&book), nil)
+	if s.searchAndGrabFormats(ctx, book, neededFormats(&book), nil) {
+		s.noteAutoSearched(ctx, book)
+	}
+}
+
+// noteAutoSearched stamps the book with the time an automatic search for it
+// last reached an indexer (books.last_auto_search_at, migration 139). The
+// wanted sweep orders its queue by that stamp, never searched first and then
+// least recently searched, which is what lets a sweep that an indexer's daily
+// query cap or a restart ended early carry on from where it stopped. Before the
+// stamp existed every sweep started from the head of the title order, so a
+// capped sweep searched the same head every run and never reached the rest.
+//
+// What stamps: the sweep, and every other search and grab through
+// SearchAndGrabBook (a book being added, the Search buttons, series fill, the
+// stalled download re-search), because each runs the search the sweep would.
+// What does not: the interactive release list, which grabs nothing; the
+// upgrade branch, whose books are not on the wanted list and which keeps its
+// own cooldown; and any search no indexer was asked for (see
+// searchAndGrabFormats). A failed write costs the book one early repeat and
+// is only logged.
+func (s *Scheduler) noteAutoSearched(ctx context.Context, book models.Book) {
+	if s.books == nil || book.ID == 0 {
+		return
+	}
+	if err := s.books.MarkAutoSearched(ctx, book.ID, time.Now()); err != nil {
+		slog.Warn("failed to record the automatic search time; the book keeps its place in the wanted queue",
+			"book_id", book.ID, "error", err)
+	}
 }
 
 // neededFormats returns the media types a book still wants and does not have
@@ -838,11 +870,25 @@ func neededFormats(book *models.Book) []string {
 // The sweep snapshot is threaded through as well: sweep is nil for every
 // one-off caller, which makes each invariant load happen lazily exactly as it
 // used to (#2370).
-func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, formats []string, sweep *sweepContext) {
+//
+// It reports whether the book was searched: true when the search for at least
+// one of the formats reached at least one indexer. False means the book is
+// owed a search and keeps its place at the front of the wanted queue: nothing
+// was dispatched (no formats, auto-grab off, an unmonitored author), every
+// indexer was skipped for every format (disabled, cooling down, or at its
+// daily query cap, including a cap that ran out part way through a search),
+// or the context ended under the search. A search that reached an indexer and
+// found nothing, or got an error back, counts as searched.
+//
+// One format is enough, not all of them: a book left at the front after one of
+// its formats was searched has that search repeated at the start of the next
+// sweep. The cost is at the edge of a cap, where a book wanted in both formats
+// whose second search was refused waits a full rotation for it.
+func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, formats []string, sweep *sweepContext) bool {
 	runID := searchruns.RunIDFrom(ctx)
 	if len(formats) == 0 {
 		s.searchRuns.Record(runID, searchruns.Result{Outcome: searchruns.OutcomeNotSearched})
-		return
+		return false
 	}
 	// The global auto-grab kill switch is enforced here, at the single point
 	// where a grab is actually dispatched, rather than at each caller (#2256).
@@ -853,7 +899,7 @@ func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, 
 		slog.Info("auto-grab disabled globally, skipping search",
 			"book_id", book.ID, "title", book.Title)
 		s.searchRuns.Record(runID, searchruns.Result{Outcome: "auto-grab disabled"})
-		return
+		return false
 	}
 	// An unmonitored author's books are never grabbed automatically (#2742).
 	// Enforced here for the same reason the switch above is: this is the one
@@ -861,11 +907,15 @@ func (s *Scheduler) searchAndGrabFormats(ctx context.Context, book models.Book, 
 	// rule rather than having to know it exists.
 	if s.skipUnmonitoredAuthor(ctx, book, sweep) {
 		s.searchRuns.Record(runID, searchruns.Result{Outcome: "unmonitored author"})
-		return
+		return false
 	}
+	searched := false
 	for _, mediaType := range formats {
-		s.searchAndGrabFormat(ctx, book, mediaType, sweep)
+		if s.searchAndGrabFormat(ctx, book, mediaType, sweep) {
+			searched = true
+		}
 	}
+	return searched
 }
 
 // sweepContext is a snapshot of the tables an automatic search reads that
@@ -1255,7 +1305,12 @@ func freeleechOnlyIndexerIDs(idxs []models.Indexer) map[int64]bool {
 
 // searchAndGrabFormat searches for and grabs a specific format of a book.
 // mediaType must be MediaTypeEbook or MediaTypeAudiobook.
-func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, mediaType string, sweep *sweepContext) {
+//
+// reached reports whether the search was sent to at least one indexer; see
+// searchAndGrabFormats for what the callers do with it. It is settled as soon
+// as the indexers have answered, so nothing that happens to the results
+// afterwards (filters, the decision, a failed grab) changes it.
+func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, mediaType string, sweep *sweepContext) (reached bool) {
 	// #2154: a search that found nothing used to log nothing at all, so "the
 	// sweep never ran" and "the sweep ran and found nothing" were
 	// indistinguishable from the outside. Every return path below now leaves
@@ -1383,6 +1438,10 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 	results, outcomes, searchDbg := s.searchBookWithOutcomes(ctx, idxs, crit)
 	dbg = searchDbg
 	rawResults = len(results)
+	// A searcher that reports no per indexer outcomes cannot say whether it
+	// was refused, so it reads as reached: the alternative is a book that is
+	// never stamped and holds the front of the wanted queue for good.
+	reached = ctx.Err() == nil && (outcomes == nil || indexer.Attempted(outcomes) > 0)
 	// An indexer that failed contributed zero results and is otherwise
 	// indistinguishable from one that answered with nothing, so a grab decided
 	// on a shrunken pool used to leave no trace at all. Recording only: what
@@ -1873,6 +1932,7 @@ func (s *Scheduler) searchAndGrabFormat(ctx context.Context, book models.Book, m
 				"book_id", book.ID, "media_type", mediaType, "error", err)
 		}
 	}
+	return reached
 }
 
 // storePending records a delay-rejected release in pending_releases.
@@ -1999,7 +2059,9 @@ func (s *Scheduler) searchWanted() {
 	// once per book (#2370).
 	sweep := s.newSweepContext(ctx)
 	concurrency.RunBoundedPaced(ctx, searchQueue, scheduledWantedSearchConcurrency, searchPaceInterval, func(ctx context.Context, w wantedSearch) {
-		s.searchAndGrabFormats(indexer.WithSearchOrigin(ctx, indexer.OriginScheduled), w.book, w.formats, sweep)
+		if s.searchAndGrabFormats(indexer.WithSearchOrigin(ctx, indexer.OriginScheduled), w.book, w.formats, sweep) {
+			s.noteAutoSearched(ctx, w.book)
+		}
 	})
 	// The upgrade branch runs after the wanted one, so a missing book always
 	// gets its search before a book that already has a file is looked at
@@ -2054,7 +2116,11 @@ var inFlightDownloadStates = []models.DownloadState{
 // excludes user-excluded books, formats that already have a grab in flight
 // (see inFlightDownloadStates), and books left with nothing to search.
 func (s *Scheduler) wantedSearchQueue(ctx context.Context) []wantedSearch {
-	wanted, err := s.books.ListByStatus(ctx, models.BookStatusWanted)
+	// Never searched first, then least recently searched, so a sweep
+	// an indexer's daily query cap or a restart ended early carries on from
+	// where it stopped. The skips below are applied after the ordering and
+	// stamp nothing, so a book that is held or in flight keeps its place.
+	wanted, err := s.books.ListByStatusLeastRecentlySearched(ctx, models.BookStatusWanted)
 	if err != nil {
 		slog.Error("failed to list wanted books", "error", err)
 		return nil
