@@ -258,31 +258,55 @@ matches a release named `Path of the Deathless Book 1`, and the reverse.
   author's surname and the subtitle (`Arelius Will of Mana`). It counts against
   the daily query cap like any other query, and shows in the debug panel's indexer
   row as `subtitleQuery`, with `subtitleResults` (results kept) and
-  `subtitleError`. It is skipped when a relevant result exists, after an earlier
-  extra query failed or hit the cap, and in these cases:
-  - The part before the first colon must end in a position number (`Book 1`,
+  `subtitleError`. It is skipped when a relevant result exists, and after an
+  earlier extra query failed or hit the cap. It is also not sent when:
+  - The part before the first colon does not end in a position number (`Book 1`,
     `Feral Mage 4`, `Book One`). `Dune: Messiah` and `Dune: Part Two` are not
     sent, because the relevance filter would not approve `Messiah by Frank
     Herbert` for them anyway.
-  - The subtitle needs at least two significant words (three letters or more, not
+  - The subtitle has fewer than two significant words (three letters or more, not
     `the`, `of`, `and` and the like), so `Mana` alone, `Go` and `To Be Or` are not
     sent. A subtitle made only of generic words (`A Novel`, `Book Two`, `Volume
     3`, `Omnibus Edition`) is not sent either, since it would match every book by
     the author.
-  - With more than one colon only the first splits (`Series 2: A: B` sends `A B`).
-  - A title with no author, an author such as `Various`, or one with only an
-    initial is not sent. For `Ryan Arelius Jr.` and for a list (`A & B`, `A, B`,
-    `A and B`) the first author's surname is used.
-  - Ebook and audiobook searches send the same query; only the categories differ.
+  - The title has no author, an author such as `Various`, or one with only an
+    initial.
 
-  A result from this query is kept only when its name holds the whole subtitle as
-  consecutive words and the author's surname as a separate word (or in the
-  indexer's author attribute). `Will of Mana by Jane Doe` is dropped. This is on
-  purpose: accepting a bare subtitle was the loose reading removed in #3268. The
-  usual relevance filter still judges what is kept. A different author who shares
-  the surname is not told apart at this step.
-  When the cascade already returned something that looks relevant (another book
-  in the same series, say), this query is not sent.
+  What the query holds: only the first colon splits, and the text after it is sent
+  as written, later colons included (`Series 2: A Big: Small Thing` by Ann Lee
+  sends `Lee A Big: Small Thing`). A trailing ` - tag` is cut (`Will of Mana - A
+  LitRPG Adventure` sends `Will of Mana`), a leading `The` is left out, and `&`
+  and `and` are left out, so both spellings of a release are found. The surname is
+  the last word of the first listed author, after notes in brackets
+  (`Ann Lee (Narrator)`) and `Jr.` are dropped; for a list (`A & B`, `A, B`, `A
+  and B`) it is the first author's.
+
+  A result from this query is kept only when all of these hold. The name holds the
+  whole subtitle as consecutive words. Everything before and after the subtitle
+  is the author's name, `by`, or a language or format tag (`ENG`, `M4B`, `MP3`,
+  `epub`, `64 kbps`, a year); a leading `The` is allowed when the subtitle starts
+  with it. And the author's surname is a whole word elsewhere in the name, or in
+  the indexer's author attribute (`Lee-Smith` is not `Lee`). So these are kept:
+  `Will of Mana by Ryan Arelius [ENG / M4B]`, `Ryan Arelius - Will of Mana`,
+  `Will.of.Mana.Ryan.Arelius.M4B`. These are not: `Will of Mana by Jane Doe`
+  (another author, the loose reading removed in #3268), `Will of Mana Rising`,
+  `The Will of Mana Wars`, `Will of Mana 2`, `Will of Mana Companion Guide`,
+  `Ryan Arelius - Will of Mana (Other Saga Book 5)`, `Dragon Saga, Book 1 Will of
+  Mana`, an omnibus, and `Will of Mana (German)`. The usual relevance filter still
+  judges what is kept.
+
+  Known limits: a release with a co-author or narrator in its name is refused, as
+  is one that spells the position another way (`Fifth` for `5th`), one that
+  writes an apostrophe as a space, and one that names the author only by a
+  non-Latin alias. A different author who shares the surname and first name is
+  not told apart. If the cascade already returned something that looks relevant
+  (another book of the same series, say), this query is not sent.
+
+  Cost: a failing search on a qualifying title costs one extra query per indexer,
+  and the wanted sweep repeats it each time, with no per book backoff (the 90
+  second query cache does not span sweeps). 1,000 unfindable qualifying books on 5
+  indexers at the default 12 hour sweep is about 10,000 extra queries a day,
+  bounded by each indexer's daily query cap.
 - **Relevance.** A different position still does not match: `Book One` is not
   `Book 10`, `Book 2` or `Book Two`, and the part and set rules (`Book 1 of 2`,
   `Part 3 of 5`, box sets) judge a `Book One` title exactly as they judge `Book 1`.

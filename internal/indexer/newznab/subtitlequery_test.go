@@ -130,26 +130,55 @@ func TestBookSearch_SubtitleOnlyRejectsOtherAuthor(t *testing.T) {
 	}
 }
 
+func mustPlan(t *testing.T, title, author string) subtitleOnlyPlan {
+	t.Helper()
+	p, ok := subtitleOnlyQuery(title, author)
+	if !ok {
+		t.Fatalf("no plan for %q by %q", title, author)
+	}
+	return p
+}
+
 func TestSubtitleOnlyAccepts(t *testing.T) {
-	p := subtitleOnlyPlan{Query: "Arelius Will of Mana", Subtitle: "Will of Mana", Surname: "Arelius"}
+	p := mustPlan(t, subtitleTitle, "Ryan Arelius")
 	cases := []struct {
 		title, author string
 		want          bool
 	}{
+		// Names that are the book.
 		{"Will of Mana by Ryan Arelius [ENG / M4B]", "", true},
 		{"Will.of.Mana.Ryan.Arelius.M4B", "", true},
 		{"Arelius, Ryan - Will of Mana (epub)", "", true},
+		{"Ryan Arelius - Will of Mana", "", true},
 		{"Will of Mana", "Ryan Arelius", true}, // author attribute
+		{"Will of Mana by Ryan Arelius (2026) [English / MP3 / 64 kbps]", "", true},
+		{"Arelius Will of Mana", "", true},
+		{"Will of Mana Arelius", "", true},
+		{"Will_of_Mana-Arelius-ENG-M4B", "", true},
+		{"Ryan_Arelius-Will_of_Mana-ENG-M4B", "", true},
+
+		// Another author, another title, another book.
 		{"Will of Mana by Jane Doe", "", false},
 		{"Will of Mana", "", false},
 		{"Will of Mana by Jane Doe", "Jane Doe", false},
-		{"Mana of Will by Ryan Arelius", "", false},     // words out of order
-		{"Will and Mana by Ryan Arelius", "", false},    // not the whole subtitle
-		{"Will of the Mana by Ryan Arelius", "", false}, // words between
-		{"Arelius Will of Mana", "", true},              // surname before the subtitle is outside it
-		{"Will of Mana Arelius", "", true},
-		{"Will of Mana by Ryan Arelian", "", false},    // near miss surname
-		{"Will of Manager by Ryan Arelius", "", false}, // whole words only
+		{"Mana of Will by Ryan Arelius", "", false},
+		{"Will and Mana by Ryan Arelius", "", false},
+		{"Will of the Mana by Ryan Arelius", "", false},
+		{"Will of Mana by Ryan Arelian", "", false},
+		{"Will of Manager by Ryan Arelius", "", false},
+		{"Will of Mana by Ryan Smith", "", false},
+		// The review's eight: the subtitle is inside a longer name.
+		{"The Will of Mana Wars by Ryan Arelius", "", false},
+		{"Will of Mana Rising by Ryan Arelius", "", false},
+		{"Will of Mana 2 by Ryan Arelius", "", false},
+		{"Will of Mana Companion Guide by Ryan Arelius", "", false},
+		{"Ryan Arelius - Will of Mana (Other Saga Book 5)", "", false},
+		{"Ryan Arelius - Dragon Saga, Book 1 Will of Mana", "", false},
+		{"Path to Transcendence Omnibus Books 1-3 Will of Mana by Ryan Arelius", "", false},
+		{"Will of Mana (German)", "Ryan Arelius", false},
+		// Hyphenated surname.
+		{"Will of Mana by Ryan Arelius-Smith", "", false},
+		{"Will of Mana", "Ann Arelius-Smith", false},
 	}
 	for _, c := range cases {
 		got := subtitleOnlyAccepts(p, SearchResult{Title: c.title, Author: c.author})
@@ -158,12 +187,39 @@ func TestSubtitleOnlyAccepts(t *testing.T) {
 		}
 	}
 	// A surname that is also a subtitle word cannot vouch for itself.
-	self := subtitleOnlyPlan{Subtitle: "Will of Mana", Surname: "Mana"}
+	self := mustPlan(t, "Saga 1: Will of Mana", "Jane Mana")
 	if subtitleOnlyAccepts(self, SearchResult{Title: "Will of Mana by Jane Doe"}) {
 		t.Error("the surname matched inside the subtitle's own words")
 	}
 	if !subtitleOnlyAccepts(self, SearchResult{Title: "Will of Mana by Jane Mana"}) {
 		t.Error("the surname outside the subtitle was refused")
+	}
+	// Hyphen: Lee-Smith is not Lee, but Lee alone and a spaced hyphen are.
+	lee := mustPlan(t, subtitleTitle, "Ann Lee")
+	for title, want := range map[string]bool{
+		"Will of Mana by Ann Lee-Smith": false,
+		"Will of Mana by Ann Lee":       true,
+		"Ann Lee - Will of Mana":        true,
+	} {
+		if got := subtitleOnlyAccepts(lee, SearchResult{Title: title}); got != want {
+			t.Errorf("accepts(%q) = %v, want %v", title, got, want)
+		}
+	}
+	if subtitleOnlyAccepts(lee, SearchResult{Title: "Will of Mana", Author: "Ann Lee-Smith"}) {
+		t.Error("Lee-Smith in the author attribute accepted for Lee")
+	}
+	// "&" and "and", and a leading "The", compare equal.
+	amp := mustPlan(t, "Saga 1: The Sword & Sorcery", "Ann Lee")
+	for _, title := range []string{"Sword and Sorcery by Ann Lee", "Sword & Sorcery by Ann Lee", "The Sword and Sorcery by Ann Lee"} {
+		if !subtitleOnlyAccepts(amp, SearchResult{Title: title}) {
+			t.Errorf("refused %q", title)
+		}
+	}
+	if amp.Query != "Lee Sword Sorcery" {
+		t.Errorf("query = %q", amp.Query)
+	}
+	if subtitleOnlyAccepts(amp, SearchResult{Title: "The Sword and Sorcery Wars by Ann Lee"}) {
+		t.Error("longer title accepted")
 	}
 }
 
@@ -174,9 +230,14 @@ func TestSubtitleOnlyQuery(t *testing.T) {
 	}{
 		{"reporter", subtitleTitle, "Ryan Arelius", "Arelius Will of Mana"},
 		{"spelled out position", "Path to Transcendence, Book One: Will of Mana", "Ryan Arelius", "Arelius Will of Mana"},
-		{"series number", "Feral Mage 4: The Mining Company Contract", "Chase Kilgore", "Kilgore The Mining Company Contract"},
+		{"series number", "Feral Mage 4: The Mining Company Contract", "Chase Kilgore", "Kilgore Mining Company Contract"},
 		{"trailing qualifier", "Path to Transcendence, Book 1: Will of Mana (Unabridged)", "Ryan Arelius", "Arelius Will of Mana"},
 		{"two colons", "Series 2: Will of Mana: A Tale", "Ryan Arelius", "Arelius Will of Mana: A Tale"},
+		{"parenthetical author", subtitleTitle, "Ann Lee (Narrator)", "Lee Will of Mana"},
+		{"bracketed author", subtitleTitle, "Ann Lee [Narrator]", "Lee Will of Mana"},
+		{"trailing tag cut", "Series 2: Will of Mana - A LitRPG Adventure", "Ann Lee", "Lee Will of Mana"},
+		{"leading the and ampersand", "Series 2: The Sword & Sorcery", "Ann Lee", "Lee Sword Sorcery"},
+		{"colon kept", "Series 2: A Big: Small Thing", "Ann Lee", "Lee A Big: Small Thing"},
 		{"name suffix", subtitleTitle, "Ryan Arelius Jr.", "Arelius Will of Mana"},
 		{"author list", subtitleTitle, "Ryan Arelius & Jane Doe", "Arelius Will of Mana"},
 		{"mononym", subtitleTitle, "Arelius", "Arelius Will of Mana"},
