@@ -457,9 +457,6 @@ func (i *Importer) conflictingTrackedBook(ctx context.Context, cfg ImportConfig,
 // Fuzzy matches never count, so "Heather Gray" does not stand in for "Heather
 // Graham". Callers keep their own owner guard; this decides authorship only.
 func (i *Importer) creditedAuthorHolds(ctx context.Context, item NormalizedLibraryItem, matcher *authorMatcher, bookAuthor *models.Author) (bool, error) {
-	if bookAuthor == nil {
-		return false, nil
-	}
 	for idx, credited := range item.Authors {
 		if idx == 0 {
 			continue

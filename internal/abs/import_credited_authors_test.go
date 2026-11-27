@@ -201,3 +201,17 @@ func TestConflictingTrackedBook_CreditedAuthorTrustedAlias(t *testing.T) {
 		t.Fatalf("conflict = %+v err=%v, want the conflict kept", book, err)
 	}
 }
+
+// A failed foreign id lookup is reported, not read as "no match".
+func TestCreditedAuthorHolds_LookupError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	env := covImpNewEnv(t)
+	if err := env.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	item := NormalizedLibraryItem{LibraryID: "lib", Authors: creditedItemAuthors("Gene Kim", "Kevin Behr")}
+	if _, err := env.importer.creditedAuthorHolds(ctx, item, nil, &models.Author{ID: 1, Name: "Someone Else"}); err == nil {
+		t.Fatal("err = nil, want the lookup failure")
+	}
+}
