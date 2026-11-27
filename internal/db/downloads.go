@@ -55,7 +55,7 @@ func (r *DownloadRepo) ListByUser(ctx context.Context, userID int64) ([]models.D
 }
 
 // The queue view's list is two selects joined by UNION ALL, one per kind of
-// row it shows, so that each can use its own index (migration 138) and neither
+// row it shows, so that each can use its own index (migration 140) and neither
 // reads an import that is too old to list:
 //
 //   - activeOpenSelect: every row that is not imported, however old. The state
@@ -104,7 +104,7 @@ func activeQuery(userID int64, importedSince time.Time) (string, []any) {
 // then added_at for a row written before imported_at was stamped.
 //
 // It exists so the queue endpoint, which the UI polls every 5 seconds, does not
-// load and serialise the whole table on every request, and since migration 138
+// load and serialise the whole table on every request, and since migration 140
 // does not read the hidden rows either. The table gains a row per grab and
 // nothing removed old ones before TrimTerminal.
 func (r *DownloadRepo) ListActive(ctx context.Context, importedSince time.Time) ([]models.Download, error) {

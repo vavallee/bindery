@@ -139,7 +139,7 @@ func TestListActive_SameRowsAndOrderAsSingleStatement(t *testing.T) {
 	}
 }
 
-// TestListActive_PlanDoesNotWalkTheWholeTable is the reason for migration 138.
+// TestListActive_PlanDoesNotWalkTheWholeTable is the reason for migration 140.
 // The queue list must find the rows that are not imported through
 // idx_downloads_not_imported and the recent imports through
 // idx_downloads_status_finished. Before the migration the plan was a single
