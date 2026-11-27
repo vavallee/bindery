@@ -281,26 +281,41 @@ matches a release named `Path of the Deathless Book 1`, and the reverse.
   (`Ann Lee (Narrator)`) and `Jr.` are dropped; for a list (`A & B`, `A, B`, `A
   and B`) it is the first author's.
 
-  A result from this query is kept only when all of these hold. The name holds the
-  whole subtitle as consecutive words. Everything before and after the subtitle
-  is the author's name, `by`, or a language or format tag (`ENG`, `M4B`, `MP3`,
-  `epub`, `64 kbps`, a year); a leading `The` is allowed when the subtitle starts
-  with it. And the author's surname is a whole word elsewhere in the name, or in
-  the indexer's author attribute (`Lee-Smith` is not `Lee`). So these are kept:
-  `Will of Mana by Ryan Arelius [ENG / M4B]`, `Ryan Arelius - Will of Mana`,
-  `Will.of.Mana.Ryan.Arelius.M4B`. These are not: `Will of Mana by Jane Doe`
-  (another author, the loose reading removed in #3268), `Will of Mana Rising`,
-  `The Will of Mana Wars`, `Will of Mana 2`, `Will of Mana Companion Guide`,
-  `Ryan Arelius - Will of Mana (Other Saga Book 5)`, `Dragon Saga, Book 1 Will of
-  Mana`, an omnibus, and `Will of Mana (German)`. The usual relevance filter still
-  judges what is kept.
+  A result from this query is kept only when all of these hold:
+  - The name holds the whole subtitle as consecutive words.
+  - Before the subtitle there is only the author's name, `by` or a language or
+    format tag (`ENG`, `M4B`, `epub`, a year); a leading `The` is allowed when the
+    subtitle starts with it.
+  - After it, outside brackets, there is the author's name, `by`, a tag, or a
+    credit: `narrated by`, `read by`, `performed by`, `with`, or `and` or `&` after
+    the author's name, plus the names that follow. Any other word or a number
+    refuses the release.
+  - After it, a `[...]` or `(...)` segment may say anything (`[Audible]`, `[Podium
+    Audio]`, `[LitRPG]`, `[Complete]`, `(Audiobook)`, `[12h 30m]`), unless it
+    carries a position (`Book`, `Vol` or `Part` followed by a number, `Books
+    1-3`), `Omnibus`, `Trilogy`, `Box Set`, or a language other than English
+    (`German`, `[FR]`). `[Vol. 1]` is refused as a position marker, which is a
+    known limit.
+  - The author's surname is a whole word elsewhere in the name, or in the
+    indexer's author attribute (`Lee-Smith` is not `Lee`).
 
-  Known limits: a release with a co-author or narrator in its name is refused, as
-  is one that spells the position another way (`Fifth` for `5th`), one that
-  writes an apostrophe as a space, and one that names the author only by a
-  non-Latin alias. A different author who shares the surname and first name is
-  not told apart. If the cascade already returned something that looks relevant
-  (another book of the same series, say), this query is not sent.
+  Kept: `Will of Mana by Ryan Arelius [ENG / M4B]`, `Ryan Arelius - Will of Mana`,
+  `Will.of.Mana.Ryan.Arelius.M4B`, `Will of Mana by Ryan Arelius, narrated by
+  Travis Baldree [M4B]`, `Will of Mana by Ryan Arelius & Jane Doe [M4B]`, `Ryan
+  Arelius - Will of Mana [Audible] [M4B]`, `Will of Mana - Ryan Arelius [LitRPG]
+  [M4B]`, `Ryan Arelius - Will of Mana (Audiobook) [12h 30m]`. Refused: `Will of
+  Mana by Jane Doe` (another author, the loose reading removed in #3268), `Will of
+  Mana Rising`, `The Will of Mana Wars`, `Will of Mana 2`, `Will of Mana Companion
+  Guide`, `Ryan Arelius - Will of Mana (Other Saga Book 5)`, `Dragon Saga, Book 1
+  Will of Mana`, an omnibus, `Will of Mana (German)`. The usual relevance filter
+  still judges what is kept.
+
+  Known limits: a release that spells the position another way (`Fifth` for
+  `5th`), writes an apostrophe as a space, names the author only by a non-Latin
+  alias, or carries `[Vol. 1]` is refused. A different author with the same first
+  name and surname is not told apart. If the cascade already returned something
+  that looks relevant (another book of the same series, say), this query is not
+  sent.
 
   Cost: a failing search on a qualifying title costs one extra query per indexer,
   and the wanted sweep repeats it each time, with no per book backoff (the 90

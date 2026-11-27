@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode"
 )
 
@@ -156,6 +157,32 @@ func TestSubtitleOnlyAccepts(t *testing.T) {
 		{"Will of Mana Arelius", "", true},
 		{"Will_of_Mana-Arelius-ENG-M4B", "", true},
 		{"Ryan_Arelius-Will_of_Mana-ENG-M4B", "", true},
+
+		// Audiobook credits and bracketed notes after the subtitle.
+		{"Will of Mana by Ryan Arelius, narrated by Travis Baldree [M4B]", "", true},
+		{"Will of Mana by Ryan Arelius read by Travis Baldree", "", true},
+		{"Ryan Arelius - Will of Mana [Audible] [M4B]", "", true},
+		{"Will of Mana by Ryan Arelius [Podium Audio] [M4B]", "", true},
+		{"Will of Mana by Ryan Arelius & Jane Doe [M4B]", "", true},
+		{"Will of Mana by Ryan Arelius and Jane Doe", "", true},
+		{"Will of Mana - Ryan Arelius [LitRPG] [M4B]", "", true},
+		{"Will of Mana by Ryan Arelius [Complete] [M4B]", "", true},
+		{"Ryan Arelius - Will of Mana (Audiobook) [12h 30m]", "", true},
+		{"Will of Mana by Ryan Arelius [M4B] [Aud. Book]", "", true},
+		{"Will of Mana by Ryan Arelius [Dragon Saga]", "", true},
+		// Bracketed notes that name a position, another book or language.
+		{"Will of Mana by Ryan Arelius [Vol. 1]", "", false},
+		{"Will of Mana by Ryan Arelius [Books 1-3]", "", false},
+		{"Will of Mana by Ryan Arelius [Box Set]", "", false},
+		{"Will of Mana by Ryan Arelius (Other Saga, Book One)", "", false},
+		{"Will of Mana by Ryan Arelius [Trilogy]", "", false},
+		{"Will of Mana by Ryan Arelius [FR] [M4B]", "", false},
+		{"Will of Mana by Ryan Arelius [German / M4B]", "", false},
+		// Unbracketed extras and credits that carry a number or a stray word.
+		{"Will of Mana by Ryan Arelius narrated by Travis Baldree Book 2", "", false},
+		{"Will of Mana by Ryan Arelius Unofficial Guide", "", false},
+		{"Will of Mana by Jane Doe narrated by Travis Baldree", "", false},
+		{"Will of Mana by Jane Doe & Bob Roe [M4B]", "", false},
 
 		// Another author, another title, another book.
 		{"Will of Mana by Jane Doe", "", false},
@@ -366,5 +393,30 @@ func TestBookSearch_SubtitleOnlyVariantBudget(t *testing.T) {
 	}
 	if len(queries()) > total-1 {
 		t.Errorf("sent %d queries past a budget of %d", len(queries()), total-1)
+	}
+}
+
+// A name built to make a naive search loop (every word a hyphenated surname
+// match, brackets never closed) still ends.
+func TestSubtitleOnlyAcceptsTerminates(t *testing.T) {
+	p := mustPlan(t, subtitleTitle, "Ann Lee")
+	names := []string{
+		"Will of Mana " + strings.Repeat("Lee-Smith ", 20000),
+		strings.Repeat("Lee-Lee-Lee ", 20000) + "Will of Mana",
+		"Will of Mana " + strings.Repeat("[", 20000) + strings.Repeat("Lee-", 20000),
+		strings.Repeat("Will of Mana ", 5000) + strings.Repeat("Lee-Smith ", 5000),
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, n := range names {
+			// Only that it returns: whether such a name is kept is not the point.
+			subtitleOnlyAccepts(p, SearchResult{Title: n, Author: strings.Repeat("Lee-Smith ", 5000)})
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("subtitleOnlyAccepts did not return")
 	}
 }

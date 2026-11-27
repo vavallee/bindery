@@ -44,21 +44,27 @@ type subtitleOnlyPlan struct {
 	Author   string // "Ryan Arelius", every name word a release may carry
 }
 
-// releaseTag is one word of a release name, folded, with whether a bare hyphen
-// joins it to the next word ("Lee-Smith").
+// releaseTag is one word of a release name, folded. joinNext says a bare hyphen
+// joins it to the next word ("Lee-Smith"). group is 0 outside brackets and the
+// number of the [..] or (..) segment it sits in otherwise. afterAnd says "and" or
+// "&" came directly before it.
 type releaseTag struct {
 	w        string
 	joinNext bool
+	group    int
+	afterAnd bool
 }
 
 // tagWords splits s into folded words. Apostrophes stay inside a word ("Ender's"
-// is "enders"), every other non letter is a break, and "and" is dropped so "&"
-// (which is no word at all) and "and" compare equal. Only a lone "-" between two
-// words counts as joining them, so "Lee-Smith" is one name and "Arelius - Will"
-// or a scene style "Mana-ENG" is not.
+// is "enders"), every other non letter is a break, and "and" is dropped (and
+// recorded on the next word) so "&" and "and" compare equal. Only a lone "-"
+// between two words counts as joining them, so "Lee-Smith" is one name and
+// "Arelius - Will" or a scene style "Mana-ENG" is not.
 func tagWords(s string) []releaseTag {
 	var out []releaseTag
 	var run, sep []rune
+	depth, groups, cur := 0, 0, 0
+	andSeen := false
 	flush := func() {
 		if len(run) == 0 {
 			return
@@ -66,13 +72,16 @@ func tagWords(s string) []releaseTag {
 		words := strings.Fields(textutil.FoldForTitleMatch(string(run)))
 		run = run[:0]
 		for _, w := range words {
-			if w != "and" {
-				out = append(out, releaseTag{w: w})
+			if w == "and" {
+				andSeen = true
+				continue
 			}
+			out = append(out, releaseTag{w: w, group: cur, afterAnd: andSeen})
+			andSeen = false
 		}
 	}
 	for _, r := range s {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsMark(r) || r == '\'' || r == '’' {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsMark(r) || r == '\'' || r == '\u2019' {
 			if len(run) == 0 && len(out) > 0 && string(sep) == "-" {
 				out[len(out)-1].joinNext = true
 			}
@@ -83,6 +92,23 @@ func tagWords(s string) []releaseTag {
 			continue
 		}
 		flush()
+		switch r {
+		case '[', '(':
+			if depth == 0 {
+				groups++
+				cur = groups
+			}
+			depth++
+		case ']', ')':
+			if depth > 0 {
+				depth--
+				if depth == 0 {
+					cur = 0
+				}
+			}
+		case '&':
+			andSeen = true
+		}
 		sep = append(sep, r)
 	}
 	flush()
@@ -241,16 +267,83 @@ func phraseSpan(tokens, phrase []string, from int) (int, int) {
 	return -1, -1
 }
 
+// creditWords introduce a credit ("narrated by Travis Baldree", "with ...").
+// The words that follow are names, whatever they are, until the name stops.
+var creditWords = map[string]bool{
+	"narrated": true, "narrator": true, "narrators": true, "read": true, "performed": true,
+	"performer": true, "with": true, "featuring": true, "feat": true, "ft": true,
+}
+
+// bracketLanguages are languages, as words and ISO tags, that refuse a release
+// when they appear in a bracketed segment. English is not among them.
+var bracketLanguages = map[string]bool{
+	"german": true, "deutsch": true, "french": true, "francais": true, "spanish": true, "espanol": true,
+	"italian": true, "italiano": true, "dutch": true, "nederlands": true, "russian": true, "japanese": true,
+	"chinese": true, "portuguese": true, "polish": true, "swedish": true, "danish": true, "norwegian": true,
+	"finnish": true, "czech": true, "korean": true, "turkish": true, "hungarian": true, "latin": true,
+	"de": true, "ger": true, "deu": true, "fr": true, "fre": true, "fra": true, "es": true, "spa": true,
+	"it": true, "ita": true, "nl": true, "dut": true, "ru": true, "rus": true, "ja": true, "jpn": true,
+	"zh": true, "chi": true, "pt": true, "por": true, "pl": true, "pol": true, "sv": true, "swe": true,
+}
+
+var positionMarkers = map[string]bool{
+	"book": true, "books": true, "bk": true, "vol": true, "vols": true, "volume": true, "volumes": true,
+	"part": true, "parts": true, "pt": true,
+}
+
+// carriesPosition reports whether the words hold a series or position marker: a
+// book, volume or part word followed by a number or number word, an omnibus or
+// trilogy, or a box set.
+func carriesPosition(words []string) bool {
+	for i, w := range words {
+		switch w {
+		case "omnibus", "trilogy", "duology", "quartet":
+			return true
+		case "box":
+			if i+1 < len(words) && words[i+1] == "set" {
+				return true
+			}
+		}
+		if positionMarkers[w] && i+1 < len(words) {
+			n := words[i+1]
+			if _, ok := numberWords[n]; ok || isAllDigits(n) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bracketRefused reports whether a bracketed segment names another book, a
+// position or a language other than English.
+func bracketRefused(words []string) bool {
+	if carriesPosition(words) {
+		return true
+	}
+	for _, w := range words {
+		if bracketLanguages[w] {
+			return true
+		}
+	}
+	return false
+}
+
 // subtitleOnlyAccepts reports whether a result from the subtitle only query is
 // the wanted book. All of these must hold:
 //
 //   - the release name holds the whole subtitle as consecutive words;
-//   - everything before and after those words is the author's name, "by", or a
-//     language or format tag ("[ENG / M4B]", "64 kbps", a year). Another title
-//     word ("Will of Mana Rising", "The Will of Mana Wars"), a number ("Will of
-//     Mana 2"), a series note ("(Other Saga Book 5)", "Dragon Saga, Book 1 Will of
-//     Mana"), an omnibus marker or another language ("(German)") refuses it. A
-//     leading "The" is allowed when the subtitle itself starts with it;
+//   - before the subtitle there is only the author's name, "by", or a language or
+//     format tag, and a leading "The" when the subtitle starts with it;
+//   - after it, outside brackets, there is the author's name, "by", a tag, or a
+//     credit: "narrated by X", "read by X", "with X", or "and X" once the
+//     author's name has been seen, and the names that follow. Another title word
+//     ("Will of Mana Rising"), a number ("Will of Mana 2") or a stray word refuses
+//     it;
+//   - after it, a [..] or (..) segment of any content is allowed ([Audible],
+//     [Podium Audio], [LitRPG], [Complete], (Audiobook), [12h 30m]), except one
+//     that carries a series or position marker (Book, Vol, Part followed by a
+//     number, Omnibus, Trilogy, Box Set, "Books 1-3"; so "[Vol. 1]" is refused),
+//     or a language other than English ("(German)", "[FR]");
 //   - the author's surname is a whole word outside the subtitle's words, or in
 //     the indexer's author attribute. "Lee-Smith" is not "Lee".
 //
@@ -277,48 +370,85 @@ func subtitleOnlyAccepts(p subtitleOnlyPlan, r SearchResult) bool {
 	for _, t := range tagWords(p.Surname) {
 		allowed[t.w] = true
 	}
-	for i, w := range words {
-		if i >= start && i < end {
-			continue
-		}
-		if allowed[w] || subtitleReleaseTags[w] || yearRe.MatchString(w) || bitrateRe.MatchString(w) {
-			continue
-		}
-		if allowThe && w == "the" && i == start-1 {
-			continue
-		}
-		// A bitrate written "128 kbps".
-		if i+1 < len(words) && i >= end && words[i+1] == "kbps" && len(w) >= 2 && len(w) <= 3 && isAllDigits(w) {
+	if !surnameOutsideSubtitle(p, rel, start, end, allowed, r.Author) {
+		return false
+	}
+	plain := func(w string) bool {
+		return allowed[w] || subtitleReleaseTags[w] || yearRe.MatchString(w) || bitrateRe.MatchString(w)
+	}
+	for i := 0; i < start; i++ {
+		w := words[i]
+		if plain(w) || (allowThe && w == "the" && i == start-1) {
 			continue
 		}
 		return false
 	}
-	// The surname, as a whole word and not inside the subtitle's own words.
-	// The sentinel keeps the phrase from bridging the gap the subtitle leaves
-	// or the release's name and its author attribute.
+	groupWords := map[int][]string{}
+	for _, t := range rel[end:] {
+		if t.group > 0 {
+			groupWords[t.group] = append(groupWords[t.group], t.w)
+		}
+	}
+	for _, gw := range groupWords {
+		if bracketRefused(gw) {
+			return false
+		}
+	}
+	names := false
+	for i := end; i < len(rel); i++ {
+		t := rel[i]
+		if t.group > 0 {
+			continue
+		}
+		switch {
+		case names:
+			// Names of a credit: anything but a number or a position word.
+			if isAllDigits(t.w) || positionMarkers[t.w] || carriesPosition([]string{t.w}) {
+				return false
+			}
+		case creditWords[t.w]:
+			names = true
+		case t.afterAnd:
+			names = true
+		case plain(t.w):
+		case isAllDigits(t.w) && len(t.w) >= 2 && len(t.w) <= 3 && i+1 < len(rel) && rel[i+1].w == "kbps":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// surnameOutsideSubtitle reports whether the author's surname is a whole word
+// of the release name outside the subtitle's words, or of the author attribute.
+// The sentinel keeps the phrase from bridging the gap the subtitle leaves or the
+// release's name and its author attribute. A hyphen to another name word makes a
+// longer surname ("Lee-Smith"); one to a tag ("Arelius-ENG") is only a scene
+// style separator. The search moves forward on every pass and is bounded by the
+// length of the name, so no input can keep it running.
+func surnameOutsideSubtitle(p subtitleOnlyPlan, rel []releaseTag, start, end int, allowed map[string]bool, authorAttr string) bool {
 	sentinel := releaseTag{w: "|"}
 	rest := append([]releaseTag{}, rel[:start]...)
 	rest = append(rest, sentinel)
 	rest = append(rest, rel[end:]...)
 	rest = append(rest, sentinel)
-	rest = append(rest, tagWords(r.Author)...)
+	rest = append(rest, tagWords(authorAttr)...)
 	restWords := tagStrings(rest)
 	want := tagStrings(tagWords(p.Surname))
-	for from := 0; ; {
+	joins := func(w string) bool { return w != "|" && !allowed[w] && !subtitleReleaseTags[w] }
+	for from := 0; from < len(restWords); from++ {
 		s, e := phraseSpan(restWords, want, from)
 		if s < 0 {
 			return false
 		}
-		// A hyphen to another name word makes a longer surname; one to a tag
-		// ("Arelius-ENG") is only a scene style separator.
-		joins := func(w string) bool { return w != "|" && !allowed[w] && !subtitleReleaseTags[w] }
 		joinedBefore := s > 0 && rest[s-1].joinNext && joins(rest[s-1].w)
 		joinedAfter := rest[e-1].joinNext && e < len(rest) && joins(rest[e].w)
 		if !joinedBefore && !joinedAfter {
 			return true
 		}
-		from = s + 1
+		from = s // the loop's own increment moves past s
 	}
+	return false
 }
 
 // subtitleOnlyVariant is the subtitle only fallback (#4183). A book titled
