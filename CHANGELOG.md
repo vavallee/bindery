@@ -4,6 +4,21 @@ All notable changes to Bindery are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com) and versions follow
 [Semantic Versioning](https://semver.org).
 
+## [v1.53.3] - 2026-11-27
+
+A patch release with two search fixes from reports since v1.53.2, and two speedups for large libraries found by a new performance test run. Two small database migrations (138 and 140) run on their own at startup. Nothing needs configuring. The search fixes change which releases rank first for the books they describe.
+
+### Upgrade notes
+- **Rolling back to v1.53.2 does not work without restoring a backup, so take a backup before upgrading.** Migrations 138 and 140 stay recorded in the database, and an older binary refuses to start on a `schema_migrations` table with a version it does not know. Both only add indexes and take well under a second.
+
+### Changed
+- **OPDS author and recently added feeds no longer slow down as the library grows** (#4184). Opening Authors in a reading app took about a second on a library of 40,000 books and 2,000 authors, and Recently Added about 0.6 seconds, because Bindery asked the database for each author's books in turn and loaded every imported book to find the newest 50. Both are now answered by a single query each (Authors about 25 ms, Recently Added about 3 ms at that size), with the same entries in the same order. A user's Series feed on a multi user install gets the same treatment. Upgrading adds one small index to the books table.
+- **The Queue page's 5 second refresh is cheaper on installs with a long download history** (#4186). The refresh used to read every row of the downloads table to find the ones it lists, and loaded each listed row's whole book to show a title and an author. It now reads only the rows it returns and only those two names. On a 40,000 book library with about 10,000 downloads the request went from 85 ms to 37 ms, and imports older than the 7 day window no longer cost anything. The response of `GET /api/v1/queue` is unchanged. The History page and pending releases get the same lighter book lookup. Upgrading adds two indexes to the downloads table (migration 140), which takes well under a second.
+
+### Fixed
+- Search no longer prefers a later numbered volume for a book whose volume it does not know (#4173). A wanted title that numbers itself, such as "Corruption Wielder: Book 1" or "Stone vs. Viper, Book 2", now rejects a release like "Corruption Wielder 04" or "Stone vs. Viper 15", because the number in the title stands in for the missing series position, including when the number follows the subtitle. A plain title with no stored position can really be any volume, so a release like "Darling of Fate 02" or "Dungeon Tour Guide 2 by Aaron Shih" is not rejected, but it now ranks below an unnumbered or "1" release of the same quality. Thanks to camerontaylor for the report and the table of examples.
+- **Books whose title abbreviates the volume now find releases that spell it out** (#4176). A book such as `Under the Oak Tree (Novel), Vol. 1` stayed Wanted on indexers that need every query word in the release name (MyAnonamouse through Prowlarr), because every query said `Vol.` and the release is named `Volume 1`. When a search ends without a relevant result, Bindery now sends one more title only query per indexer with the marker spelled out (`Vol` or `Vol.` as `Volume`, `Bk` as `Book`, `Pt` as `Part`, only before a digit). It counts against the indexer's daily query cap and shows in the search debug panel as `volumeMarkerQuery`. A search that already finds its book, or a title with no abbreviated marker, sends nothing extra. Queries for titles with a removed qualifier such as `(Novel)` also no longer carry a stray space before the comma. Thanks to huepotman for the report and the indexer logs.
+
 ## [v1.53.2] - 2026-11-24
 
 A security hardening patch from a review of v1.53.1. Most changes tighten what Bindery accepts from remote services and from files it did not write. There is nothing to configure and no migration. The behaviour changes that could affect an existing install are in the upgrade notes. Anyone running `auth.mode` `local-only` behind a reverse proxy should update.
