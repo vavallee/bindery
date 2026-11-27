@@ -175,3 +175,29 @@ func TestImporter_CreditedAuthorLinksTrackedBook(t *testing.T) {
 		t.Errorf("provenance empty, want the item linked to the book holding its file")
 	}
 }
+
+// A later credited author that resolves through a trusted alias counts, the
+// same way the first author does.
+func TestConflictingTrackedBook_CreditedAuthorTrustedAlias(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFileIdentityFixture(t, models.MediaTypeEbook, "Olivia Chase", "Gene Kim", noOwner, noOwner)
+	if err := f.env.aliases.Create(ctx, &models.AuthorAlias{AuthorID: f.authorID, Name: "Olivia Ash", SourceOLID: "OL79034A"}); err != nil {
+		t.Fatalf("create alias: %v", err)
+	}
+	f.item.Authors = creditedItemAuthors("Gene Kim", "  ", "Olivia Ash")
+	matcher, err := f.env.importer.newAuthorMatcher(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, _, err := f.env.importer.conflictingTrackedBook(ctx, ImportConfig{}, f.item, matcher)
+	if err != nil || book != nil {
+		t.Fatalf("conflict = %+v err=%v, want none: the alias names the book's author", book, err)
+	}
+	// Without the alias the same item conflicts.
+	f.item.Authors = creditedItemAuthors("Gene Kim", "Olivia Elsewhere")
+	book, _, err = f.env.importer.conflictingTrackedBook(ctx, ImportConfig{}, f.item, matcher)
+	if err != nil || book == nil {
+		t.Fatalf("conflict = %+v err=%v, want the conflict kept", book, err)
+	}
+}
