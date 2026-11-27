@@ -175,6 +175,19 @@ func (r *Remapper) ApplyInverseMatched(p string) (string, bool) {
 	return joinRemainder(best.from, best.fromWin, best.fromSep, bestRest, best.toWin), true
 }
 
+// Targets lists the Bindery side path of every rule, the folders the remap
+// says the service's files appear in on this host.
+func (r *Remapper) Targets() []string {
+	if r == nil {
+		return nil
+	}
+	out := make([]string, 0, len(r.rules))
+	for _, rule := range r.rules {
+		out = append(out, rule.to)
+	}
+	return out
+}
+
 // Empty reports whether the remapper has no rules.
 func (r *Remapper) Empty() bool {
 	return r == nil || len(r.rules) == 0

@@ -135,7 +135,7 @@ A SABnzbd or NZBGet download in Auto, Hardlink or Move mode is imported by movin
 
 ## RAR-packed torrent releases
 
-Some releases, scene audiobooks especially, are packed as a RAR set: `Title.part1.rar`, `Title.part2.rar`… or `Title.rar`, `Title.r00`, `Title.r01`…. Bindery does not unpack archives. For Usenet that is never a problem, since SABnzbd and NZBGet unpack a job before they report it complete. For torrents, run an unpacker next to Bindery.
+Some releases, scene audiobooks especially, are packed as a RAR set: `Title.part1.rar`, `Title.part2.rar`… or `Title.rar`, `Title.r00`, `Title.r01`…. Bindery does not unpack RAR or 7z archives. For Usenet that is never a problem, since SABnzbd and NZBGet unpack a job before they report it complete. For torrents, run an unpacker next to Bindery. A `.zip` in a Usenet job is the one archive Bindery unpacks itself, see [Troubleshooting](Troubleshooting-Wiki.md#waiting-for--to-be-extracted).
 
 [unpackerr](https://github.com/Unpackerr/unpackerr) is the usual choice. Point a **folder** watch at the torrent download folder with:
 

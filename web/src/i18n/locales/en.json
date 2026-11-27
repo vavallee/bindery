@@ -2249,6 +2249,8 @@
       "dropLinkHardlink": "Hardlink (same filesystem)",
       "writeOPFSidecar": "Write a metadata.opf sidecar",
       "writeOPFSidecarHint": "Write a Calibre-style metadata.opf file next to each imported book, carrying Bindery's own title, author, series, identifiers, and other catalogue metadata — regardless of what the downloaded file's own embedded tags say. Also refreshed when you run Reorganize. Never modifies the book file itself, only adds this extra file. Off by default.",
+      "extractZip": "Extract ZIP archives of usenet downloads",
+      "extractZipHint": "When a SABnzbd or NZBGet job holds only a .zip, unpack it in place and import the book inside. Bindery only does this inside its own download folders, never for torrents, and skips password protected files and anything unusually large. RAR and 7z are not unpacked here: the download client or an unpacker such as unpackerr has to do that. On by default.",
       "bookTemplate": "Book Naming Template",
       "audiobookTemplate": "Audiobook Folder Template",
       "audiobookTemplateHint": "Audiobooks are imported as whole directories (multi-part m4b/mp3 + cover stay together). Template produces the destination folder; original filenames inside are preserved.",

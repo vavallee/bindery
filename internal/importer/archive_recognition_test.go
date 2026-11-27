@@ -32,12 +32,12 @@ func TestIsBookFile_CbzAndEpubAreNotArchives(t *testing.T) {
 
 func TestArchiveWaitMessage_NamesTheArchiveType(t *testing.T) {
 	for _, tc := range []struct{ file, want string }{
-		{"/d/a.zip", "this download holds only an archive (ZIP), and Bindery does not unpack archives"},
+		{"/d/a.zip", "this download holds only an archive (ZIP)."},
 		{"/d/a.7z", "this download holds only an archive (7z), and Bindery does not unpack archives"},
 		{"/d/a.7z.001", "this download holds only an archive (7z), and Bindery does not unpack archives"},
 		{"/d/a.rar", "this download holds only an archive, and Bindery does not unpack archives"},
 	} {
-		msg := archiveWaitMessage(tc.file, "/d")
+		msg := archiveWaitMessage(tc.file, "/d", "")
 		if !strings.Contains(msg, "waiting for "+filepath.Base(tc.file)+" to be extracted") || !strings.Contains(msg, tc.want) || !strings.Contains(msg, "unpackerr") {
 			t.Errorf("%s: %q", tc.file, msg)
 		}

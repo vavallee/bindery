@@ -30,6 +30,8 @@ import (
 // NOT included: .nfo, cover art, .cue, booklets — files some users want kept.
 var downloadArtifactExts = map[string]bool{
 	".nzb": true, ".par2": true, ".sfv": true, ".srr": true, ".srs": true, ".diz": true,
+	// Left in a usenet job folder once its ZIP files were extracted (#4131).
+	zipExtractedMarker: true,
 }
 
 // isDownloadArtifact reports whether name has a download-artifact extension
@@ -60,19 +62,29 @@ func archiveKind(name string) string {
 }
 
 // archiveWaitMessage is what a download that holds only an archive says it is
-// waiting for. The archive type is named for a ZIP or 7z; the RAR text is
-// unchanged.
-func archiveWaitMessage(archive, dir string) string {
+// waiting for. A RAR or 7z set needs an unpacker; a ZIP is extracted by Bindery
+// itself when it may, so note says why it still is one (extraction is off, the
+// download is not a usenet one, and so on) and what the extraction did.
+func archiveWaitMessage(archive, dir, note string) string {
 	base := filepath.Base(archive)
-	kind := ""
-	if k := archiveKind(base); k != "RAR" {
-		kind = " (" + k + ")"
+	var msg string
+	switch archiveKind(base) {
+	case "ZIP":
+		msg = fmt.Sprintf("waiting for %s to be extracted: this download holds only an archive (ZIP).", base)
+	case "7z":
+		msg = fmt.Sprintf("waiting for %s to be extracted: this download holds only an archive (7z), and Bindery does not unpack archives.", base)
+	default:
+		msg = fmt.Sprintf("waiting for %s to be extracted: this download holds only an archive, and Bindery does not unpack archives.", base)
 	}
-	return fmt.Sprintf("waiting for %s to be extracted: this download holds only an archive%s, and Bindery does not unpack archives. An unpacker such as unpackerr has to extract it into %q; the import runs once the files are there.", base, kind, dir)
+	if note != "" {
+		msg += " " + note
+	}
+	return msg + fmt.Sprintf(" An unpacker such as unpackerr has to extract it into %q; the import runs once the files are there.", dir)
 }
 
 // isArchivePart reports whether name is a volume of a RAR set, or a ZIP or 7z
-// archive. Bindery does not unpack archives (#3203, #4131): a release packed as one waits for an unpacker
+// archive. Bindery does not unpack RAR or 7z (#3203, #4131): a release packed as one
+// waits for an unpacker
 // such as unpackerr to extract it into the download's folder, and once it has,
 // the volumes are kept out of the library by copy and hardlink placements, like
 // the other download artifacts, and stay with the client. A move of a whole

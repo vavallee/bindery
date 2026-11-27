@@ -77,7 +77,7 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 				}
 				slog.Info("download completed", "title", dl.Title, "path", localPath)
 				s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
-				s.tryImportSABnzbd(withClientDownloadRoots(ctx, s.usenetClientRoots(client, slot.Category)), sab, dl, slot.NzoID, localPath)
+				s.tryImportSABnzbd(withZipExtractRoots(withClientDownloadRoots(ctx, s.usenetClientRoots(client, slot.Category)), s.usenetExtractRoots(client)), sab, dl, slot.NzoID, localPath)
 			} else if dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
 				// Bug #7: retry a previously failed import.
 				localPath := s.remapDownloadClientPath(client, slot.Path)
@@ -90,7 +90,7 @@ func (s *Scanner) checkSABnzbdDownloads(ctx context.Context, client *models.Down
 				if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
 					slog.Warn("failed to increment import retry count", "download_id", dl.ID, "error", err)
 				}
-				s.tryImportSABnzbd(withClientDownloadRoots(ctx, s.usenetClientRoots(client, slot.Category)), sab, dl, slot.NzoID, localPath)
+				s.tryImportSABnzbd(withZipExtractRoots(withClientDownloadRoots(ctx, s.usenetClientRoots(client, slot.Category)), s.usenetExtractRoots(client)), sab, dl, slot.NzoID, localPath)
 			}
 		case "Failed":
 			if dl.Status != models.StateFailed {
@@ -168,7 +168,7 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 				slog.Info("download completed", "title", dl.Title, "path", localPath)
 				s.noteNZBGetCompletion(client, item)
 				s.updateDownloadStatus(ctx, dl.ID, models.StateCompleted)
-				s.tryImportNZBGet(withClientDownloadRoots(ctx, s.usenetClientRoots(client, item.Category)), ng, dl, item.NZBID, localPath)
+				s.tryImportNZBGet(withZipExtractRoots(withClientDownloadRoots(ctx, s.usenetClientRoots(client, item.Category)), s.usenetExtractRoots(client)), ng, dl, item.NZBID, localPath)
 			} else if dl.Status == models.StateImportFailed && dl.ImportRetryCount < importRetryLimit {
 				// Bug #7: retry a previously failed import.
 				localPath := s.remapDownloadClientPath(client, item.DestDir)
@@ -181,7 +181,7 @@ func (s *Scanner) checkNZBGetDownloads(ctx context.Context, client *models.Downl
 				if err := s.downloads.IncrementImportRetryCount(ctx, dl.ID); err != nil {
 					slog.Warn("failed to increment import retry count", "download_id", dl.ID, "error", err)
 				}
-				s.tryImportNZBGet(withClientDownloadRoots(ctx, s.usenetClientRoots(client, item.Category)), ng, dl, item.NZBID, localPath)
+				s.tryImportNZBGet(withZipExtractRoots(withClientDownloadRoots(ctx, s.usenetClientRoots(client, item.Category)), s.usenetExtractRoots(client)), ng, dl, item.NZBID, localPath)
 			}
 		} else if nzbget.IsFailure(item.Status) {
 			if dl.Status != models.StateFailed {

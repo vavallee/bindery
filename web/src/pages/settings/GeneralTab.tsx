@@ -695,6 +695,28 @@ export function GeneralSettings({ sections, onNavigate }: GeneralSettingsProps) 
               </span>
             </label>
           </div>
+          <div id="import.extract_zip" className="border-t border-slate-200 dark:border-zinc-800 pt-3">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={settings['import.extract_zip'] !== 'false'}
+                onChange={async e => {
+                  const v = e.target.checked ? 'true' : 'false'
+                  setSettings(s => ({ ...s, 'import.extract_zip': v }))
+                  await autoSave('import.extract_zip', () => api.setSetting('import.extract_zip', v), { previous: settings['import.extract_zip'], next: v, revert: to => restoreSetting(setSettings, 'import.extract_zip', to) })
+                }}
+              />
+              <span>
+                <span className="text-xs font-medium text-slate-700 dark:text-zinc-300">
+                  {t('settings.general.extractZip', 'Extract ZIP archives of usenet downloads')}
+                </span>
+                <span className="block text-xs text-fg-muted">
+                  {t('settings.general.extractZipHint', 'When a SABnzbd or NZBGet job holds only a .zip, unpack it in place and import the book inside. Bindery only does this inside its own download folders, never for torrents, and skips password protected files and anything unusually large. RAR and 7z are not unpacked here: the download client or an unpacker such as unpackerr has to do that. On by default.')}
+                </span>
+              </span>
+            </label>
+          </div>
           <NamingTemplateField
             anchorId="naming.bookTemplate"
             label={t('settings.general.bookTemplate')}

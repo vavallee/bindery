@@ -604,7 +604,30 @@ If the files never appear, it does not wait forever: after about 30 minutes of f
 
 ### "Waiting for … to be extracted"
 
-The download's folder holds an archive (`Title.part1.rar`, or `Title.rar` and `Title.r00`…, a `.zip`, a `.7z` or a split `.7z.001`) and no book file yet. `.zip`, `.7z` and split `.7z` archives are recognised like `.rar`, and the message names the archive and its type. Bindery does not unpack archives, so it waits, without spending import retries, for an unpacker such as unpackerr, or the download client, to extract the files into the download's folder, and imports them as soon as they appear. If nothing extracts it within about 30 minutes, the download is blocked with *this download holds only an archive*. Set up an unpacker as described in [Storage and Hardlinks, RAR-packed torrent releases](Storage-And-Hardlinks-Wiki.md#rar-packed-torrent-releases), or extract the archive into the folder yourself, then use **Retry import**. A `.cbz` or `.epub` is a book file, not an archive, and is imported as one.
+The download's folder holds an archive (`Title.part1.rar`, or `Title.rar` and `Title.r00`…, a `.7z`, or a `.zip`) and no book file yet. Bindery waits, without spending import retries, for the files to be extracted into the download's folder, and imports them as soon as they appear. If nothing extracts it within about 30 minutes, the download is blocked with *this download holds only an archive*. The message names the archive and its type.
+
+- **RAR and 7z** are never unpacked by Bindery. Usenet clients unpack them before they report a job complete. For torrents, or a client that does not, set up an unpacker as described in [Storage and Hardlinks, RAR-packed torrent releases](Storage-And-Hardlinks-Wiki.md#rar-packed-torrent-releases), such as unpackerr, or extract the archive into the folder yourself, then use **Retry import**.
+- **ZIP** is the container SABnzbd and NZBGet leave alone, and scene ebook releases, German ones especially, are often a zip that holds a rar that holds the EPUB. Bindery unpacks the zip itself, with no external tool, when the setting **Extract ZIP archives of usenet downloads** (`import.extract_zip`, Settings, File Naming) is on, which is the default. It extracts one level: a zip that comes out of a zip is left alone, and so is a RAR that comes out of it, which then waits for an unpacker as above. The zip stays in the folder with a small marker file (`.bindery-extracted-zip`) that stops a retry from opening anything again. In copy mode nothing in the folder is removed afterwards: the zip, the extracted files and the marker stay with the download client's job, as the other files of a job do. Hardlink mode behaves like move mode for a usenet job (Bindery moves usenet files rather than hardlinking them), and in both, once every book file has imported, the job folder is removed as before, and the zip and the marker go with it, unless the zip held a file the cleanup does not recognise as a release extra (an `.exe`, say), which keeps the folder.
+
+Bindery extracts a ZIP only when all of this holds, and otherwise says why in the Queue message and leaves the folder as it was:
+
+- the download came from SABnzbd or NZBGet, never a torrent or a Soulseek folder, and the import is not a manual one;
+- the folder sits inside `BINDERY_DOWNLOAD_DIR`, `BINDERY_AUDIOBOOK_DOWNLOAD_DIR`, or the Bindery side of the client's path remap (or `BINDERY_DOWNLOAD_PATH_REMAP`), after symlinks are resolved. A path the client reports outside those folders is never written to, and neither is the download folder itself;
+- the folder holds no book file yet, and the zip is directly in it.
+
+Limits, checked before anything is written and again while copying: at most 20 zips in a folder, 2000 entries in all of them, a central directory of at most about 2.6 MB (Bindery reads no more than that of it, whatever size the archive declares, as the directory is held in memory whole), 4 GiB unpacked in total, 2 GiB for one file, and a compression ratio of at most 100 to 1, so a zip bomb is refused. An entry name is at most 1024 bytes, 255 bytes per path segment and 32 levels deep, and all the zips together may create at most 2000 folders; one entry over any of these refuses the whole archive. An entry whose name is absolute, contains `..` or a drive letter (a backslash counts as a separator) refuses the whole archive too. Password protected entries, links and special files are skipped, and the message says how many. A file that is already in the folder is never overwritten. A failed extraction removes what it wrote. Files are created with mode 0644 and folders with 0755.
+
+The extraction stops after 10 minutes in all, or when Bindery shuts down, removes what it wrote, and the Queue says so. It also refuses to treat a folder as a download folder when it is `/`, your home, or equals or contains a library folder or root folder, so a path remap to `/data` that also holds your library does not switch the guard off. If the job folder is swapped for a link while Bindery is opening it, nothing is written.
+
+What happens with awkward archives, all of it skipping and never overwriting:
+
+- **Two entries with the same name:** the first copy is kept, the second is skipped.
+- **A directory entry, then a file of the same name:** the file is skipped and the empty directory stays.
+- **`A.txt` and `a.txt`:** on Linux both are written, as they are two names there.
+- **A name that is not valid UTF-8** (an older zip with a CP437 umlaut), or that holds a control character: each bad byte run or control character is written as an underscore.
+- **A zip that holds nothing that looks like a book** (an `.exe` and a notes file, say): the extraction is undone, the Queue says Bindery extracted it and found no book, and the marker stays so a retry does not repeat it. A tiny notes file beside the zip does not stop the extraction; a real book file does.
+
+If a zip is refused, extract it yourself, then use **Retry import**. To turn the feature off, untick the setting; the download then waits for an unpacker, as a RAR does.
 
 ### "Already grabbed" when re-grabbing a release
 
