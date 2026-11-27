@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -619,6 +620,74 @@ func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Bo
 func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
 	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE status = ? AND books.monitored = 1 AND excluded = 0", userID, status)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
+}
+
+// recentDownloadableWhere selects the books a reader can download and that
+// ListByStatus(imported) returns. It must stay identical, term for term, to the
+// WHERE clause of idx_books_recently_imported (migration 138): SQLite uses a
+// partial index only for a query that repeats its predicate.
+const recentDownloadableWhere = `%[1]s.status = 'imported' AND %[1]s.monitored = 1 AND %[1]s.excluded = 0 AND %[1]s.file_path != ''`
+
+// ListRecentDownloadable returns the limit most recently updated books a reader
+// can download (imported, monitored, not excluded, with a file), newest first,
+// ties broken by the higher id. It is the OPDS "Recently Added" feed's source.
+// userID 0 is unscoped; otherwise only the caller's and unowned books count, as
+// in ListByStatusAndUser.
+//
+// The feed used to load every imported book and sort in Go. This reads the top
+// of idx_books_recently_imported instead, so the cost follows limit and not the
+// library.
+//
+// updated_at is RFC3339Nano text with trailing zeros dropped, so comparing two
+// stored values as text is right down to the second and no further
+// ("…43.5Z" sorts above "…43.55Z"). The query therefore finds the stored
+// second of the limit-th row and returns every book from that second on, and
+// the exact order is settled here on the parsed times. That is limit rows plus
+// however many books share one second, which a bulk import can make a few
+// hundred. Rows in a legacy layout (a space where the T is, see
+// timeParseLayouts) compare below RFC3339 rows of the same day.
+func (r *BookRepo) ListRecentDownloadable(ctx context.Context, userID int64, limit int) ([]models.Book, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	q, args := recentDownloadableQuery(userID, limit)
+	books, err := r.query(ctx, q, args)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(books, func(i, j int) bool {
+		if books[i].UpdatedAt.Equal(books[j].UpdatedAt) {
+			return books[i].ID > books[j].ID
+		}
+		return books[i].UpdatedAt.After(books[j].UpdatedAt)
+	})
+	if len(books) > limit {
+		books = books[:limit]
+	}
+	return books, nil
+}
+
+// recentDownloadableQuery is ListRecentDownloadable's statement: every
+// downloadable book from the stored second of the limit-th newest one onwards.
+func recentDownloadableQuery(userID int64, limit int) (string, []any) {
+	outer := fmt.Sprintf(recentDownloadableWhere, "books")
+	inner := fmt.Sprintf(recentDownloadableWhere, "b2")
+	var args []any
+	if userID != 0 {
+		outer += " AND (books.owner_user_id = ? OR books.owner_user_id IS NULL)"
+		inner += " AND (b2.owner_user_id = ? OR b2.owner_user_id IS NULL)"
+		args = append(args, userID, userID)
+	}
+	args = append(args, limit-1)
+	return "SELECT " + bookColumns + " FROM books INDEXED BY idx_books_recently_imported " + bookJoins + `
+		WHERE ` + outer + `
+		  AND books.updated_at >= COALESCE((
+			SELECT substr(b2.updated_at, 1, 19)
+			FROM books b2 INDEXED BY idx_books_recently_imported
+			WHERE ` + inner + `
+			ORDER BY b2.updated_at DESC, b2.id DESC
+			LIMIT 1 OFFSET ?), '')
+		ORDER BY books.updated_at DESC, books.id DESC`, args
 }
 
 // ListByStatusIncludingExcludedAndUser is ListByStatusIncludingExcluded scoped

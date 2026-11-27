@@ -33,18 +33,11 @@ func (f *covErrBooks) ListByAuthorAndUser(ctx context.Context, authorID, userID 
 	return f.fakeBooks.ListByAuthorAndUser(ctx, authorID, userID)
 }
 
-func (f *covErrBooks) ListByStatus(ctx context.Context, status string) ([]models.Book, error) {
-	if f.failing["ListByStatus"] {
+func (f *covErrBooks) ListRecentDownloadable(ctx context.Context, userID int64, limit int) ([]models.Book, error) {
+	if f.failing["ListRecentDownloadable"] {
 		return nil, errCovStore
 	}
-	return f.fakeBooks.ListByStatus(ctx, status)
-}
-
-func (f *covErrBooks) ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
-	if f.failing["ListByStatusAndUser"] {
-		return nil, errCovStore
-	}
-	return f.fakeBooks.ListByStatusAndUser(ctx, status, userID)
+	return f.fakeBooks.ListRecentDownloadable(ctx, userID, limit)
 }
 
 func (f *covErrBooks) GetByID(ctx context.Context, id int64) (*models.Book, error) {
@@ -59,18 +52,11 @@ type covErrAuthors struct {
 	failing map[string]bool
 }
 
-func (f *covErrAuthors) List(ctx context.Context) ([]models.Author, error) {
-	if f.failing["List"] {
+func (f *covErrAuthors) ListWithDownloadableBooks(ctx context.Context, userID int64) ([]models.Author, error) {
+	if f.failing["ListWithDownloadableBooks"] {
 		return nil, errCovStore
 	}
-	return f.fakeAuthors.List(ctx)
-}
-
-func (f *covErrAuthors) ListByUser(ctx context.Context, userID int64) ([]models.Author, error) {
-	if f.failing["ListByUser"] {
-		return nil, errCovStore
-	}
-	return f.fakeAuthors.ListByUser(ctx, userID)
+	return f.fakeAuthors.ListWithDownloadableBooks(ctx, userID)
 }
 
 func (f *covErrAuthors) GetByID(ctx context.Context, id int64) (*models.Author, error) {
@@ -91,6 +77,13 @@ func (f *covErrSeries) List(ctx context.Context) ([]models.Series, error) {
 		return nil, errCovStore
 	}
 	return f.fakeSeries.List(ctx)
+}
+
+func (f *covErrSeries) IDsWithBooksVisibleTo(ctx context.Context, userID int64) (map[int64]struct{}, error) {
+	if f.failing["IDsWithBooksVisibleTo"] {
+		return nil, errCovStore
+	}
+	return f.fakeSeries.IDsWithBooksVisibleTo(ctx, userID)
 }
 
 func (f *covErrSeries) GetByID(ctx context.Context, id int64) (*models.Series, error) {
@@ -136,6 +129,7 @@ func covMultiUser() (*fakeBooks, *fakeAuthors, *fakeSeries) {
 		{ID: 202, Title: "Gamma", Books: []models.SeriesBook{{SeriesID: 202, BookID: 22}}},
 		{ID: 203, Title: "Delta", Books: []models.SeriesBook{{SeriesID: 203, BookID: 999}}},
 	}}
+	authors.books, series.books = books, books
 	return books, authors, series
 }
 
@@ -259,23 +253,6 @@ func TestBuildSeriesList_ScopedToUser(t *testing.T) {
 	}
 }
 
-func TestBuildSeriesList_SkipsSeriesAndBooksThatFailToLoad(t *testing.T) {
-	books, authors, series := covMultiUser()
-	eb := &covErrBooks{fakeBooks: books, failIDs: map[int64]bool{22: true}}
-	es := &covErrSeries{fakeSeries: series, failIDs: map[int64]bool{200: true}}
-	b := NewBuilder(Config{}, eb, authors, es)
-
-	f, err := b.BuildSeriesList(context.Background(), "http://h", 1, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Alpha's GetByID fails and Gamma's only book fails to load: nothing is
-	// left that user 1 can be shown to own.
-	if len(f.Entries) != 0 {
-		t.Errorf("entries = %v, want none", covEntryIDs(f))
-	}
-}
-
 func TestBuildSeries_ScopedToUser(t *testing.T) {
 	books, authors, series := covMultiUser()
 	b := NewBuilder(Config{}, books, authors, series)
@@ -385,11 +362,11 @@ func TestBuilders_PropagateStoreErrors(t *testing.T) {
 		run  func() error
 	}{
 		{"authors list", func() error {
-			_, err := newB(nil, map[string]bool{"List": true}, nil).BuildAuthors(ctx, "", 1, 0)
+			_, err := newB(nil, map[string]bool{"ListWithDownloadableBooks": true}, nil).BuildAuthors(ctx, "", 1, 0)
 			return err
 		}},
 		{"authors list by user", func() error {
-			_, err := newB(nil, map[string]bool{"ListByUser": true}, nil).BuildAuthors(ctx, "", 1, 7)
+			_, err := newB(nil, map[string]bool{"ListWithDownloadableBooks": true}, nil).BuildAuthors(ctx, "", 1, 7)
 			return err
 		}},
 		{"author get", func() error {
@@ -412,12 +389,16 @@ func TestBuilders_PropagateStoreErrors(t *testing.T) {
 			_, err := newB(nil, nil, map[string]bool{"GetByID": true}).BuildSeries(ctx, "", 200, 0)
 			return err
 		}},
+		{"series list by user", func() error {
+			_, err := newB(nil, nil, map[string]bool{"IDsWithBooksVisibleTo": true}).BuildSeriesList(ctx, "", 1, 1)
+			return err
+		}},
 		{"recent", func() error {
-			_, err := newB(map[string]bool{"ListByStatus": true}, nil, nil).BuildRecent(ctx, "", 0)
+			_, err := newB(map[string]bool{"ListRecentDownloadable": true}, nil, nil).BuildRecent(ctx, "", 0)
 			return err
 		}},
 		{"recent by user", func() error {
-			_, err := newB(map[string]bool{"ListByStatusAndUser": true}, nil, nil).BuildRecent(ctx, "", 1)
+			_, err := newB(map[string]bool{"ListRecentDownloadable": true}, nil, nil).BuildRecent(ctx, "", 1)
 			return err
 		}},
 		{"book get", func() error {
@@ -429,18 +410,6 @@ func TestBuilders_PropagateStoreErrors(t *testing.T) {
 		if err := tc.run(); !errors.Is(err, errCovStore) {
 			t.Errorf("%s: err = %v, want wrapped store error", tc.name, err)
 		}
-	}
-}
-
-func TestBuildAuthors_DropsAuthorsWhoseBooksFailToLoad(t *testing.T) {
-	books, authors, series := covMultiUser()
-	b := NewBuilder(Config{}, &covErrBooks{fakeBooks: books, failing: map[string]bool{"ListByAuthor": true}}, authors, series)
-	f, err := b.BuildAuthors(context.Background(), "http://h", 1, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(f.Entries) != 0 {
-		t.Errorf("entries = %v, want none when book lookups fail", covEntryIDs(f))
 	}
 }
 
