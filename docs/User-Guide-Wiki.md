@@ -466,6 +466,21 @@ you are trying to diagnose a quiet indexer. Raising the search interval is not
 an alternative: it changes how often the burst happens, not how big one burst
 is.
 
+**Which books a sweep searches first.** The sweep works through the wanted
+list starting with the books it has never searched, in title order, and then
+the ones it searched longest ago. So when a daily query limit runs out part way
+through, or Bindery restarts in the middle of a sweep, the next sweep carries
+on with the books the last one did not reach, and a list too big for one day's
+allowance is covered over several days instead of the first titles being
+searched every time. A book counts as searched once its search has been sent
+to at least one indexer, whether or not anything came back. A search that
+every indexer skipped (the limit was spent, the indexer was resting after a
+rate limit, or it is disabled) does not count, so that book keeps its place at
+the front. Searching a book yourself, or adding one with auto-grab on, counts
+too, so the sweep does not repeat a search you just ran. Browsing releases in
+the interactive search does not. The order is one queue for the whole
+instance: every user's wanted books take turns in it together.
+
 **Rate limits.** When an indexer refuses a search because a request limit
 was reached, whether as a Newznab "request limit reached" error or as an HTTP
 429 from the host in front of it (Cloudflare's "error code: 1015"), Bindery

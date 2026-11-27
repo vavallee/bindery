@@ -616,6 +616,46 @@ func (r *BookRepo) ListByStatus(ctx context.Context, status string) ([]models.Bo
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" WHERE status = ? AND books.monitored = 1 AND excluded = 0 ORDER BY books.sort_key, sort_title", []any{status})
 }
 
+// ListByStatusLeastRecentlySearched is ListByStatus in the order the scheduled
+// wanted sweep works through it: books no automatic search has reached yet
+// first, then the least recently searched (last_auto_search_at, migration
+// 138). Ties, which is every never searched book and so the whole list on the
+// first sweep after an upgrade, fall back to ListByStatus's title order and
+// then the id, so the order is total and repeatable.
+//
+// The sweep is the only caller. Every list a person or a client reads
+// (the Wanted page, OPDS, the Calibre and Grimmory pushes) keeps ListByStatus
+// and its title order.
+func (r *BookRepo) ListByStatusLeastRecentlySearched(ctx context.Context, status string) ([]models.Book, error) {
+	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+
+		" WHERE status = ? AND books.monitored = 1 AND excluded = 0"+
+		" ORDER BY books.last_auto_search_at IS NOT NULL, books.last_auto_search_at, books.sort_key, sort_title, books.id", []any{status})
+}
+
+// MarkAutoSearched records that an automatic search for the book reached an
+// indexer at the given time. It moves the book to the back of the wanted
+// sweep's queue; see ListByStatusLeastRecentlySearched.
+func (r *BookRepo) MarkAutoSearched(ctx context.Context, id int64, at time.Time) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE books SET last_auto_search_at=? WHERE id=?",
+		at.UTC().Format(autoSearchedLayout), id)
+	return err
+}
+
+// autoSearchedLayout is RFC3339 with all nine fractional digits always
+// written. The sweep sorts the column as text, and time.RFC3339Nano drops
+// trailing zeros, which would sort "05Z" after "05.5Z".
+const autoSearchedLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+// LastAutoSearchedAt returns when an automatic search for the book last
+// reached an indexer, or nil when none has.
+func (r *BookRepo) LastAutoSearchedAt(ctx context.Context, id int64) (*time.Time, error) {
+	var at sql.NullString
+	if err := r.db.QueryRowContext(ctx, "SELECT CAST(last_auto_search_at AS TEXT) FROM books WHERE id=?", id).Scan(&at); err != nil {
+		return nil, err
+	}
+	return parseFlexibleTime(at)
+}
+
 func (r *BookRepo) ListByStatusAndUser(ctx context.Context, status string, userID int64) ([]models.Book, error) {
 	where, args := QueryScopeForIncludingNull("books.owner_user_id", "WHERE status = ? AND books.monitored = 1 AND excluded = 0", userID, status)
 	return r.query(ctx, bookCTE+" SELECT "+bookColumns+" FROM books "+bookJoins+" "+where+" ORDER BY books.sort_key, sort_title", args)
