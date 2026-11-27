@@ -1,0 +1,3 @@
+### Fixed
+
+- Search no longer prefers a later numbered volume for a book whose volume it does not know (#4173). A wanted title that numbers itself, such as "Corruption Wielder: Book 1" or "Stone vs. Viper, Book 2", now rejects a release like "Corruption Wielder 04" or "Stone vs. Viper 15", because the number in the title stands in for the missing series position, including when the number follows the subtitle. A plain title with no stored position can really be any volume, so a release like "Darling of Fate 02" or "Dungeon Tour Guide 2 by Aaron Shih" is not rejected, but it now ranks below an unnumbered or "1" release of the same quality. Thanks to camerontaylor for the report and the table of examples.

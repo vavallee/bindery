@@ -1086,6 +1086,10 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 	fullIdentityElided := titleIdentityKeywords(newznab.ElideApostrophes(title))
 	primaryIdentityElided := titleIdentityKeywords(newznab.ElideApostrophes(primaryTitle(title)))
 	authorKws := newznab.SigWords(author)
+	var stemIdentity []string
+	if stem, _, ok := trailingVolume(title); ok && stem != primaryTitle(title) {
+		stemIdentity = titleIdentityKeywords(stem)
+	}
 	// A "Series N: Title" name also gets the book's own title as a reading,
 	// because releases name the book, not its series position ("The Mining
 	// Company Contract" for "Feral Mage 4: The Mining Company Contract"). It
@@ -1236,6 +1240,11 @@ func filterRelevantKeepDropped(results []newznab.SearchResult, title, author str
 					// The release carries the main title and not the whole
 					// one; is it still this book (#3268, part 2)?
 					trailing = subtitle.mainTitleOnly(rules, r.Title, n, identity, anyFullInBatch, primaryIdentity, primaryIdentityElided)
+				}
+				if trailing == "" && stemIdentity != nil {
+					// "Series: Subtitle, Book 2" reads on its primary title;
+					// the number that matters follows the subtitle (#4173).
+					trailing = rules.volumeAfter(r.Title, n, stemIdentity)
 				}
 				if trailing != "" {
 					primaryOK = false
@@ -1538,6 +1547,10 @@ func scoreResult(r newznab.SearchResult, c MatchCriteria, ranks *profileRanks) f
 			}
 			score += mb / 100
 		}
+	}
+
+	if namesLaterVolume(r.Title, c) {
+		score -= laterVolumePenalty
 	}
 
 	if c.ISBN != "" && p.ISBN != "" && strings.EqualFold(p.ISBN, c.ISBN) {

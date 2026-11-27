@@ -244,6 +244,12 @@ type otherTitle struct {
 type trailingRules struct {
 	posLo, posHi int
 	posKnown     bool
+	// implied is set when the book has no stored position and the rules read
+	// one from the wanted title instead (#4173): "Title, Book 2" is volume 2.
+	// A plain title is not read this way, since it may be any volume. posLo
+	// and posHi then hold it. posKnown stays false, so the sibling title rules that
+	// run only for a book with no position of its own keep running.
+	implied bool
 	// wantedEndsRoman is set when the wanted title itself ends in a capital
 	// roman numeral ("Henry V", "Rocky II"): rule A then does not read
 	// roman numerals after it.
@@ -401,6 +407,12 @@ func prefixedSuffix(cleaned string, wanted []string) (tail string, ok bool) {
 func newTrailingRules(title string, bc bookContext, wanted ...[]string) *trailingRules {
 	tr := &trailingRules{otherFull: map[string]bool{}, siblingNums: map[int]bool{}}
 	tr.posLo, tr.posHi, tr.posKnown = parsePosition(bc.seriesPosition)
+	if _, n, ok := trailingVolume(title); ok && !tr.posKnown && strings.TrimSpace(bc.seriesPosition) == "" {
+		// The title numbers the book itself ("Corruption Wielder: Book 1"),
+		// so a later number after it is another volume (#4173). Read before
+		// the set title return: "Book 1" looks like a set marker to isSetTitle.
+		tr.implied, tr.posLo, tr.posHi = true, n, n
+	}
 	if f := strings.Fields(title); len(f) > 0 {
 		last := strings.Trim(f[len(f)-1], ".,:;!?()[]")
 		tr.wantedEndsRoman = last != "" && last == strings.ToUpper(last) && romanRe.MatchString(last)
@@ -520,6 +532,38 @@ func newTrailingRules(title string, bc bookContext, wanted ...[]string) *trailin
 		}
 	}
 	return tr
+}
+
+// ownVolumeMarkers are the words that, before a number ending a wanted title,
+// say which volume the book is. Narrower than seriesNumberMarkers: "No 5" and
+// "Band 3" end ordinary titles.
+var ownVolumeMarkers = map[string]bool{"book": true, "bk": true, "vol": true, "volume": true, "part": true, "tome": true}
+
+// trailingVolume reads a volume marker and number that end a wanted title
+// ("Stone vs. Viper, Book 2"). stem is the title without them.
+func trailingVolume(title string) (stem string, n int, ok bool) {
+	f := strings.Fields(title)
+	if len(f) < 3 {
+		return "", 0, false
+	}
+	num := strings.Trim(f[len(f)-1], ".,:;!?()[]#")
+	marker := NormalizeRelease(f[len(f)-2])
+	if len(num) == 0 || len(num) > 2 || !isAllDigits(num) || !ownVolumeMarkers[marker] {
+		return "", 0, false
+	}
+	n, _ = strconv.Atoi(num)
+	stem = strings.TrimRight(strings.Join(f[:len(f)-2], " "), " ,:;-")
+	return stem, n, stem != ""
+}
+
+// volumeAfter reads the series number after the title reading idents, for a
+// release already approved on a shorter reading of the wanted title.
+func (tr *trailingRules) volumeAfter(raw, n string, idents ...[]string) string {
+	toks, k, ok := locateTitleEnd(raw, n, idents...)
+	if !ok {
+		return ""
+	}
+	return tr.seriesNumberAfter(toks, k)
 }
 
 func isASCII(s string) bool {
@@ -727,7 +771,8 @@ func numbersAfter(raw, n string, guarded bool, idents ...[]string) []int {
 
 // seriesNumberAfter is signal A. toks[k:] is what follows the wanted title.
 func (tr *trailingRules) seriesNumberAfter(toks []relTok, k int) string {
-	if !tr.posKnown && len(tr.siblingNums) == 0 {
+	known := tr.posKnown || tr.implied
+	if !known && len(tr.siblingNums) == 0 {
 		return ""
 	}
 	i := k
@@ -752,10 +797,14 @@ func (tr *trailingRules) seriesNumberAfter(toks []relTok, k int) string {
 			n = v
 		}
 	}
+	if n == 0 && tr.implied && viaMarker && numberWords[num.text] > 1 {
+		// "Book Four", read only for a book whose volume is implied.
+		n = numberWords[num.text]
+	}
 	if n < 2 {
 		return ""
 	}
-	if tr.posKnown {
+	if known {
 		if n >= tr.posLo && n <= tr.posHi {
 			return ""
 		}
