@@ -30,11 +30,12 @@ type trackedFileCache struct {
 	rootDevID    uint64
 	rootDevKnown bool
 	tracked      map[string]struct{}
-	trackedFiles []os.FileInfo
+	trackedFiles *trackedFileSet
 }
 
 // trackedFileIndex returns the current already-tracked path set and the
-// os.FileInfo values needed for hardlink detection against scanRoot,
+// os.FileInfo values needed for hardlink detection against scanRoot, keyed by
+// device and inode (trackedFileSet),
 // rebuilding only when book_files has changed since the last build (per
 // BookRepo.BookFilesFingerprint for inserts and deletes, and
 // BookRepo.BookFilesPathEpoch for the reorganize action's in place path
@@ -54,7 +55,7 @@ type trackedFileCache struct {
 // each row's device comes off the same os.Stat this loop already does to
 // build its FileInfo, so a cold rebuild costs exactly one stat per tracked row
 // (plus the directory walk for a genuine tracked folder), not up to five.
-func (h *ManualImportHandler) trackedFileIndex(ctx context.Context, scanRoot string) (map[string]struct{}, []os.FileInfo, error) {
+func (h *ManualImportHandler) trackedFileIndex(ctx context.Context, scanRoot string) (map[string]struct{}, *trackedFileSet, error) {
 	// Read the rename epoch first so a reorganize racing this rebuild can only
 	// make the next call rebuild again, never leave a stale path cached.
 	pathEpoch := h.books.BookFilesPathEpoch()
@@ -117,8 +118,8 @@ func (h *ManualImportHandler) trackedFileIndex(ctx context.Context, scanRoot str
 	c.rootDevID = rootDevID
 	c.rootDevKnown = rootDevKnown
 	c.tracked = tracked
-	c.trackedFiles = trackedFiles
-	return tracked, trackedFiles, nil
+	c.trackedFiles = newTrackedFileSet(trackedFiles)
+	return tracked, c.trackedFiles, nil
 }
 
 // dirResolver maps a path to the form Scan sees after resolveImportFolder's

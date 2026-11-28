@@ -626,16 +626,75 @@ func (h *ManualImportHandler) removeStaleSource(ctx context.Context, src string,
 // shares the inode's size and mtime too, so those must also agree. A tracked
 // file modified in place since the cache was built then shows as importable,
 // which is the safe way to be wrong.
-func fileMatchesTracked(path string, tracked []os.FileInfo) bool {
+func fileMatchesTracked(path string, tracked *trackedFileSet) bool {
 	info, err := os.Stat(path)
 	if err != nil {
 		return false
 	}
-	for _, trackedInfo := range tracked {
-		if os.SameFile(info, trackedInfo) &&
-			info.Size() == trackedInfo.Size() &&
-			info.ModTime().Equal(trackedInfo.ModTime()) {
-			return true
+	return tracked.matches(info)
+}
+
+// trackedFileSet is the tracked files' os.FileInfo values, keyed by device and
+// inode so fileMatchesTracked looks a scanned file up instead of comparing it
+// with every tracked file. A 1000 unit scan against a library of N tracked
+// files used to cost 1000 x N os.SameFile calls.
+//
+// The comparison is unchanged: a scanned file matches a tracked one when
+// os.SameFile holds and size and mtime agree. os.SameFile on Unix compares
+// exactly the device and inode the key is made of, so only the FileInfos in
+// the scanned file's own bucket can pass it. A FileInfo with no device and
+// inode (fileIdentityOf reports none, as on Windows, where os.SameFile reads
+// the volume serial and file index instead) goes to rest and is compared one
+// by one as before.
+type trackedFileSet struct {
+	byIdentity map[fileIdentity][]os.FileInfo
+	rest       []os.FileInfo
+	all        []os.FileInfo
+}
+
+// fileIdentity is a file's device and inode, what os.SameFile compares on
+// Unix.
+type fileIdentity struct {
+	dev, ino uint64
+}
+
+func newTrackedFileSet(infos []os.FileInfo) *trackedFileSet {
+	s := &trackedFileSet{byIdentity: make(map[fileIdentity][]os.FileInfo, len(infos)), all: infos}
+	for _, fi := range infos {
+		if id, ok := fileIdentityOf(fi); ok {
+			s.byIdentity[id] = append(s.byIdentity[id], fi)
+		} else {
+			s.rest = append(s.rest, fi)
+		}
+	}
+	return s
+}
+
+// candidates returns the tracked FileInfos info has to be compared with: its
+// own device and inode bucket plus every FileInfo without an identity, or all
+// of them when info itself has none.
+func (s *trackedFileSet) candidates(info os.FileInfo) ([]os.FileInfo, []os.FileInfo) {
+	if s == nil {
+		return nil, nil
+	}
+	id, ok := fileIdentityOf(info)
+	if !ok {
+		return s.all, nil
+	}
+	return s.byIdentity[id], s.rest
+}
+
+// matches reports whether info is a hardlink of (or the same entry as) a
+// tracked file, by fileMatchesTracked's rule.
+func (s *trackedFileSet) matches(info os.FileInfo) bool {
+	bucket, rest := s.candidates(info)
+	for _, list := range [][]os.FileInfo{bucket, rest} {
+		for _, trackedInfo := range list {
+			if os.SameFile(info, trackedInfo) &&
+				info.Size() == trackedInfo.Size() &&
+				info.ModTime().Equal(trackedInfo.ModTime()) {
+				return true
+			}
 		}
 	}
 	return false
@@ -646,7 +705,7 @@ func fileMatchesTracked(path string, tracked []os.FileInfo) bool {
 // multi-format ebook or a folder audiobook, so checking only the directory's
 // own path cannot identify an already-imported unit. A directory with even one
 // untracked ebook/audio file remains eligible for import.
-func directoryMatchesTracked(path string, tracked map[string]struct{}, trackedFiles []os.FileInfo) bool {
+func directoryMatchesTracked(path string, tracked map[string]struct{}, trackedFiles *trackedFileSet) bool {
 	found := false
 	allTracked := true
 	_ = filepath.WalkDir(path, func(p string, entry os.DirEntry, walkErr error) error {
@@ -880,7 +939,7 @@ func (h *ManualImportHandler) BrowseFolders(w http.ResponseWriter, r *http.Reque
 // unit) is already present in book_files, either at the exact path (tracked)
 // or as a hardlink of one (trackedFiles, via fileMatchesTracked /
 // directoryMatchesTracked).
-func isAlreadyTracked(path string, isDir bool, tracked map[string]struct{}, trackedFiles []os.FileInfo) bool {
+func isAlreadyTracked(path string, isDir bool, tracked map[string]struct{}, trackedFiles *trackedFileSet) bool {
 	if isDir {
 		return directoryMatchesTracked(path, tracked, trackedFiles)
 	}

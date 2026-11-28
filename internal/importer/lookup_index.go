@@ -35,7 +35,7 @@ import (
 // The index is built once per LookupBatchLayout call from the catalogue that
 // call loaded, read concurrently by the unit workers, and never written after
 // newCatalogueIndex returns. Memory: the per book titleForms plus one int32
-// per (book, distinct token) posting; measured at roughly 13 MB for 40k books
+// per (book, distinct token) posting; measured at about 11 MB for 40k generated books
 // (see TestCatalogueIndexMemory).
 type catalogueIndex struct {
 	books []models.Book

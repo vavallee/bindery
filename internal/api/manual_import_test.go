@@ -1330,13 +1330,13 @@ func TestFileMatchesTracked_EdgeCases(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !fileMatchesTracked(trackedPath, []os.FileInfo{trackedInfo}) {
+	if !fileMatchesTracked(trackedPath, newTrackedFileSet([]os.FileInfo{trackedInfo})) {
 		t.Fatal("tracked path should match its own file identity")
 	}
-	if fileMatchesTracked(otherPath, []os.FileInfo{trackedInfo}) {
+	if fileMatchesTracked(otherPath, newTrackedFileSet([]os.FileInfo{trackedInfo})) {
 		t.Fatal("different file should not match tracked identity")
 	}
-	if fileMatchesTracked(filepath.Join(root, "missing.epub"), []os.FileInfo{trackedInfo}) {
+	if fileMatchesTracked(filepath.Join(root, "missing.epub"), newTrackedFileSet([]os.FileInfo{trackedInfo})) {
 		t.Fatal("missing path should not match")
 	}
 }
@@ -1402,7 +1402,7 @@ func TestDirectoryMatchesTracked(t *testing.T) {
 		trackedFiles = append(trackedFiles, info)
 	}
 
-	if !directoryMatchesTracked(root, tracked, trackedFiles) {
+	if !directoryMatchesTracked(root, tracked, newTrackedFileSet(trackedFiles)) {
 		t.Fatal("fully tracked directory should be skipped")
 	}
 
@@ -1410,7 +1410,7 @@ func TestDirectoryMatchesTracked(t *testing.T) {
 	if err := os.WriteFile(untrackedPath, []byte("new"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if directoryMatchesTracked(root, tracked, trackedFiles) {
+	if directoryMatchesTracked(root, tracked, newTrackedFileSet(trackedFiles)) {
 		t.Fatal("directory with an untracked importable file should remain eligible")
 	}
 }

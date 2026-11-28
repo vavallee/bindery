@@ -18,6 +18,14 @@ func deviceIDOf(_ os.FileInfo) (uint64, bool) {
 	return 0, false
 }
 
+// fileIdentityOf always reports no identity on Windows, where os.SameFile
+// compares the volume serial number and file index, which os.Stat does not
+// load up front. trackedFileSet then compares every tracked file one by one
+// with os.SameFile, as before it existed.
+func fileIdentityOf(_ os.FileInfo) (fileIdentity, bool) {
+	return fileIdentity{}, false
+}
+
 // deviceID always reports unknown on Windows because device-ID comparison via
 // syscall.Stat_t is not available there. The manual-import scan's
 // tracked-file cache (#2480) treats "unknown" as a single shared cache key,

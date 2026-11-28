@@ -65,6 +65,18 @@ func deviceIDOf(fi os.FileInfo) (uint64, bool) {
 	return uint64(st.Dev), true //nolint:gosec // G115: opaque equality key, conversion is injective on every platform (see above)
 }
 
+// fileIdentityOf returns fi's device and inode, the pair os.SameFile compares
+// on Unix, as the manual-import scan's trackedFileSet key. ok is false when fi
+// carries no syscall.Stat_t.
+func fileIdentityOf(fi os.FileInfo) (fileIdentity, bool) {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fileIdentity{}, false
+	}
+	// Dev: see deviceIDOf. Ino is uint64 on every Unix Go supports.
+	return fileIdentity{dev: uint64(st.Dev), ino: st.Ino}, true //nolint:gosec // G115: opaque equality key, see deviceIDOf
+}
+
 // deviceID returns path's OS device ID as a cache key: two paths returning
 // (id, true) with equal id are stat-confirmed to share a device; ok is false
 // when the ID is unknown (stat failed, or the platform doesn't expose one —
