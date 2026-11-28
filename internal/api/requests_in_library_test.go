@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -197,37 +198,34 @@ func TestRequestsApprove_InLibraryAnyFormatMeansTheDefault(t *testing.T) {
 	}
 }
 
-// Under tenancy another account's row is never widened by an approval: when
-// the format is missing the refusal stays, with a sentence that says why, the
-// book is left exactly as it was, and the request can still be declined.
-func TestRequestsApprove_InLibraryMissingFormatOnAnotherAccountsBookStaysRefused(t *testing.T) {
+// Under tenancy an admin approving by hand may change any book, so a request
+// for a format missing from another account's book widens that book (#4089):
+// the format is monitored on the existing row, no second book is created, and
+// the row keeps its owner.
+func TestRequestsApprove_InLibraryMissingFormatOnAnotherAccountsBookAdminWidens(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
-	adder := &fakeAdder{}
-	f := newRequestsFixture(t, wellsRequestStub(), adder)
+	f := newRequestsFixture(t, wellsRequestStub(), nil)
 	created, book := pendingRequestThenInLibrary(t, f, "audiobook", models.Book{
 		OwnerUserID: f.other.ID, MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusWanted,
 	})
 	rec := f.approve(f.admin, created.ID, `{}`)
-	if rec.Code != http.StatusConflict || requestErrorBody(rec) != bookHeldElsewhereMessage {
-		t.Fatalf("approve: %d %q, want 409 with %q", rec.Code, requestErrorBody(rec), bookHeldElsewhereMessage)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(bookHeldElsewhereMessage, "Decline") {
-		t.Errorf("the refusal %q must tell the approver what to do", bookHeldElsewhereMessage)
+	got := decodeRequest(t, rec)
+	if got.Status != models.RequestStatusApproved || got.ResultBookID == nil || *got.ResultBookID != book.ID {
+		t.Fatalf("approved = %+v, want approved pointing at book %d", got, book.ID)
 	}
 	after, _ := f.books.GetByID(context.Background(), book.ID)
-	if after.MediaType != models.MediaTypeEbook || after.UpdatedAtRaw != book.UpdatedAtRaw {
-		t.Fatalf("another account's book was changed: media %q, updated %q -> %q", after.MediaType, book.UpdatedAtRaw, after.UpdatedAtRaw)
+	if after.MediaType != models.MediaTypeBoth || after.OwnerUserID != f.other.ID {
+		t.Fatalf("book after approval: media %q owner %d, want both and owner other (%d)", after.MediaType, after.OwnerUserID, f.other.ID)
 	}
-	if adder.existingCalls.Load() != 0 {
-		t.Errorf("the monitor core ran %d times, want 0", adder.existingCalls.Load())
+	all, err := f.books.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if row, _ := f.requests.GetByID(context.Background(), created.ID); row.Status != models.RequestStatusPending {
-		t.Fatalf("status = %q, want pending", row.Status)
-	}
-	rec = httptest.NewRecorder()
-	f.h.Decline(rec, withID(asUser(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`)), f.admin), created.ID))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("decline: %d", rec.Code)
+	if len(all) != 1 {
+		t.Fatalf("library holds %d books after approval, want the one existing book", len(all))
 	}
 }
 
@@ -313,7 +311,7 @@ func TestRequestsApprove_InLibraryDoesNotOverwriteAConcurrentWrite(t *testing.T)
 		t.Fatal(err)
 	}
 
-	runID, notice, err := f.h.approveExistingBook(ctx, &stale, f.requester.ID, models.MediaTypeAudiobook, false)
+	runID, notice, err := f.h.approveExistingBook(ctx, &stale, models.MediaTypeAudiobook, false)
 	if err != nil {
 		t.Fatalf("approveExistingBook with a stale snapshot: %v", err)
 	}
@@ -481,7 +479,7 @@ func TestRequestsQueue_FlagsPendingRequestsTheLibraryAlreadyCovers(t *testing.T)
 // The badge and approve ask one question. Under tenancy, for a page of
 // requests over books owned by various accounts, a row is badged exactly when
 // approving it resolves it, and a row with a format missing on another
-// account's book is neither badged nor approvable.
+// account's book is not badged.
 func TestRequestsQueue_BadgeAgreesWithApproveUnderTenancy(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
@@ -531,13 +529,16 @@ func TestRequestsQueue_BadgeAgreesWithApproveUnderTenancy(t *testing.T) {
 		}
 	}
 
-	// Approve agrees: the badged row resolves, the held row is refused.
+	// Approve agrees: the badged row resolves, and the unbadged row on
+	// another account's book adds the format, since an admin approving by
+	// hand may change any book (#4089).
 	approved := f.approve(f.admin, covered, `{}`)
 	if approved.Code != http.StatusOK || !strings.Contains(decodeRequest(t, approved).Notice, "nothing was added") {
 		t.Fatalf("approve of the badged row: %d %s", approved.Code, approved.Body.String())
 	}
-	if refused := f.approve(f.admin, held, `{}`); refused.Code != http.StatusConflict {
-		t.Fatalf("approve of the unbadged held row: %d, want 409", refused.Code)
+	widened := f.approve(f.admin, held, `{}`)
+	if widened.Code != http.StatusOK || !strings.Contains(decodeRequest(t, widened).Notice, "now monitored") {
+		t.Fatalf("approve of the unbadged held row: %d %s, want the format added", widened.Code, widened.Body.String())
 	}
 }
 
@@ -642,35 +643,43 @@ func TestRequestsCreate_ExplicitMediaTypeAgainstExistingBook(t *testing.T) {
 	}
 }
 
-// Under tenancy a book another account holds without the requested format
-// refuses a create with the same status as a covered book but its own
-// sentence, which tells the requester to ask an admin instead of claiming the
-// format is in the library.
-func TestRequestsCreate_HeldElsewhereAnswersWithItsOwnSentence(t *testing.T) {
+// Under tenancy a requester asking for a format missing from a book another
+// account holds gets a pending request for an admin (#4089), not a refusal,
+// and it is not auto approved even though the account auto approves. The same
+// book once it covers the request still refuses as in the library.
+func TestRequestsCreate_HeldElsewhereWaitsForAnAdmin(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
-	f := newRequestsFixture(t, wellsRequestStub(), nil)
+	adder := &fakeAdder{}
+	f := newRequestsFixture(t, wellsRequestStub(), adder)
+	setAutoApprove(t, f, f.requester.ID, true)
 	ctx := context.Background()
 	author := seedWells(t, f.authors)
 	held := &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war of the worlds", Status: models.BookStatusImported, MediaType: models.MediaTypeEbook, OwnerUserID: f.other.ID}
 	if err := f.books.Create(ctx, held); err != nil {
 		t.Fatal(err)
 	}
+	before, _ := f.books.GetByID(ctx, held.ID)
 	heldElsewhere := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W"}`)
+	if heldElsewhere.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s, want 201", heldElsewhere.Code, heldElsewhere.Body.String())
+	}
+	if got := decodeRequest(t, heldElsewhere); got.Status != models.RequestStatusPending {
+		t.Fatalf("status %q, want pending", got.Status)
+	}
+	if n := addCalls(adder); n != 0 {
+		t.Fatalf("add core ran %d times for another account's book", n)
+	}
+	if after, _ := f.books.GetByID(ctx, held.ID); !reflect.DeepEqual(before, after) {
+		t.Fatalf("another account's book changed: %+v -> %+v", before, after)
+	}
 
 	// The same book once it is covered, asked for by its own account.
 	if err := f.books.AddBookFile(ctx, held.ID, models.MediaTypeEbook, "/books/wotw.epub"); err != nil {
 		t.Fatal(err)
 	}
 	covered := f.create(t, f.other, `{"kind":"book","foreignId":"OL27482W"}`)
-
-	if heldElsewhere.Code != http.StatusConflict || covered.Code != http.StatusConflict {
-		t.Fatalf("held elsewhere %d, covered %d, want 409 for both", heldElsewhere.Code, covered.Code)
-	}
-	if got := requestErrorBody(heldElsewhere); got != bookHeldCreateMessage {
-		t.Fatalf("held elsewhere said %q, want %q", got, bookHeldCreateMessage)
-	}
-	if got := requestErrorBody(covered); got != "This book is already in the library." {
-		t.Fatalf("covered said %q", got)
+	if covered.Code != http.StatusConflict || requestErrorBody(covered) != "This book is already in the library." {
+		t.Fatalf("covered: %d %q", covered.Code, requestErrorBody(covered))
 	}
 }
 
@@ -713,8 +722,8 @@ func TestRequestsApprove_InLibrarySearchOnAddMatrix(t *testing.T) {
 			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusSkipped}, wantWiden: 1},
 		{name: "missing format goes through the monitor core, not a bare search", requested: "audiobook",
 			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusImported, EbookFilePath: ebookPath}, wantWiden: 1},
-		{name: "another account's monitored book is not searched", requested: "ebook", heldElsewhere: true,
-			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusWanted}},
+		{name: "another account's monitored book is searched by an admin's approval", requested: "ebook", heldElsewhere: true,
+			book: models.Book{MediaType: models.MediaTypeEbook, Monitored: true, Status: models.BookStatusWanted}, wantSearch: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

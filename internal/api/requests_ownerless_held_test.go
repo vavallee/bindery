@@ -7,9 +7,12 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/db"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/notifier"
 )
 
 // seedOwnerlessEbook adds the shared (no owner) ebook only book the requests
@@ -77,15 +80,58 @@ func TestRequestsCreate_AutoApproveOwnerlessCoveredBookIsNotSearched(t *testing.
 	}
 }
 
-// A requester asking for a missing format of a shared book is answered as for
-// another account's book: refused, with the ask an admin sentence.
-func TestRequestsCreate_OwnerlessMissingFormatAnswersLikeHeldElsewhere(t *testing.T) {
-	auth.SetEnforceTenancyForTests(t, true)
-	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
-	seedOwnerlessEbook(t, f)
-	rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W","mediaType":"audiobook"}`)
-	if rec.Code != http.StatusConflict || requestErrorBody(rec) != bookHeldCreateMessage {
-		t.Fatalf("create: %d %q, want 409 with %q", rec.Code, requestErrorBody(rec), bookHeldCreateMessage)
+// A requester asking for a missing format of a shared book gets a pending
+// request for an admin (#4089), the same as for another account's book. It
+// is not auto approved, whether the auto approval is the account's own or the
+// install default, the shared book is left alone, and the admin is notified.
+func TestRequestsCreate_OwnerlessMissingFormatWaitsForAnAdmin(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, f *requestsFixture)
+	}{
+		{"account set to Always", func(t *testing.T, f *requestsFixture) { setAutoApprove(t, f, f.requester.ID, true) }},
+		{"install default on", func(t *testing.T, f *requestsFixture) {
+			if err := f.users.SetRequestsAutoApprove(context.Background(), f.requester.ID, nil); err != nil {
+				t.Fatal(err)
+			}
+			setAutoApproveDefault(t, f.settings, "true")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, true)
+			adder := &fakeAdder{}
+			f := newRequestsFixture(t, wellsRequestStub(), adder)
+			capture := &capturingNotifier{events: make(chan capturedEvent, 4)}
+			f.h.WithNotifier(capture)
+			tc.setup(t, f)
+			if !f.h.autoApproveRequests(context.Background(), f.requester.ID) {
+				t.Fatal("setup: the requester does not auto approve")
+			}
+			book := seedOwnerlessEbook(t, f)
+			before, _ := f.books.GetByID(context.Background(), book.ID)
+			rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W","mediaType":"audiobook"}`)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("create: %d %s, want 201", rec.Code, rec.Body.String())
+			}
+			created := decodeRequest(t, rec)
+			if created.Status != models.RequestStatusPending {
+				t.Fatalf("status %q, want pending", created.Status)
+			}
+			if n := addCalls(adder); n != 0 {
+				t.Fatalf("add core ran %d times for a shared book", n)
+			}
+			if after, _ := f.books.GetByID(context.Background(), book.ID); !reflect.DeepEqual(before, after) {
+				t.Fatalf("shared book changed: %+v -> %+v", before, after)
+			}
+			select {
+			case ev := <-capture.events:
+				if ev.event != notifier.EventRequestCreated {
+					t.Fatalf("event %q, want %q", ev.event, notifier.EventRequestCreated)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the admin was not notified of the pending request")
+			}
+		})
 	}
 }
 
@@ -144,5 +190,172 @@ func TestRequestsCreate_AutoApproveOwnerlessBookTenancyOffUnchanged(t *testing.T
 	}
 	if adder.existingCalls.Load() != 1 {
 		t.Fatalf("monitor core ran %d times, want 1", adder.existingCalls.Load())
+	}
+}
+
+// A requester who auto approves files for a format missing from a book they
+// may not change, shared or another account's. writeCreated must not even
+// claim the request (#4089): a claim moves it to approving, counts against the
+// day's auto approve quota while it runs, and is released only when the
+// approval then refuses. updated_at equal to created_at shows the row was
+// never claimed, since a claim and its release each rewrite updated_at.
+func TestRequestsCreate_BookOwnerCannotChangeIsNeverClaimed(t *testing.T) {
+	for _, shared := range []bool{true, false} {
+		t.Run(map[bool]string{true: "shared book", false: "another account's book"}[shared], func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, true)
+			adder := &fakeAdder{}
+			f := newRequestsFixture(t, wellsRequestStub(), adder)
+			setAutoApprove(t, f, f.requester.ID, true)
+			book := seedOwnerlessEbook(t, f)
+			if !shared {
+				book.OwnerUserID = f.other.ID
+				if err := f.books.Update(context.Background(), book); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W","mediaType":"audiobook"}`)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+			}
+			row, err := f.requests.GetByID(context.Background(), decodeRequest(t, rec).ID)
+			if err != nil || row == nil {
+				t.Fatalf("request row = %+v err=%v", row, err)
+			}
+			if row.Status != models.RequestStatusPending || row.DecidedAt != nil {
+				t.Fatalf("request = %+v, want pending and undecided", row)
+			}
+			if !row.UpdatedAt.Equal(row.CreatedAt) {
+				t.Fatalf("request was claimed for auto approval: created %v, updated %v", row.CreatedAt, row.UpdatedAt)
+			}
+			if n := addCalls(adder); n != 0 {
+				t.Fatalf("add core ran %d times", n)
+			}
+		})
+	}
+}
+
+// autoApprove acts as the request's owner. When the owner cannot be looked
+// up it must stop, not run on with the caller's context: for a request an
+// admin filed with forUser that context is the admin's, who may change any
+// book, so the approval would widen another account's book on the requester's
+// behalf. The request stays pending and unclaimed.
+func TestRequestsAutoApprove_OwnerLookupFailureFailsClosed(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	adder := &fakeAdder{}
+	f := newRequestsFixture(t, wellsRequestStub(), adder)
+	ctx := context.Background()
+	author := seedWells(t, f.authors)
+	held := &models.Book{ForeignID: "OL27482W", AuthorID: author.ID, Title: "The War of the Worlds", SortTitle: "war",
+		OwnerUserID: f.other.ID, Status: models.BookStatusWanted, Monitored: true, MediaType: models.MediaTypeEbook}
+	if err := f.books.Create(ctx, held); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := f.books.GetByID(ctx, held.ID)
+	adminID := f.admin.ID
+	req := models.LibraryRequest{
+		OwnerUserID: f.requester.ID, Kind: models.RequestKindBook, ForeignID: "OL27482W", MediaType: models.MediaTypeAudiobook,
+		Title: "The War of the Worlds", PayloadJSON: `{"kind":"book","foreignId":"OL27482W","mediaType":"audiobook"}`,
+		CreatedVia: models.RequestCreatedViaAdmin, CreatedByUserID: &adminID,
+	}
+	if err := f.requests.Create(ctx, &req, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// A user repo over a closed database: every lookup fails.
+	broken, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken.Close()
+	f.h.users = db.NewUserRepo(broken)
+
+	adminCtx := auth.WithUserRole(auth.WithUserID(ctx, f.admin.ID), auth.RoleAdmin)
+	done, _, msg, err := f.h.autoApprove(adminCtx, req, f.requester.ID)
+	if err == nil || done != nil || msg != "" {
+		t.Fatalf("autoApprove = (%+v, %q, %v), want an error and no approval", done, msg, err)
+	}
+	if n := addCalls(adder); n != 0 {
+		t.Fatalf("add core ran %d times on another account's book", n)
+	}
+	if after, _ := f.books.GetByID(ctx, held.ID); !reflect.DeepEqual(before, after) {
+		t.Fatalf("another account's book changed: %+v -> %+v", before, after)
+	}
+	row, err := f.requests.GetByID(ctx, req.ID)
+	if err != nil || row == nil || row.Status != models.RequestStatusPending || !row.UpdatedAt.Equal(row.CreatedAt) {
+		t.Fatalf("request = %+v err=%v, want pending and never claimed", row, err)
+	}
+}
+
+// ownerCannotChangeExistingBook answers true whenever it cannot show the
+// owner may change the book, so an auto approval never runs on a guess.
+func TestOwnerCannotChangeExistingBook_Branches(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
+	ctx := context.Background()
+	seedOwnerlessEbook(t, f)
+	h := f.h
+	if h.ownerCannotChangeExistingBook(ctx, models.RequestKindAuthor, f.requester.ID, "OL27482W") {
+		t.Error("author request: want false")
+	}
+	if h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.requester.ID, "", "OL-NOT-THERE") {
+		t.Error("book not in the library: want false")
+	}
+	if !h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.requester.ID, "", "OL27482W") {
+		t.Error("shared book for a requester: want true")
+	}
+	if h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.admin.ID, "OL27482W") {
+		t.Error("shared book for an admin: want false")
+	}
+	if !h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, 9999, "OL27482W") {
+		t.Error("unknown owner: want true")
+	}
+	t.Run("tenancy off", func(t *testing.T) {
+		auth.SetEnforceTenancyForTests(t, false)
+		if h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.requester.ID, "OL27482W") {
+			t.Error("tenancy off: want false")
+		}
+	})
+
+	broken, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken.Close()
+	books, users := h.books, h.users
+	h.books = db.NewBookRepo(broken)
+	if !h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.requester.ID, "OL27482W") {
+		t.Error("book lookup error: want true")
+	}
+	h.books, h.users = books, nil
+	if !h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.requester.ID, "OL27482W") {
+		t.Error("no user repo: want true")
+	}
+	h.users = users
+}
+
+// autoApprove stops before the claim when there is no user repo or the owner
+// no longer exists, as it does on a lookup error.
+func TestRequestsAutoApprove_MissingOwnerFailsClosed(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
+	ctx := context.Background()
+	req := models.LibraryRequest{
+		OwnerUserID: f.requester.ID, Kind: models.RequestKindBook, ForeignID: "OL27482W",
+		Title: "The War of the Worlds", PayloadJSON: `{"kind":"book","foreignId":"OL27482W"}`,
+	}
+	if err := f.requests.Create(ctx, &req, 0); err != nil {
+		t.Fatal(err)
+	}
+	users := f.h.users
+	f.h.users = nil
+	if done, _, _, err := f.h.autoApprove(ctx, req, f.requester.ID); err == nil || done != nil {
+		t.Fatalf("no user repo: done %+v err %v, want an error", done, err)
+	}
+	f.h.users = users
+	if done, _, _, err := f.h.autoApprove(ctx, req, 9999); err == nil || done != nil {
+		t.Fatalf("unknown owner: done %+v err %v, want an error", done, err)
+	}
+	row, err := f.requests.GetByID(ctx, req.ID)
+	if err != nil || row == nil || row.Status != models.RequestStatusPending || !row.UpdatedAt.Equal(row.CreatedAt) {
+		t.Fatalf("request = %+v err=%v, want pending and never claimed", row, err)
 	}
 }
