@@ -2148,7 +2148,7 @@ an id with no account `422`. Answers:
 | `201` | the request, as below |
 | `403` | `forUser` sent by anyone but an admin session or the API key |
 | `400`, `422` | `forUser` is not a user id, or no account has that id |
-| `409` | already in the library with the requested format on disk or monitored (a book the library holds without it can still be requested, #3898), or, with `BINDERY_ENFORCE_TENANCY` on, held by another account, or shared with no owner when the caller is not an admin, and it lacks the requested format (the `error` then says to ask an admin to add that format); already requested by this user (pending or declined); the `error` field says which |
+| `409` | already in the library with the requested format on disk or monitored (a book the library holds without it can still be requested, #3898, including under `BINDERY_ENFORCE_TENANCY` one the caller may not change, #4089); already requested by this user (pending or declined); the `error` field says which |
 | `429` | this user already has `requests.max_pending_per_user` requests waiting (default 25), or a requester made creates or searches faster than the per user allowance (burst of 20, then one every 3 seconds; `Retry-After` says when). The cap is checked in the same statement as the insert, so concurrent creates cannot pass it |
 | `502`, `404` | the provider did not answer, or has no such id |
 
@@ -2165,7 +2165,7 @@ A request as the API returns it:
 | `booksTotal`, `booksImported` | an approved author request's progress |
 | `searchRunId` | the approve response for a book request with `searchOnAdd`: the run to poll at `GET /search/runs/{id}` |
 | `notice` | admin responses only, so in practice the approve response, when the book was already in the library (#3835): one sentence saying whether the missing format is now monitored on the existing book or nothing was added. A requester never receives it, not even from a create that an auto approval resolved |
-| `alreadyInLibrary` | admin queue only, on a pending book request: `true` when the book is in the library and every requested format (the default format for a request with none) is on disk or monitored, so approving adds nothing. It is decided by the same rule approve uses, whoever owns the book. A request that needs a format added to another account's book under `BINDERY_ENFORCE_TENANCY` is not flagged, because approving it is refused |
+| `alreadyInLibrary` | admin queue only, on a pending book request: `true` when the book is in the library and every requested format (the default format for a request with none) is on disk or monitored, so approving adds nothing. It is decided by the same rule approve uses, whoever owns the book. A request that needs a format added to another account's book under `BINDERY_ENFORCE_TENANCY` is not flagged, because approving it adds the format |
 | `username`, `resultBookId`, `resultAuthorId` | admin queue only |
 | `createdVia`, `createdBy` | admin queue only, and only for a request made with `forUser`: `createdVia` is `api_key` or `admin`, and `createdBy` the admin's username for `admin` |
 
@@ -2191,10 +2191,12 @@ skipped or left unmonitored makes it wanted again. The save is conditional on
 the book not having changed since it was read; if it did, the approval reads it
 again and tries once more, then answers `409` asking the approver to retry. `409`
 also remains for an author already in the library. Under
-`BINDERY_ENFORCE_TENANCY` a book that belongs to another account is never
-widened: if it already covers every requested format the request is resolved
-without touching it, and if a format is missing the approval answers `409` and
-the request can be declined.
+`BINDERY_ENFORCE_TENANCY` an admin's approval widens a book that belongs to
+another account, or a shared one, the same way, and the book keeps its owner
+(#4089). An auto approval acts as the requester, so it never widens or searches
+a book the requester may not change: with tenancy on, a request for a format
+such a book is missing is created as `pending` and never auto approved, whatever
+the account's auto approve setting says.
 `POST /api/v1/requests/{id}/decline` does not look at the library and always
 works on a pending request. A failed add leaves the request pending. Unknown
 fields are refused with `400`.
