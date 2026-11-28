@@ -125,14 +125,24 @@ func titleSigTokens(s string) []string {
 	return out
 }
 
-// titleTokenSet is the set of distinct titleSigTokens of s.
-func titleTokenSet(s string) map[string]bool {
+// titleForms is a title reduced once for titleMatch: the raw string, its
+// normalizeTitle form and its distinct titleSigTokens, sorted. titleMatch and
+// titleWordsMatch used to recompute these on every call, up to four
+// normalisations and two token maps per (book, title) pair; the bulk import's
+// catalogueIndex computes them once per book instead. The comparison itself
+// is the same either way: titleMatch builds both forms and calls
+// titleMatchForms.
+type titleForms struct {
+	raw  string
+	norm string
+	toks []string // distinct titleSigTokens, sorted
+}
+
+// titleFormsOf reduces s for titleMatchForms.
+func titleFormsOf(s string) titleForms {
 	toks := titleSigTokens(s)
-	set := make(map[string]bool, len(toks))
-	for _, w := range toks {
-		set[w] = true
-	}
-	return set
+	slices.Sort(toks)
+	return titleForms{raw: s, norm: normalizeTitle(s), toks: slices.Compact(toks)}
 }
 
 // titleMatch returns true when bookTitle and parsedTitle refer to the same work.
@@ -151,13 +161,21 @@ func titleMatch(bookTitle, parsedTitle string) bool {
 	if parsedTitle == "" || bookTitle == "" {
 		return false
 	}
-	if normalizeTitle(bookTitle) == normalizeTitle(parsedTitle) {
-		return true
-	}
-	if differentVolumes(bookTitle, parsedTitle) {
+	return titleMatchForms(titleFormsOf(bookTitle), titleFormsOf(parsedTitle))
+}
+
+// titleMatchForms is titleMatch over titles already reduced by titleFormsOf.
+func titleMatchForms(book, parsed titleForms) bool {
+	if parsed.raw == "" || book.raw == "" {
 		return false
 	}
-	return titleWordsMatch(bookTitle, parsedTitle)
+	if book.norm == parsed.norm {
+		return true
+	}
+	if differentVolumes(book.raw, parsed.raw) {
+		return false
+	}
+	return titleWordsMatchForms(book, parsed)
 }
 
 // titleWordsMatch is titleMatch without the volume veto: the exact fast path
@@ -169,9 +187,18 @@ func titleWordsMatch(bookTitle, parsedTitle string) bool {
 	if parsedTitle == "" || bookTitle == "" {
 		return false
 	}
+	return titleWordsMatchForms(titleFormsOf(bookTitle), titleFormsOf(parsedTitle))
+}
+
+// titleWordsMatchForms is titleWordsMatch over titles already reduced by
+// titleFormsOf.
+func titleWordsMatchForms(book, parsed titleForms) bool {
+	if parsed.raw == "" || book.raw == "" {
+		return false
+	}
 
 	// Fast path: exact match after normalization
-	if normalizeTitle(bookTitle) == normalizeTitle(parsedTitle) {
+	if book.norm == parsed.norm {
 		return true
 	}
 
@@ -179,25 +206,19 @@ func titleWordsMatch(bookTitle, parsedTitle string) bool {
 	// word of evidence. Counting each occurrence let a track file named
 	// "11. Track 11.mp3" share two words with any title holding "11" and
 	// clear the threshold below on a single number.
-	btSet := titleTokenSet(bookTitle)
-	ptSet := titleTokenSet(parsedTitle)
-	if len(btSet) == 0 || len(ptSet) == 0 {
+	if len(book.toks) == 0 || len(parsed.toks) == 0 {
 		return false
 	}
+	overlap := sortedOverlap(book.toks, parsed.toks)
+	return overlap >= requiredOverlap(len(book.toks), len(parsed.toks))
+}
 
-	overlap := 0
-	for w := range ptSet {
-		if btSet[w] {
-			overlap++
-		}
-	}
-
-	// Dynamic threshold: require overlap >= min(len(ptSet), len(btSet), 2).
-	// For single-token titles (e.g. "1984") require at least 1 match.
-	minLen := len(ptSet)
-	if len(btSet) < minLen {
-		minLen = len(btSet)
-	}
+// requiredOverlap is titleWordsMatch's dynamic threshold for two non-empty
+// token sets of sizes a and b: min(a, b, 2). A single-token title (e.g.
+// "1984") needs its one token; anything longer needs two. catalogueIndex
+// uses the same function to choose its candidates, so the two cannot drift.
+func requiredOverlap(a, b int) int {
+	minLen := min(a, b)
 	required := 2
 	if minLen < 2 {
 		required = minLen
@@ -205,8 +226,25 @@ func titleWordsMatch(bookTitle, parsedTitle string) bool {
 	if required == 0 {
 		required = 1
 	}
+	return required
+}
 
-	return overlap >= required
+// sortedOverlap counts the strings two sorted, duplicate free slices share.
+func sortedOverlap(a, b []string) int {
+	n := 0
+	for i, j := 0, 0; i < len(a) && j < len(b); {
+		switch {
+		case a[i] == b[j]:
+			n++
+			i++
+			j++
+		case a[i] < b[j]:
+			i++
+		default:
+			j++
+		}
+	}
+	return n
 }
 
 // authorNameTokensCache memoises authorNameTokens. ScanLibrary can perform

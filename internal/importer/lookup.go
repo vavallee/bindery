@@ -137,6 +137,7 @@ func (s *Scanner) LookupBatchLayout(ctx context.Context, root string, paths []st
 		authorNames[a.ID] = a.Name
 	}
 	results := make([]LookupResult, len(paths))
+	idx := newCatalogueIndex(books)
 	// lookupUnit is filesystem-bound, not CPU-bound: per unit it stats the
 	// path, opens and parses the EPUB container, then stats again to detect
 	// the format. Run sequentially that was ~213 ms per unit on a library
@@ -144,18 +145,18 @@ func (s *Scanner) LookupBatchLayout(ctx context.Context, root string, paths []st
 	// died against the 120 s server WriteTimeout mid-encode, so the scan
 	// never returned anything to the UI at all (#1638).
 	//
-	// Safe to parallelise because lookupUnit only reads: books and
-	// authorNames are loaded once above and never written, results are
+	// Safe to parallelise because lookupUnit only reads: books, idx and
+	// authorNames are built once above and never written, results are
 	// written by distinct index, and nothing on the path (ParseFilename,
 	// authorTitleFromLayout, flipByLayout, matchUnit, narrowByAuthor,
 	// firstEpubIn, ReadEpubMetadata, detectUnitFormat) keeps package-level
 	// state.
-	idx := make([]int, len(paths))
+	units := make([]int, len(paths))
 	for i := range paths {
-		idx[i] = i
+		units[i] = i
 	}
-	concurrency.RunBounded(ctx, idx, lookupBatchConcurrency, func(_ context.Context, i int) {
-		results[i] = lookupUnit(root, paths[i], books, authorNames)
+	concurrency.RunBounded(ctx, units, lookupBatchConcurrency, func(_ context.Context, i int) {
+		results[i] = lookupUnit(root, paths[i], idx, authorNames)
 	})
 	// RunBounded stops launching on cancellation, which would leave the tail
 	// of results as zero-value LookupResults, a Match of "" that is neither
@@ -179,7 +180,7 @@ const lookupBatchConcurrency = 8
 // lookupUnit matches one bulk-import unit against the pre-loaded catalogue using
 // the embedded-metadata → folder-layout → filename precedence described on
 // LookupBatchLayout. See that method for the full rationale.
-func lookupUnit(root, path string, books []models.Book, authorNames map[int64]string) LookupResult {
+func lookupUnit(root, path string, idx *catalogueIndex, authorNames map[int64]string) LookupResult {
 	parsed := ParseFilename(path)
 	layoutAuthor, layoutTitle, _ := authorTitleFromLayout(path, root)
 	layoutAuthor, layoutTitle = releaseFolderLayout(layoutAuthor, layoutTitle, isFolderUnit(path))
@@ -208,14 +209,14 @@ func lookupUnit(root, path string, books []models.Book, authorNames map[int64]st
 	// any catalogue title carrying the name ("Tom Clancy Enemy Contact",
 	// "Agatha Christie: An Autobiography"), and the override would hand the
 	// file to that book with confidence.
-	result := matchUnit(parsed, embedded, layoutAuthor, layoutTitle, "", books, authorNames, lookupAuthorMatch)
+	result := matchUnit(parsed, embedded, layoutAuthor, layoutTitle, "", idx, authorNames, lookupAuthorMatch)
 	if result.Match == "none" {
 		if flipped, ok := flipByLayout(parsed, layoutAuthor); ok {
-			if alt := matchUnit(flipped, embedded, layoutAuthor, layoutTitle, layoutAuthor, books, authorNames, confidentAuthorMatch); alt.Match != "none" {
+			if alt := matchUnit(flipped, embedded, layoutAuthor, layoutTitle, layoutAuthor, idx, authorNames, confidentAuthorMatch); alt.Match != "none" {
 				result = alt
 			}
 		} else if layoutAuthor != "" {
-			result = matchUnit(parsed, embedded, layoutAuthor, layoutTitle, layoutAuthor, books, authorNames, lookupAuthorMatch)
+			result = matchUnit(parsed, embedded, layoutAuthor, layoutTitle, layoutAuthor, idx, authorNames, lookupAuthorMatch)
 		}
 	}
 	result.DetectedFormat = detectUnitFormat(path)
@@ -274,7 +275,10 @@ func isReleaseFolderName(name string) bool {
 // confidentAuthorMatch because taking it is an automatic decision.
 // overrideAuthor is the author folder narrowByAuthor may put in place of an
 // author that rules out every title match, or "" for no override.
-func matchUnit(parsed ParsedFile, embedded EpubMetadata, layoutAuthor, layoutTitle, overrideAuthor string, books []models.Book, authorNames map[int64]string, authorMatch func(parsed, catalogue string) bool) LookupResult {
+//
+// The catalogue comes in as a catalogueIndex, which returns the same books in
+// the same order as a scan of the whole catalogue (see catalogueIndex).
+func matchUnit(parsed ParsedFile, embedded EpubMetadata, layoutAuthor, layoutTitle, overrideAuthor string, idx *catalogueIndex, authorNames map[int64]string, authorMatch func(parsed, catalogue string) bool) LookupResult {
 	// Effective signals in precedence order: embedded > filename > folder layout.
 	effTitle := firstNonEmpty(embedded.Title, parsed.Title, layoutTitle)
 	effAuthor := firstNonEmpty(embedded.Author, parsed.Author, layoutAuthor)
@@ -285,14 +289,10 @@ func matchUnit(parsed ParsedFile, embedded EpubMetadata, layoutAuthor, layoutTit
 	}
 
 	// Tier 1: ASIN exact match (filename only — EPUBs rarely carry an ASIN).
-	if parsed.ASIN != "" {
-		for i := range books {
-			if books[i].ASIN == parsed.ASIN {
-				result.Match = "confident"
-				result.Book = &books[i]
-				return result
-			}
-		}
+	if b, ok := idx.byASIN(parsed.ASIN); ok {
+		result.Match = "confident"
+		result.Book = b
+		return result
 	}
 
 	if effTitle == "" {
@@ -306,12 +306,7 @@ func matchUnit(parsed ParsedFile, embedded EpubMetadata, layoutAuthor, layoutTit
 	// so Book.ProviderISBNs is empty for this comparison — it is never persisted
 	// at all (#1893) — and matchByTitleAuthor has the same limitation.
 	// Title+author is the reliable signal against the loaded catalogue.)
-	var titled []models.Book
-	for i := range books {
-		if titleMatch(books[i].Title, effTitle) {
-			titled = append(titled, books[i])
-		}
-	}
+	titled := idx.titleMatches(effTitle)
 	matches, effAuthor := narrowByAuthor(titled, effAuthor, authorMatch, overrideAuthor, authorNames)
 	result.ParsedAuthor = effAuthor
 
