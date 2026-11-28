@@ -175,3 +175,28 @@ func TestAssess_ThirdSpacedFailureBlocks(t *testing.T) {
 		t.Fatalf("verdict = %+v, want 3 and a block", v)
 	}
 }
+
+// A 5xx on the link counts like a 404 (#4111): three a retry apart on a
+// serving indexer block, and a mix of the two is one run.
+func TestAssess_ServerErrorCountsLikeNotFound(t *testing.T) {
+	f := newAssessFixture(t)
+	f.fail(ClassServerError, 20*time.Hour)
+	f.serve(19 * time.Hour)
+	f.fail(ClassRelease, 12*time.Hour)
+	f.serve(11 * time.Hour)
+	if v := f.assess(ClassServerError); v.Class != ClassServerError || v.Count != 3 || !v.Block {
+		t.Fatalf("verdict = %+v, want 3 and a block", v)
+	}
+}
+
+// Another release of the indexer answering 5xx makes this one indexer wide:
+// an indexer failing everything is paused, never held against a release.
+func TestAssess_ServerErrorElsewhereIsIndexerWide(t *testing.T) {
+	f := newAssessFixture(t)
+	f.serve(time.Hour)
+	f.add(models.HistoryEventDownloadFailed, 2*time.Hour,
+		map[string]string{"guid": "other-release", "class": string(ClassServerError), "indexerId": "7"})
+	if v := f.assess(ClassServerError); v.Class != ClassIndexerWide || v.Count != 0 || v.Block || !v.OtherReleasesFailing {
+		t.Fatalf("verdict = %+v, want indexer wide with the burst flag", v)
+	}
+}

@@ -14,12 +14,12 @@ import (
 // recordSendFailure acts on a grab the download client could not take (#4111).
 //
 // It acts on torrent grabs only. The failure is written to history with its
-// class, so the count the next failure sees includes it. A failure that is the
-// indexer's (429, 5xx, a "disabled till" ban) makes the scheduler pass that
-// indexer's releases over until it is due, so Bindery stops feeding an indexer
-// that is banning itself; it is never counted towards a blocklist, because a
-// quota 429 and a dead link cannot be told apart. A 404 or 410 and a torrent
-// that never arrived can count (releasefail.Assess); a release that has
+// class, so the count the next failure sees includes it. An indexer 429, 5xx
+// or "disabled till" ban makes the scheduler pass that indexer's releases over
+// until it is due, so Bindery stops feeding an indexer that is banning itself.
+// A 429 or a ban is never counted towards a blocklist, because a quota and a
+// dead link cannot be told apart. A 404 or 410, a 5xx without a ban notice and
+// a torrent that never arrived can count (releasefail.Assess); a release that has
 // failed releasefail.EscalateAfter times in a row is blocklisted. A failure
 // that is Bindery's own (client unreachable, a timeout) is recorded and
 // neither counted nor blocklisted.

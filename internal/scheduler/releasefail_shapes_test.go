@@ -165,6 +165,22 @@ func TestShape4111_IndexerNotFoundBlocklistsAndMovesOn(t *testing.T) {
 	}
 }
 
+// Shape 1b: the indexer answers the .torrent link with a 5xx and no ban
+// notice. Every failure pauses the indexer, which here also holds back the
+// other release (same indexer), so the first one only backs off; three a
+// retry apart blocklist the release and the search moves on.
+func TestShape4111_Indexer5xxBlocklistsAndMovesOn(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			f := newShapesFixture(t, status, "Ok.")
+			if n := f.sweepUntilBlocklisted(t, 2*releasefail.EscalateAfter); n != releasefail.EscalateAfter {
+				t.Errorf("%d failed sweeps before the search moved on, want %d", n, releasefail.EscalateAfter)
+			}
+			f.assertMovesOn(t, "HTTP "+strconv.Itoa(status))
+		})
+	}
+}
+
 // Shape 1c: a 429 or a "disabled till" ban. Never counted (a quota and a
 // dead link look the same); the indexer is paused instead, and the release
 // is retried once the pause lapses.

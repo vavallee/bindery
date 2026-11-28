@@ -16,22 +16,22 @@ func TestIndexerBackoffFloor(t *testing.T) {
 }
 
 // The two errors #4111 quotes, as the torrent adapters word them: the ban
-// notice behind a 429, and a bare 500 saying "Download failed". Both are the
-// indexer's answer to the link fetch, and both are classified, not local.
+// notice behind a 429 is the indexer's and never counts; a bare 500 saying
+// "Download failed" is the indexer failing to fetch that release, and can.
 func TestClassifySend_IssueErrors(t *testing.T) {
-	for _, msg := range []string{
-		"download client error: fetch torrent content: fetch torrent: indexer returned HTTP 429: Indexer is disabled till 11/20/2026 02:16:12 due to recent failures.",
-		"download client error: fetch torrent content: fetch torrent: indexer returned HTTP 500: Download failed",
+	for msg, want := range map[string]Class{
+		"download client error: fetch torrent content: fetch torrent: indexer returned HTTP 429: Indexer is disabled till 11/20/2026 02:16:12 due to recent failures.": ClassIndexer,
+		"download client error: fetch torrent content: fetch torrent: indexer returned HTTP 500: Download failed":                                                      ClassServerError,
 	} {
-		if got := ClassifySend(msg, now); got.Class != ClassIndexer {
-			t.Errorf("%q classified %q, want %q", msg, got.Class, ClassIndexer)
+		if got := ClassifySend(msg, now); got.Class != want {
+			t.Errorf("%q classified %q, want %q", msg, got.Class, want)
 		}
 	}
 }
 
 func TestClassCounts(t *testing.T) {
 	for c, want := range map[Class]bool{
-		ClassIndexer: false, ClassRelease: true, ClassNeverArrived: true,
+		ClassIndexer: false, ClassRelease: true, ClassServerError: true, ClassNeverArrived: true,
 		ClassClientError: false, ClassClientRemoved: false, ClassLocal: false, ClassIndexerWide: false,
 	} {
 		if c.Counts() != want {

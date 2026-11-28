@@ -2,6 +2,7 @@ package releasefail
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -15,8 +16,9 @@ func TestClassifySend(t *testing.T) {
 		class Class
 	}{
 		{"429", "download client error: fetch torrent content: fetch torrent: indexer returned HTTP 429: slow down", ClassIndexer},
-		{"500", "fetch torrent content: fetch torrent: indexer returned HTTP 500: Download failed", ClassIndexer},
-		{"503", "fetch torrent content: fetch torrent: indexer returned HTTP 503", ClassIndexer},
+		{"500", "fetch torrent content: fetch torrent: indexer returned HTTP 500: Download failed", ClassServerError},
+		{"503", "fetch torrent content: fetch torrent: indexer returned HTTP 503", ClassServerError},
+		{"503 with a ban notice", "fetch torrent: indexer returned HTTP 503: Indexer is disabled till 11/21/2026 02:16:12 due to recent failures.", ClassIndexer},
 		{"disabled till", "fetch torrent content: fetch torrent: indexer returned HTTP 429: Indexer is disabled till 11/21/2026 02:16:12 due to recent failures.", ClassIndexer},
 		{"404", "fetch torrent content: fetch torrent: indexer returned HTTP 404: not found", ClassRelease},
 		{"410", "fetch torrent content: fetch torrent: indexer returned HTTP 410", ClassRelease},
@@ -42,6 +44,10 @@ func TestClassifySend_DetailHoldsNothingFromTheError(t *testing.T) {
 	if d != "indexer HTTP 429" {
 		t.Errorf("detail = %q", d)
 	}
+	d = ClassifySend(strings.Replace(msg, "429", "502", 1), now).Detail
+	if d != "indexer HTTP 502 fetching the release" {
+		t.Errorf("detail = %q", d)
+	}
 }
 
 func TestIndexerBackoffUntil(t *testing.T) {
@@ -58,6 +64,9 @@ func TestIndexerBackoffUntil(t *testing.T) {
 
 	if got := IndexerBackoffUntil(ClassifySend("indexer returned HTTP 500", now), now); !got.Equal(now.Add(DefaultIndexerBackoff)) {
 		t.Errorf("a bare 500: backoff until %v, want the default", got)
+	}
+	if got := IndexerBackoffUntil(ClassifySend("indexer returned HTTP 503: Retry-After: 600", now), now); !got.Equal(now.Add(10 * time.Minute)) {
+		t.Errorf("a 503 with Retry-After: backoff until %v, want +10m", got)
 	}
 
 	far := fmt.Sprintf("indexer returned HTTP 429: disabled till %s", now.Add(400*time.Hour).Format("1/2/2006 15:04:05"))
