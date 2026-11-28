@@ -506,3 +506,96 @@ func TestRecommendationAdd_TenancySharedAuthorBookIsCallers(t *testing.T) {
 		t.Fatalf("book author=%d owner=%d, want author %d owner bob (%d)", book.AuthorID, book.OwnerUserID, sharedAuthorID, bob)
 	}
 }
+
+// An admin's recommendation that carries only an author name, when several
+// accounts hold an author with that name: a shared author wins, and with
+// none the book is left unowned rather than put in whichever account's
+// author sorted first (#4090).
+func TestRecommendationAdd_AdminNameMatchAcrossAccounts(t *testing.T) {
+	for _, withShared := range []bool{false, true} {
+		t.Run(map[bool]string{false: "no shared author", true: "shared author"}[withShared], func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, true)
+			database, err := db.OpenMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { database.Close() })
+			ctx := context.Background()
+			users := db.NewUserRepo(database)
+			admin, _ := users.Create(ctx, "admin", "h0")
+			alice, _ := users.Create(ctx, "alice", "h1")
+			bob, _ := users.Create(ctx, "bob", "h2")
+			authorRepo := db.NewAuthorRepo(database)
+			bookRepo := db.NewBookRepo(database)
+			recRepo := db.NewRecommendationRepo(database)
+			mk := func(fid string, owner int64) *models.Author {
+				a := &models.Author{ForeignID: fid, Name: "Same Name", SortName: "Name, Same", MetadataProvider: "hardcover"}
+				if err := authorRepo.CreateForUser(ctx, a, owner); err != nil {
+					t.Fatal(err)
+				}
+				return a
+			}
+			mk("hc:same-alice", alice.ID)
+			mk("hc:same-bob", bob.ID)
+			var sharedAuthor *models.Author
+			if withShared {
+				sharedAuthor = mk("hc:same-shared", 0)
+			}
+			if err := recRepo.ReplaceBatch(ctx, admin.ID, []models.RecommendationCandidate{{
+				ForeignID: "hc:same-book", RecType: models.RecTypeListCross, Title: "Same Book",
+				AuthorName: "Same Name", MediaType: models.MediaTypeEbook, Genres: []string{}, Score: 1,
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			recs, err := recRepo.List(ctx, admin.ID, "", 10, 0)
+			if err != nil || len(recs) != 1 {
+				t.Fatalf("recommendations = %+v err=%v", recs, err)
+			}
+			h := NewRecommendationHandler(recRepo, fakeRecommendationEngine{}, authorRepo, bookRepo, nil).WithAppContext(ctx)
+			adminCtx := auth.WithUserRole(auth.WithUserID(ctx, admin.ID), "admin")
+			if rec := addRecommendationAs(h, adminCtx, recs[0].ID); rec.Code != http.StatusCreated {
+				t.Fatalf("want 201, got %d: %s", rec.Code, rec.Body.String())
+			}
+			book, err := bookRepo.GetByForeignID(ctx, "hc:same-book")
+			if err != nil || book == nil {
+				t.Fatalf("book = %+v err=%v", book, err)
+			}
+			if book.OwnerUserID != 0 {
+				t.Fatalf("book owner = %d, want none (alice %d, bob %d)", book.OwnerUserID, alice.ID, bob.ID)
+			}
+			if withShared && book.AuthorID != sharedAuthor.ID {
+				t.Fatalf("book filed under author %d, want the shared author %d", book.AuthorID, sharedAuthor.ID)
+			}
+		})
+	}
+}
+
+func TestPickAuthorByName(t *testing.T) {
+	a := func(id, owner int64, name string) models.Author {
+		return models.Author{ID: id, OwnerUserID: owner, Name: name}
+	}
+	for _, tc := range []struct {
+		name          string
+		authors       []models.Author
+		wantID        int64
+		wantAmbiguous bool
+	}{
+		{"no match", []models.Author{a(1, 5, "Other")}, 0, false},
+		{"one match", []models.Author{a(1, 5, "N")}, 1, false},
+		{"same owner twice keeps the first", []models.Author{a(1, 5, "N"), a(2, 5, "N")}, 1, false},
+		{"two accounts, no shared", []models.Author{a(1, 5, "N"), a(2, 6, "N")}, 1, true},
+		{"two accounts and a shared one", []models.Author{a(1, 5, "N"), a(2, 6, "N"), a(3, 0, "N")}, 3, false},
+		{"own and shared", []models.Author{a(1, 5, "N"), a(3, 0, "N")}, 3, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, amb := pickAuthorByName(tc.authors, "N")
+			var id int64
+			if got != nil {
+				id = got.ID
+			}
+			if id != tc.wantID || amb != tc.wantAmbiguous {
+				t.Fatalf("picked %d ambiguous %v, want %d %v", id, amb, tc.wantID, tc.wantAmbiguous)
+			}
+		})
+	}
+}

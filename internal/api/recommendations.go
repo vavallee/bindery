@@ -169,6 +169,39 @@ func (h *RecommendationHandler) Dismiss(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// pickAuthorByName picks the author a recommendation is filed under when it
+// carries only an author name. An admin sees every account's authors, so two
+// accounts can each hold an author with that name, and the book takes the
+// picked author's owner (#4090). When the matches belong to more than one
+// owner, a shared (unowned) match wins; with no shared match the first one is
+// used and ambiguous is true, so the caller leaves the book unowned instead of
+// guessing which account it belongs to. With every match under one owner the
+// first match is used, as before.
+func pickAuthorByName(authors []models.Author, name string) (picked *models.Author, ambiguous bool) {
+	var first, shared *models.Author
+	owners := map[int64]bool{}
+	for i := range authors {
+		if authors[i].Name != name {
+			continue
+		}
+		if first == nil {
+			first = &authors[i]
+		}
+		if shared == nil && authors[i].OwnerUserID == 0 {
+			shared = &authors[i]
+		}
+		owners[authors[i].OwnerUserID] = true
+	}
+	switch {
+	case first == nil || len(owners) == 1:
+		return first, false
+	case shared != nil:
+		return shared, false
+	default:
+		return first, true
+	}
+}
+
 // Add creates an author (if needed) and book from a recommendation, marks it
 // as wanted, and triggers an immediate search.
 func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
@@ -209,15 +242,14 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 			author = a
 		}
 	}
+	// ambiguousOwner is set when the name match below found authors with that
+	// name in more than one account and none of them shared: the book is then
+	// left unowned rather than put in whichever account's author sorted first.
+	ambiguousOwner := false
 	if author == nil && rec.AuthorName != "" {
 		// Try to find an existing author by name.
 		authors, _ := h.authors.ListByUser(r.Context(), auth.ListScopeUserID(r.Context()))
-		for i := range authors {
-			if authors[i].Name == rec.AuthorName {
-				author = &authors[i]
-				break
-			}
-		}
+		author, ambiguousOwner = pickAuthorByName(authors, rec.AuthorName)
 	}
 
 	if author == nil {
@@ -230,10 +262,14 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 	// author. A user who is not an admin owns what they add, and an admin's
 	// book under their own author is theirs rather than shared with every
 	// user.
+	owner := newBookOwnerUserID(r.Context(), author)
+	if ambiguousOwner {
+		owner = 0
+	}
 	book := &models.Book{
 		ForeignID:        rec.ForeignID,
 		AuthorID:         author.ID,
-		OwnerUserID:      newBookOwnerUserID(r.Context(), author),
+		OwnerUserID:      owner,
 		Title:            rec.Title,
 		Description:      rec.Description,
 		ImageURL:         rec.ImageURL,
