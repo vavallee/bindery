@@ -39,11 +39,19 @@ const (
 	// cannot attribute: the client is unreachable, a timeout, a rejected
 	// credential. It says nothing about the release and is never counted.
 	ClassLocal Class = "local"
-	// ClassIndexer is the indexer refusing or failing the fetch of the
-	// release's link: HTTP 429, a 5xx, or a "disabled till" ban. A quota 429
-	// and a dead link look the same from here, so it is never counted: it only
-	// makes Bindery leave that indexer alone for a while.
+	// ClassIndexer is the indexer refusing the fetch of the release's link
+	// with HTTP 429 or a "disabled till" ban. A quota and a dead link look the
+	// same from here, so it is never counted: it only makes Bindery leave that
+	// indexer alone for a while.
 	ClassIndexer Class = "indexer"
+	// ClassServerError is the indexer answering the release's link with a
+	// 5xx and no ban notice. Prowlarr answers a rate limit or a ban with 429
+	// and a failed fetch of the release from the tracker with 500, so a lone
+	// release that keeps answering 5xx while its indexer serves others is
+	// evidence about the release. It pauses the indexer like ClassIndexer on
+	// every occurrence, so the first one only backs off, and it counts under
+	// the same conditions as ClassRelease (see Assess).
+	ClassServerError Class = "serverError"
 	// ClassRelease is the link being gone: the indexer answered 404 or 410.
 	// It counts only while the indexer is otherwise serving (see Assess).
 	ClassRelease Class = "release"
@@ -69,7 +77,7 @@ const (
 // Counts reports whether failures of this class count towards a blocklist.
 func (c Class) Counts() bool {
 	switch c {
-	case ClassRelease, ClassNeverArrived:
+	case ClassRelease, ClassServerError, ClassNeverArrived:
 		return true
 	}
 	return false
@@ -77,14 +85,15 @@ func (c Class) Counts() bool {
 
 // CountedClasses is every class that counts, for the history query.
 var CountedClasses = []string{
-	string(ClassRelease), string(ClassNeverArrived),
+	string(ClassRelease), string(ClassServerError), string(ClassNeverArrived),
 }
 
 // failureClasses are the classes whose events on an indexer say the indexer
 // had a bad moment, which is what makes another release's failure there
 // indexer wide evidence.
 var failureClasses = []string{
-	string(ClassIndexer), string(ClassIndexerWide), string(ClassRelease), string(ClassNeverArrived),
+	string(ClassIndexer), string(ClassIndexerWide), string(ClassRelease), string(ClassServerError),
+	string(ClassNeverArrived),
 }
 
 const (
@@ -140,8 +149,14 @@ func ClassifySend(msg string, now time.Time) SendFailure {
 	}
 	disabled := disabledTillRe.FindStringSubmatch(msg)
 	switch {
-	case status == 429 || status >= 500 || (status != 0 && disabled != nil):
+	case status == 429 || (status != 0 && disabled != nil):
 		// An indexer failure, below.
+	case status >= 500:
+		return SendFailure{
+			Class:   ClassServerError,
+			Detail:  fmt.Sprintf("indexer HTTP %d fetching the release", status),
+			RetryAt: parseRetryAt(msg, nil, now),
+		}
 	case status == 404 || status == 410:
 		return SendFailure{
 			Class:  ClassRelease,
@@ -183,7 +198,7 @@ func parseRetryAt(msg string, disabled []string, now time.Time) time.Time {
 // the zero time when f is not an indexer failure. A time the indexer gave is
 // honoured between MinIndexerBackoff and MaxIndexerBackoff.
 func IndexerBackoffUntil(f SendFailure, now time.Time) time.Time {
-	if f.Class != ClassIndexer {
+	if f.Class != ClassIndexer && f.Class != ClassServerError {
 		return time.Time{}
 	}
 	until := now.Add(DefaultIndexerBackoff)
@@ -219,9 +234,10 @@ type Verdict struct {
 // before writing the history event, store Verdict.Class on it, and say on it
 // whether the release was blocklisted.
 //
-// Only a 404 or 410 and a torrent that never reached the client can count, and
-// only as evidence about the release. When in doubt it does not count, because
-// a blocklist entry has no expiry and applies to every owner:
+// Only a 404 or 410, a 5xx without a ban notice and a torrent that never
+// reached the client can count, and only as evidence about the release. When
+// in doubt it does not count, because a blocklist entry has no expiry and
+// applies to every owner:
 //   - a download with no indexer id never counts;
 //   - it does not count when another release from the same indexer failed in
 //     the last IndexerWideWindow (the indexer is misrouted, moved or down);

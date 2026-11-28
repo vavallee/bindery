@@ -142,9 +142,9 @@ func failSpacedServed(t *testing.T, f *regrabFixture, dl *models.Download, msg s
 	}
 }
 
-// A 429 or a 5xx is never counted: a quota and a dead link look the same, so
-// the indexer is paused and the release is left alone, however often it
-// repeats and however well the indexer serves otherwise.
+// A 429 is never counted: a quota and a dead link look the same, so the
+// indexer is paused and the release is left alone, however often it repeats
+// and however well the indexer serves otherwise.
 func TestRecordSendFailure_IndexerErrorNeverBlocklists(t *testing.T) {
 	f, dl := failureFixture(t)
 	ctx := context.Background()
@@ -541,27 +541,108 @@ func TestSearchAndGrab_RealPathBackToBackFailuresDoNotBlocklist(t *testing.T) {
 }
 
 // #4111's own error, the indexer's HTTP 500 "Download failed", through the
-// real path: it pauses the indexer and is recorded, but is never held against
-// the release, because a quota and a dead link cannot be told apart.
-func TestSearchAndGrab_RealPathIndexer500NeverBlocklists(t *testing.T) {
+// real path while the indexer serves nothing else: it pauses the indexer on
+// every sweep and is recorded, but an indexer that is down proves nothing
+// about the release, so it never adds up. (A 500 on a lone release of a
+// serving indexer does: TestShape4111_Indexer5xxBlocklistsAndMovesOn.)
+func TestSearchAndGrab_RealPathIndexer500OutageNeverBlocklists(t *testing.T) {
 	f := torrentFixture(t, http.StatusInternalServerError)
 	ctx := context.Background()
-	for i := 0; i < 2*releasefail.EscalateAfter; i++ {
+	idx, _ := f.s.indexers.List(ctx)
+	for i := 0; i < 3*releasefail.EscalateAfter; i++ {
 		f.s.searchAndGrabFormat(ctx, f.book, models.MediaTypeEbook, nil)
-		if i == 0 {
-			idx, _ := f.s.indexers.List(ctx)
-			if _, backed := f.s.indexerBackedOff(idx[0].ID, time.Now()); !backed {
-				t.Error("the 500 did not pause the indexer")
-			}
+		if _, backed := f.s.indexerBackedOff(idx[0].ID, time.Now()); !backed {
+			t.Errorf("sweep %d: the 500 did not pause the indexer", i+1)
 		}
-		retryAfterCooldown(t, f)
+		row, err := f.downloads.GetByGUID(ctx, regrabGUID)
+		if err != nil || row == nil {
+			t.Fatalf("row: %v", err)
+		}
+		f.backdate(t, row.ID, "dead_at", time.Now().Add(-7*time.Hour))
+		clearPause(f)
 		ageHistory(t, f, 7*time.Hour)
 	}
 	if n := len(blocklistEntries(t, f)); n != 0 {
-		t.Fatalf("an indexer 500 blocklisted the release (%d entries)", n)
+		t.Fatalf("an indexer 500 during an outage blocklisted the release (%d entries)", n)
 	}
 	events, _ := f.s.history.ListByBook(ctx, f.book.ID)
-	if len(events) != 2*releasefail.EscalateAfter {
+	if len(events) != 3*releasefail.EscalateAfter {
 		t.Errorf("%d failure events, want one per sweep", len(events))
+	}
+}
+
+// indexer500 is the reporter's 500 from #4111, as the torrent adapter words it.
+const indexer500 = "download client error: fetch torrent content: fetch torrent: indexer returned HTTP 500: Download failed"
+
+// A lone release answering 5xx three times a retry apart, while its indexer
+// serves others, is blocklisted, and each failure paused the indexer.
+func TestRecordSendFailure_RepeatedServerErrorEscalates(t *testing.T) {
+	f, dl := failureFixture(t)
+	serveOther(t, f, *dl.IndexerID)
+	f.s.recordSendFailure(context.Background(), dl, errors.New(indexer500))
+	if _, backed := f.s.indexerBackedOff(*dl.IndexerID, time.Now()); !backed {
+		t.Error("a 500 did not pause the indexer")
+	}
+	serveOther(t, f, *dl.IndexerID)
+	clearPause(f)
+	ageHistory(t, f, 7*time.Hour)
+	failSpaced(t, f, dl, indexer500, releasefail.EscalateAfter-1)
+	entries := blocklistEntries(t, f)
+	if len(entries) != 1 || entries[0].GUID != regrabGUID {
+		t.Fatalf("blocklist = %+v, want the release after %d spaced 500s", entries, releasefail.EscalateAfter)
+	}
+	if !strings.Contains(entries[0].Reason, "HTTP 500") || strings.Contains(entries[0].Reason, "Download failed") {
+		t.Errorf("reason %q should name the status and hold nothing from the error", entries[0].Reason)
+	}
+}
+
+// The reporter's exact 500, once, only pauses the indexer.
+func TestRecordSendFailure_SingleServerErrorDoesNotBlocklist(t *testing.T) {
+	f, dl := failureFixture(t)
+	serveOther(t, f, *dl.IndexerID)
+	f.s.recordSendFailure(context.Background(), dl, errors.New(indexer500))
+	if n := len(blocklistEntries(t, f)); n != 0 {
+		t.Fatalf("one 500 blocklisted the release (%d entries)", n)
+	}
+	if _, backed := f.s.indexerBackedOff(*dl.IndexerID, time.Now()); !backed {
+		t.Error("the 500 did not pause the indexer")
+	}
+}
+
+// 500s across several releases of one indexer are the indexer: nothing is
+// blocklisted, however long it goes on.
+func TestRecordSendFailure_ServerErrorsAcrossReleasesBlocklistNothing(t *testing.T) {
+	f, a := failureFixture(t)
+	b := secondRelease(t, f, a, "g-second")
+	c := secondRelease(t, f, a, "g-third")
+	ctx := context.Background()
+	for i := 0; i < 2*releasefail.EscalateAfter; i++ {
+		serveOther(t, f, *a.IndexerID)
+		for _, dl := range []*models.Download{a, b, c} {
+			f.s.recordSendFailure(ctx, dl, errors.New(indexer500))
+		}
+		serveOther(t, f, *a.IndexerID)
+		clearPause(f)
+		ageHistory(t, f, 7*time.Hour)
+	}
+	if n := len(blocklistEntries(t, f)); n != 0 {
+		t.Fatalf("500s across one indexer's releases blocklisted %d of them", n)
+	}
+}
+
+// A 5xx that carries a "disabled till" notice is a ban, never counted.
+func TestRecordSendFailure_ServerErrorWithBanNeverBlocklists(t *testing.T) {
+	f, dl := failureFixture(t)
+	until := time.Now().UTC().Add(2 * time.Hour).Format("1/2/2006 15:04:05")
+	msg := "fetch torrent content: fetch torrent: indexer returned HTTP 500: Indexer is disabled till " + until + " due to recent failures."
+	failSpaced(t, f, dl, msg, 3*releasefail.EscalateAfter)
+	if n := len(blocklistEntries(t, f)); n != 0 {
+		t.Fatalf("a 500 with a ban notice blocklisted the release (%d entries)", n)
+	}
+	events, _ := f.s.history.ListByBook(context.Background(), f.book.ID)
+	for _, ev := range events {
+		if !strings.Contains(ev.Data, `"class":"indexer"`) {
+			t.Errorf("event %s is not recorded as an indexer failure", ev.Data)
+		}
 	}
 }

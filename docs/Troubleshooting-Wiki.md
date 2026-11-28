@@ -659,9 +659,10 @@ What counts, and what does not:
 | Failure | Effect |
 |---|---|
 | The indexer answered the download link with 404 or 410 (the link is gone) | Counts, but only while the indexer is otherwise serving (see below). |
+| The indexer answered the download link with a 5xx and no "disabled till" notice (Prowlarr's 500 `Download failed`) | Counts under the same conditions. Prowlarr answers a rate limit or a ban with 429 and a failed fetch of that release with 500, so a 500 on one release while the indexer serves others points at the release. Each one also pauses the indexer, as below, so a single 5xx only ever backs off. |
 | The grab was sent but no poll ever found the torrent in the client | Counts under the same conditions. A single occurrence is usually a client restart and is retried as before. Bindery cannot tell why the client never listed it: a Bindery side fault (an unsigned indexer URL, a dropped add) and a client that was down both look the same. The Queue message reads `never reached the download client`. |
 | The client listed the torrent at some point and later no longer has it | Recorded as `clientRemoved`, never counts. This is you removing it in the client, the client dropping it, or a wiped client. The row is failed and the book is searched again as before. The Queue message reads `removed from the download client`. Downloads that were already running when you upgraded to this version are treated this way too, so an upgrade cannot make an old download count. |
-| The indexer answered the link with HTTP 429, a 5xx or a "disabled till" notice | Never counts. A daily quota and a dead link look the same from here. The indexer is paused instead: until the time it gave (capped at 24 hours, at least 5 minutes), otherwise one hour. Its releases are skipped, the search tries the next one, and the search outcome reads `indexer backing off until ...`. The pause is held in memory, so a restart forgets it. |
+| The indexer answered the link with HTTP 429 or a "disabled till" notice | Never counts. A daily quota and a dead link look the same from here. The indexer is paused instead: until the time it gave (capped at 24 hours, at least 5 minutes), otherwise one hour. Its releases are skipped, the search tries the next one, and the search outcome reads `indexer backing off until ...`. The pause is held in memory, so a restart forgets it. |
 | qBittorrent or Deluge reports the torrent as errored | Recorded in History, never counts. qBittorrent's error state is usually a full disk or an unwritable save path, which would otherwise blocklist every release in turn. The Queue message says so. |
 | The client is unreachable, a timeout, a rejected credential, or an HTTP error from the client itself | Never counts. Retried after the six hour wait. |
 
@@ -669,7 +670,7 @@ What counts, and what does not:
 
 What this does not do, so you are not surprised:
 
-- An indexer that fails every release (a 500 on all of them, or a banned account) is only paused, never held against a release, and a release that fails every cycle on an indexer that serves nothing else never reaches three. A release that is dead for good on a quiet indexer, and two dead releases of one book on the same indexer, can therefore be retried every six hours for ever.
+- An indexer that fails every release (a 500 on all of them, or a banned account) is only paused, never held against a release, because each release's failure makes the others indexer wide, and a release that fails every cycle on an indexer that serves nothing else never reaches three. A release that is dead for good on a quiet indexer, and two dead releases of one book on the same indexer, can therefore be retried every six hours for ever.
 - A once a day quota that rejects the last release of an otherwise healthy indexer is treated as the indexer's problem and is never blocklisted.
 - **Removing a torrent in your client is safe.** Bindery records the first time a poll finds a download in the client. A release you cancel there, however often, is only ever retried, never blocklisted. The limit is a torrent you remove within about ten minutes of the grab, before a poll has listed it: that looks like one that never arrived.
 - **A fault on Bindery's side can leave failures behind.** If an earlier Bindery version or setting problem (an unsigned indexer URL, a dropped add) made a release never arrive once or twice, those failures stay in the seven day window and the next one can be the third. Fix the cause and remove the Blocklist entry if a good release is caught; Bindery does not reset the count when it is upgraded.
@@ -677,6 +678,8 @@ What this does not do, so you are not surprised:
 - The Grab button is not paused and does not count: a manual grab always goes through.
 
 For those cases, blocklist the release by hand. On the History page, the `downloadFailed` entry for the release has a Blocklist action. The release then stays out of every future search until you remove its entry on the Blocklist page.
+
+In short, only three torrent failures can blocklist a release on their own: a 404 or 410 on the link, a 5xx on the link without a "disabled till" notice, and a grab the client never listed. To undo an automatic entry, open **Settings → Blocklist**, find the release (its reason starts with `downloadFailed:`) and remove it; the next search can pick it again.
 
 `importBlocked` is deliberately left to you. Those files downloaded fine and are still on disk; what failed was the import. The sweep cannot tell whether they are still there, and re-downloading them would fetch bytes you already have and leave the old torrent in your client with nothing tracking it, so a blocked row is only ever re-grabbed when you ask for it. Use **Retry import** if the files are still in place, and **Grab** if they are gone.
 
