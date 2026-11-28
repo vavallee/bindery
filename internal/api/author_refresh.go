@@ -10,6 +10,7 @@ import (
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -51,8 +52,9 @@ type AuthorRefreshHandler struct {
 	// refresh repopulates a single author's catalogue from the metadata
 	// provider (metadata only, never auto-grab). Wire it to the same closure
 	// the per-author Refresh handler uses. Nil when not available, in which
-	// case RefreshAll is rejected with 400.
-	refresh func(*models.Author)
+	// case RefreshAll is rejected with 400. The context carries the run's
+	// importer.SnapshotScope, so the whole run walks the library once.
+	refresh func(context.Context, *models.Author)
 
 	// mu guards running. running is the in-memory truth of whether a job is
 	// active in *this* process; the persisted status JSON is the cross-restart
@@ -68,7 +70,7 @@ type AuthorRefreshHandler struct {
 // NewAuthorRefreshHandler builds the handler with the author lister and the
 // per-author refresh callback. Pass a nil refresh to disable the endpoint
 // (RefreshAll then returns 400).
-func NewAuthorRefreshHandler(authors authorLister, refresh func(*models.Author)) *AuthorRefreshHandler {
+func NewAuthorRefreshHandler(authors authorLister, refresh func(context.Context, *models.Author)) *AuthorRefreshHandler {
 	return &AuthorRefreshHandler{authors: authors, refresh: refresh}
 }
 
@@ -172,6 +174,11 @@ func (h *AuthorRefreshHandler) run(ctx context.Context) {
 	}
 	h.persist(ctx, scope, status)
 
+	// One library snapshot for the whole run. Each author sync used to walk
+	// the library tree again: 2,000 authors meant up to 2,000 walks, which
+	// on a network share is hours of directory listings. See
+	// importer.SnapshotScope for what a shared snapshot sees.
+	batchCtx := importer.WithSnapshotScope(ctx)
 	for i := range authors {
 		// Loop var is per-iteration in Go 1.22+, so &authors[i] is safe to
 		// capture; use the index form to be explicit about it.
@@ -184,7 +191,7 @@ func (h *AuthorRefreshHandler) run(ctx context.Context) {
 						"author_id", author.ID, "author", author.Name, "panic", rec)
 				}
 			}()
-			h.refresh(&author)
+			h.refresh(batchCtx, &author)
 		}()
 		status.Done++
 

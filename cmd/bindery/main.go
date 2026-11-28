@@ -833,15 +833,15 @@ func main() {
 		// Bulk "refresh" reuses the per-author catalogue fetch (metadata only,
 		// never auto-grabs). Resolve the default media type per call so newly
 		// discovered books inherit the global default, matching AuthorHandler.Refresh.
-		WithRefreshFunc(func(a *models.Author) {
-			authorHandler.RefreshAuthorBooks(a, false, authorHandler.ResolveDefaultMediaType(appCtx))
+		WithRefreshFunc(func(ctx context.Context, a *models.Author) {
+			authorHandler.RefreshAuthorBooks(ctx, a, false, authorHandler.ResolveDefaultMediaType(appCtx))
 		})
 	// "Refresh all authors" background job (#863, shape 2). Reuses the exact
 	// per-author catalogue fetch the bulk "refresh" action and single-author
 	// Refresh use (metadata only, never auto-grabs), run sequentially over
 	// every author with progress persisted to the settings table.
-	authorRefreshHandler := api.NewAuthorRefreshHandler(authorRepo, func(a *models.Author) {
-		authorHandler.RefreshAuthorBooks(a, false, authorHandler.ResolveDefaultMediaType(appCtx))
+	authorRefreshHandler := api.NewAuthorRefreshHandler(authorRepo, func(ctx context.Context, a *models.Author) {
+		authorHandler.RefreshAuthorBooks(ctx, a, false, authorHandler.ResolveDefaultMediaType(appCtx))
 	}).WithSettings(settingsRepo)
 	// Scheduled release discovery (#2236): an hourly tick checks a share of the
 	// monitored authors, stopped while Refresh all or refresh selected runs.

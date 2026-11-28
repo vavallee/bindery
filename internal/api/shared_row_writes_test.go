@@ -236,7 +236,7 @@ func TestAuthorWrites_UserRefusedOnSharedAuthor(t *testing.T) {
 func TestAuthorsBulk_UserRefusedOnSharedAuthor(t *testing.T) {
 	auth.SetEnforceTenancyForTests(t, true)
 	f := newSharedRowFixture(t)
-	h := NewBulkHandler(f.authors, f.books, nil, nil).WithRefreshFunc(func(a *models.Author) {
+	h := NewBulkHandler(f.authors, f.books, nil, nil).WithRefreshFunc(func(_ context.Context, a *models.Author) {
 		t.Errorf("bulk refresh ran for shared author %d", a.ID)
 	})
 	for _, action := range []string{"delete", "monitor", "unmonitor", "refresh", "set_media_type", "set_monitor_mode"} {

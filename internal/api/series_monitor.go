@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
+	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/seriesmatch"
 )
@@ -211,6 +212,9 @@ func (h *SeriesHandler) CheckSeries(ctx context.Context, series *models.Series) 
 	}
 
 	ctx = context.WithValue(withSeriesJobOwner(ctx, owner), seriesJobHoldKey{}, true)
+	// One library snapshot for every book this check adds, shared with the
+	// rest of the scheduler tick when it set a scope (importer.SnapshotScope).
+	ctx = importer.WithSnapshotScope(ctx)
 	now := time.Now()
 	diff := buildHardcoverDiff(ctx, nil, 0, scoped, link, catalog)
 	format := requestedFormat{mediaType: models.MediaTypeEbook}

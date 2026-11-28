@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 func TestBulkHandler_RefreshRunningCoversTheFanOut(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
-	h := NewBulkHandler(nil, nil, nil, nil).WithRefreshFunc(func(*models.Author) {
+	h := NewBulkHandler(nil, nil, nil, nil).WithRefreshFunc(func(context.Context, *models.Author) {
 		started <- struct{}{}
 		<-release
 	})

@@ -65,7 +65,7 @@ func newRefreshFieldsFixture(t *testing.T, seed models.Book) *refreshFieldsFixtu
 	f.runAll = func(works ...models.Book) {
 		stub := &stubMetaProvider{name: "openlibrary", works: works}
 		f.h = NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, &searcherSpy{})
-		f.h.RefreshAuthorBooks(author, false, "")
+		f.h.RefreshAuthorBooks(context.Background(), author, false, "")
 	}
 	f.run = func(incoming models.Book) {
 		incoming.ForeignID = "OL3105W"
@@ -275,7 +275,7 @@ func TestRefreshAuthorBooks_ConcurrentEditWinsAndNextSyncRetries(t *testing.T) {
 	h := NewAuthorHandler(db.NewAuthorRepo(f.database), nil, f.books, nil, metadata.NewAggregator(stub), nil,
 		db.NewMetadataProfileRepo(f.database), &searcherSpy{})
 	h.afterProviderFieldsRead = hook
-	h.RefreshAuthorBooks(f.author, false, "")
+	h.RefreshAuthorBooks(context.Background(), f.author, false, "")
 	got := f.stored()
 	if got.Monitored || got.ImageURL != "/covers/user-choice.jpg" {
 		t.Fatalf("the concurrent edit was overwritten: monitored=%v image=%q", got.Monitored, got.ImageURL)
@@ -284,7 +284,7 @@ func TestRefreshAuthorBooks_ConcurrentEditWinsAndNextSyncRetries(t *testing.T) {
 		t.Fatalf("a lost guard still wrote the date: %v", got.ReleaseDate)
 	}
 	// The next sync makes the change.
-	h.RefreshAuthorBooks(f.author, false, "")
+	h.RefreshAuthorBooks(context.Background(), f.author, false, "")
 	if got := f.stored(); got.ReleaseDate.Year() != 2002 || got.Monitored {
 		t.Errorf("next sync: date=%v monitored=%v", got.ReleaseDate, got.Monitored)
 	}

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -233,6 +234,9 @@ func discoveryBatchSize(eligible int, interval time.Duration) int {
 // tick runs one discovery pass: pick the batch of authors whose last check
 // is older than the interval and sync them one at a time.
 func (j *discoveryJob) tick(ctx context.Context) discoveryTickResult {
+	// The authors of one tick share one library snapshot instead of walking
+	// the library tree once each (importer.SnapshotScope).
+	ctx = importer.WithSnapshotScope(ctx)
 	start := j.now()
 	var res discoveryTickResult
 	interval, on := j.interval()

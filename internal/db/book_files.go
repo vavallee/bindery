@@ -553,6 +553,34 @@ func (r *BookFileRepo) ListAllPaths(ctx context.Context) ([]string, error) {
 	return paths, rows.Err()
 }
 
+// PathsAfter returns the paths of the rows with an id above afterID, in id
+// order, and the highest id returned (afterID when there are none). A batch
+// sharing one library snapshot reads it to notice files tracked after its
+// walk (importer.SnapshotScope); ids are AUTOINCREMENT, so every insert since
+// a read lands above the id that read returned.
+func (r *BookFileRepo) PathsAfter(ctx context.Context, afterID int64) ([]string, int64, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, path FROM book_files WHERE id > ? ORDER BY id`, afterID)
+	if err != nil {
+		return nil, afterID, fmt.Errorf("book_files paths after: %w", err)
+	}
+	defer rows.Close()
+	maxID := afterID
+	var paths []string
+	for rows.Next() {
+		var id int64
+		var p string
+		if err := rows.Scan(&id, &p); err != nil {
+			return nil, afterID, fmt.Errorf("book_files paths after scan: %w", err)
+		}
+		paths = append(paths, p)
+		maxID = id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, afterID, fmt.Errorf("book_files paths after rows: %w", err)
+	}
+	return paths, maxID, nil
+}
+
 // FileOwner is one book_files row reduced to who tracks which path.
 type FileOwner struct {
 	BookID int64

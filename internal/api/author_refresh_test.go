@@ -32,7 +32,11 @@ func refreshTestFixture(t *testing.T, lister authorLister, refresh func(*models.
 	}
 	t.Cleanup(func() { database.Close() })
 	repo := db.NewSettingsRepo(database)
-	return NewAuthorRefreshHandler(lister, refresh).WithSettings(repo), repo
+	var fn func(context.Context, *models.Author)
+	if refresh != nil {
+		fn = func(_ context.Context, a *models.Author) { refresh(a) }
+	}
+	return NewAuthorRefreshHandler(lister, fn).WithSettings(repo), repo
 }
 
 func readStatus(t *testing.T, repo *db.SettingsRepo) authorRefreshStatus {

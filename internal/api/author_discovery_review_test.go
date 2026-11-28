@@ -78,7 +78,7 @@ func TestDiscoverAuthorBooks_CoverEnrichmentOnlyForNewWorks(t *testing.T) {
 		f := newDiscoveryFixture(t, true)
 		p := &coverCountingProvider{stubMetaProvider: &stubMetaProvider{works: works}}
 		h := NewAuthorHandler(f.authors, nil, f.books, nil, metadata.NewAggregator(p), nil, f.profile, nil)
-		h.RefreshAuthorBooks(f.author, false, models.MediaTypeEbook)
+		h.RefreshAuthorBooks(context.Background(), f.author, false, models.MediaTypeEbook)
 		got := p.askedFor()
 		if len(got) != 2 {
 			t.Fatalf("cover lookups = %v, want both coverless works on the manual path", got)
@@ -124,7 +124,7 @@ func TestDiscoverAuthorBooks_ConcurrentBulkRefreshCreatesOnceAnnouncesOnce(t *te
 		snapshot := *f.author
 		go func() {
 			defer wg.Done()
-			h.RefreshAuthorBooks(&snapshot, false, models.MediaTypeEbook)
+			h.RefreshAuthorBooks(context.Background(), &snapshot, false, models.MediaTypeEbook)
 		}()
 		select {
 		case <-entered:

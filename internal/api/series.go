@@ -23,6 +23,7 @@ import (
 	"github.com/vavallee/bindery/internal/bookhydrate"
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/metadata"
 	"github.com/vavallee/bindery/internal/models"
@@ -2122,6 +2123,9 @@ func (h *SeriesHandler) createMissingHardcoverBooks(ctx context.Context, seriesI
 	if series == nil || series.HardcoverLink == nil {
 		return 0, nil
 	}
+	// One library snapshot for every book this fill creates: each used to
+	// walk the library tree again (importer.SnapshotScope).
+	ctx = importer.WithSnapshotScope(ctx)
 	catalog, err := h.meta.GetSeriesCatalog(ctx, series.HardcoverLink.HardcoverSeriesID)
 	if err != nil {
 		return 0, fmt.Errorf("%w: %w", errSeriesMetadataProvider, err)

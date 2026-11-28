@@ -266,8 +266,13 @@ func (h *AuthorHandler) FetchAuthorBooks(author *models.Author, autoSearch bool,
 // but it only DISCOVERS new works for an author whose monitoring policy asks
 // for them (authorAcceptsDiscoveredBooks) — a refresh must never grow the
 // library behind the user's back (issues #1348, #1815).
-func (h *AuthorHandler) RefreshAuthorBooks(author *models.Author, autoSearch bool, mediaType string) {
-	h.fetchAuthorBooks(h.bgCtx(), author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType, discovery: true})
+//
+// batch only lends the sync its importer.SnapshotScope, so the authors of one
+// Refresh all or refresh selected run share one library walk. The sync still
+// runs on the handler's lifetime context, as before.
+func (h *AuthorHandler) RefreshAuthorBooks(batch context.Context, author *models.Author, autoSearch bool, mediaType string) {
+	ctx := importer.ContextWithSnapshotScope(h.bgCtx(), importer.SnapshotScopeFrom(batch))
+	h.fetchAuthorBooks(ctx, author, catalogueSyncOptions{autoSearch: autoSearch, mediaType: mediaType, discovery: true})
 }
 
 // authorAcceptsDiscoveredBooks reports whether a refresh-path catalogue sync
@@ -584,9 +589,10 @@ type rivalAwareFinder interface {
 // out too, so one user's catalogue never steers another's binds. A listing
 // error falls back to the plain lookup, which is the old behaviour.
 func findExistingForNewBook(ctx context.Context, books *db.BookRepo, finder LibraryFinder, book models.Book, authorName string, siblings []models.Book) string {
-	// A Scanner hands out a snapshot; a fresh one costs the same single walk
+	// A Scanner hands out a snapshot: the batch's shared one inside a
+	// SnapshotScope, otherwise a fresh one, which costs the same single walk
 	// its own FindExisting makes.
-	finder = snapshotFinder(finder)
+	finder = snapshotFinder(ctx, finder, books)
 	ra, ok := finder.(rivalAwareFinder)
 	if !ok || book.AuthorID == 0 || (siblings == nil && books == nil) {
 		return finder.FindExisting(ctx, book.Title, authorName, book.MediaType)

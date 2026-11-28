@@ -432,7 +432,11 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 	// can match a book this loop is creating was on disk before the sync began,
 	// because auto-search for these books only runs after the loop. See the
 	// LibrarySnapshot contract for the full argument.
-	finder := snapshotFinder(h.finder)
+	//
+	// Inside a batch (Refresh all, refresh selected) ctx carries a
+	// SnapshotScope and every author sync of the batch shares one snapshot,
+	// so the library is walked once per batch instead of once per author.
+	finder := snapshotFinder(ctx, h.finder, h.books)
 
 	// Strict media-type policy (#1575). When on and the default is a single
 	// format, catalogue population is narrowed to that format so an ebook-only

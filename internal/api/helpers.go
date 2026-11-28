@@ -53,11 +53,23 @@ type librarySnapshotter interface {
 // snapshotFinder returns a batch-friendly view of finder when it offers one,
 // and finder itself otherwise (including nil, which callers already treat as a
 // no-op).
-func snapshotFinder(finder LibraryFinder) LibraryFinder {
-	if sn, ok := finder.(librarySnapshotter); ok {
-		return sn.SnapshotFinder()
+//
+// When ctx carries an importer.SnapshotScope (a Refresh all, refresh
+// selected, series fill or series check run) the snapshot is the batch's
+// shared one, kept current against book_files through tracked; see
+// SnapshotScope for the rule. Without a scope it is a fresh snapshot, one
+// walk per call, as before. A nil tracked (*db.BookRepo) does not share.
+func snapshotFinder(ctx context.Context, finder LibraryFinder, tracked *db.BookRepo) LibraryFinder {
+	sn, ok := finder.(librarySnapshotter)
+	if !ok {
+		return finder
 	}
-	return finder
+	fresh := sn.SnapshotFinder()
+	scope := importer.SnapshotScopeFrom(ctx)
+	if scope == nil || tracked == nil {
+		return fresh
+	}
+	return scope.Share(ctx, fresh, tracked)
 }
 
 // parseID extracts the `{id}` URL parameter as an int64. If the value is

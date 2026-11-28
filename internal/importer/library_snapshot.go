@@ -2,12 +2,16 @@ package importer
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unicode"
 
 	"github.com/vavallee/bindery/internal/models"
@@ -36,14 +40,67 @@ import (
 // after the create loop, so any file that can match one of them was on disk
 // before the sync started; only a file copied in by hand mid-sync is missed,
 // and the next sync sees it. One-off callers get a fresh snapshot per call
-// (Scanner.FindExisting), which is exactly the old semantics.
+// (Scanner.FindExisting), which is exactly the old semantics. A batch of
+// syncs (Refresh all, refresh selected, a series fill) shares one snapshot
+// through a SnapshotScope, which states the wider window and what closes it.
+//
+// An answer is checked on disk before it is returned: a file removed since
+// the walk is dropped and the next best file answers, so a long lived
+// snapshot never binds a book to a path that is gone.
+//
+// A snapshot is safe for concurrent use.
 type LibrarySnapshot struct {
 	libraryDir   string
 	audiobookDir string
 	excluded     []string
 
 	mu    sync.Mutex
-	roots map[string][]libraryEntry
+	roots map[string]*rootIndex
+}
+
+// rootIndex is one walked root: its book files in walk order, an index from
+// title words to those files, and every path the walk visited.
+//
+// Cost, measured on a generated 40,000 file tree (TestLibrarySnapshotMemory
+// prints it): about 25 MB of heap while the snapshot is alive, roughly 600
+// bytes per file, most of it the path strings the walk allocates anyway and
+// the parsed title and author. A snapshot lives for one sync or one batch and
+// is then garbage.
+type rootIndex struct {
+	entries []libraryEntry
+	// byToken maps each significant title word (titleSigTokens) to the
+	// entries whose title carries it, ascending. byNorm maps each
+	// normalised title to its entries, ascending. Together they hold every
+	// entry titleWordsMatch can accept for a query: the exact branch needs
+	// equal normalised titles and the overlap branch needs at least one
+	// shared word (see candidates).
+	byToken map[string][]int32
+	byNorm  map[string][]int32
+	// visited holds every path the walk reported, folders and files that
+	// are not books included, so SawPath can tell a file the walk saw from
+	// one that arrived after it.
+	visited map[string]struct{}
+	// resolved is the root with symlinks resolved, "" when it is the root.
+	resolved string
+}
+
+// libraryWalks counts walks per root, for diagnostics and for tests that
+// assert how many walks a batch costs. Keyed by the root as given.
+var libraryWalks sync.Map // string -> *atomic.Int64
+
+// LibraryWalkCount reports how many times FindExisting lookups have walked
+// root in this process. A diagnostic counter: tests use it to pin that a
+// batch of author syncs walks the library once, not once per author.
+func LibraryWalkCount(root string) int64 {
+	if v, ok := libraryWalks.Load(root); ok {
+		return v.(*atomic.Int64).Load()
+	}
+	return 0
+}
+
+func countLibraryWalk(root string) int64 {
+	v, _ := libraryWalks.LoadOrStore(root, new(atomic.Int64))
+	return v.(*atomic.Int64).Add(1)
 }
 
 // libraryEntry is one book file, pre-parsed at walk time so queries are pure
@@ -125,53 +182,151 @@ func (ls *LibrarySnapshot) FindExistingAmong(ctx context.Context, title, authorN
 	}
 	var hits []*libraryEntry
 	for _, root := range ls.rootsForMediaType(mediaType) {
-		entries, ok := ls.entriesFor(ctx, root)
+		idx, ok := ls.entriesFor(ctx, root)
 		if !ok {
 			// Cancelled mid-walk: match the old walk's behaviour of quietly
 			// finding nothing, and leave the root uncached so a live caller
 			// gets a real walk.
 			return ""
 		}
-		for i := range entries {
-			e := &entries[i]
-			if authorName != "" && e.firstDir != "" && !authorMatch(authorName, e.firstDir) {
-				continue
-			}
-			if !authorMatch(authorName, e.author) {
-				continue
-			}
-			// A numbered book folder settles the volume before the filename
-			// is read, so track numbers never veto a book's own files
-			// (#2810). libraryVolumeConflict is the same rule the library
-			// scan applies (#2860).
-			if libraryVolumeConflict(e.title, e.layoutTitle, title) {
-				continue
-			}
-			// One root can hold both formats of a book (a combined
-			// library), so a lookup for one format must not answer with
-			// the other's file, whichever sorts first (#3896).
-			if !entryMatchesFormat(e.path, mediaType) {
-				continue
-			}
-			if titleWordsMatch(e.title, title) {
+		for _, i := range idx.candidates(title) {
+			if e := &idx.entries[i]; entryMatchesQuery(e, title, authorName, mediaType) {
 				hits = append(hits, e)
 			}
 		}
 	}
-	best := bestExistingFile(dropRivalFiles(hits, title, rivals), title)
-	if best == nil {
-		return ""
+	for {
+		best := bestExistingFile(dropRivalFiles(hits, title, rivals), title)
+		if best == nil {
+			return ""
+		}
+		// The walk may be minutes or hours old in a batch (SnapshotScope).
+		// A file deleted or renamed since is not the book's file any more:
+		// rank again without it, which is what a fresh walk would answer.
+		if _, err := os.Stat(best.path); errors.Is(err, fs.ErrNotExist) {
+			slog.Debug("library: existing file is gone since the walk, ranking without it",
+				"title", title, "path", best.path)
+			hits = slices.DeleteFunc(hits, func(e *libraryEntry) bool { return e == best })
+			continue
+		}
+		// Two words of a series name are enough for titleWordsMatch, so "Harry
+		// Potter en de Relieken van de Dood" passed for "Harry Potter en de Orde
+		// van de Feniks" and the new book read as owned. The library scan refuses
+		// the same pair, on its winner as here (#3388).
+		if titlesNameDifferentWorks(best.title, title) {
+			slog.Debug("library: existing file names a different work, not offering it",
+				"title", title, "path", best.path, "fileTitle", best.title)
+			return ""
+		}
+		return best.path
 	}
-	// Two words of a series name are enough for titleWordsMatch, so "Harry
-	// Potter en de Relieken van de Dood" passed for "Harry Potter en de Orde
-	// van de Feniks" and the new book read as owned. The library scan refuses
-	// the same pair, on its winner as here (#3388).
-	if titlesNameDifferentWorks(best.title, title) {
-		slog.Debug("library: existing file names a different work, not offering it",
-			"title", title, "path", best.path, "fileTitle", best.title)
-		return ""
+}
+
+// entryMatchesQuery is FindExisting's per-file predicate, unchanged from the
+// pre-snapshot walk: the author-folder pre-filter, the filename author, the
+// volume veto, the format and the title words. The title index only narrows
+// which entries it is asked about (rootIndex.candidates).
+func entryMatchesQuery(e *libraryEntry, title, authorName, mediaType string) bool {
+	if authorName != "" && e.firstDir != "" && !authorMatch(authorName, e.firstDir) {
+		return false
 	}
-	return best.path
+	if !authorMatch(authorName, e.author) {
+		return false
+	}
+	// A numbered book folder settles the volume before the filename is read,
+	// so track numbers never veto a book's own files (#2810).
+	// libraryVolumeConflict is the same rule the library scan applies
+	// (#2860).
+	if libraryVolumeConflict(e.title, e.layoutTitle, title) {
+		return false
+	}
+	// One root can hold both formats of a book (a combined library), so a
+	// lookup for one format must not answer with the other's file, whichever
+	// sorts first (#3896).
+	if !entryMatchesFormat(e.path, mediaType) {
+		return false
+	}
+	return titleWordsMatch(e.title, title)
+}
+
+// candidates returns, ascending (walk order), the indexes of every entry
+// whose title titleWordsMatch could accept for title: those sharing at least
+// one significant word with it, and those with the same normalised title.
+// That is a superset of the matches, because titleWordsMatch accepts only an
+// equal normalised title or an overlap of at least one distinct word (its
+// threshold is never below one). entryMatchesQuery still decides each one.
+func (ri *rootIndex) candidates(title string) []int32 {
+	var out []int32
+	seen := make(map[int32]bool)
+	add := func(ids []int32) {
+		for _, id := range ids {
+			if !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
+	}
+	add(ri.byNorm[normalizeTitle(title)])
+	for tok := range titleTokenSet(title) {
+		add(ri.byToken[tok])
+	}
+	slices.Sort(out)
+	return out
+}
+
+// buildIndex fills byToken and byNorm from entries.
+func (ri *rootIndex) buildIndex() {
+	ri.byToken = make(map[string][]int32)
+	ri.byNorm = make(map[string][]int32, len(ri.entries))
+	for i := range ri.entries {
+		id := int32(i) //nolint:gosec // G115: a library root holds far fewer than 2^31 book files
+		t := ri.entries[i].title
+		norm := normalizeTitle(t)
+		ri.byNorm[norm] = append(ri.byNorm[norm], id)
+		for tok := range titleTokenSet(t) {
+			ri.byToken[tok] = append(ri.byToken[tok], id)
+		}
+	}
+}
+
+// SawPath reports whether path is accounted for by this snapshot: the walk
+// of the root holding it reported it, or no walk could have (it sits under
+// no root of this snapshot), or its root is not walked yet, so the walk
+// that comes will see it. A false answer means a file arrived under a
+// walked root after its walk. SnapshotScope uses it to notice files Bindery
+// itself tracked mid batch.
+func (ls *LibrarySnapshot) SawPath(path string) bool {
+	path = filepath.Clean(path)
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	for _, root := range []string{ls.libraryDir, ls.audiobookDir} {
+		if root == "" {
+			continue
+		}
+		idx := ls.roots[root]
+		underRoot := pathUnderDir(path, root)
+		underResolved := idx != nil && idx.resolved != "" && pathUnderDir(path, idx.resolved)
+		if !underRoot && !underResolved {
+			continue
+		}
+		if idx == nil {
+			return true
+		}
+		if _, ok := idx.visited[path]; ok {
+			return true
+		}
+		// A path recorded in the resolved form of a symlinked root is
+		// reported by the walk in the root's configured form.
+		if underResolved {
+			if rel, err := filepath.Rel(idx.resolved, path); err == nil {
+				if _, ok := idx.visited[filepath.Join(root, rel)]; ok {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return true
 }
 
 // entryMatchesFormat reports whether path is a file of the format asked for:
@@ -363,21 +518,30 @@ func (ls *LibrarySnapshot) rootsForMediaType(mediaType string) []string {
 // second return is false only when the walk was abandoned on a cancelled
 // context — that result is not cached, so the cancellation of one sync cannot
 // blind a later caller.
-func (ls *LibrarySnapshot) entriesFor(ctx context.Context, root string) ([]libraryEntry, bool) {
+func (ls *LibrarySnapshot) entriesFor(ctx context.Context, root string) (*rootIndex, bool) {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
-	if entries, ok := ls.roots[root]; ok {
-		return entries, true
+	if idx, ok := ls.roots[root]; ok {
+		return idx, true
 	}
-	entries, ok := walkLibraryEntries(ctx, root, ls.excluded)
+	start := time.Now()
+	n := countLibraryWalk(root)
+	idx, ok := walkLibraryEntries(ctx, root, ls.excluded)
 	if !ok {
 		return nil, false
 	}
-	if ls.roots == nil {
-		ls.roots = make(map[string][]libraryEntry)
+	idx.buildIndex()
+	if resolved, err := filepath.EvalSymlinks(root); err == nil && resolved != filepath.Clean(root) {
+		idx.resolved = resolved
 	}
-	ls.roots[root] = entries
-	return entries, true
+	slog.Debug("library: walked root for existing file lookups",
+		"root", root, "files", len(idx.entries), "paths", len(idx.visited),
+		"elapsed", time.Since(start), "walksOfRoot", n)
+	if ls.roots == nil {
+		ls.roots = make(map[string]*rootIndex)
+	}
+	ls.roots[root] = idx
+	return idx, true
 }
 
 // walkLibraryEntries collects every book file under root. Unreadable entries
@@ -398,14 +562,18 @@ func (ls *LibrarySnapshot) entriesFor(ctx context.Context, root string) ([]libra
 //     ahead of supplement-class files, so FindExisting answers with a real
 //     container whenever one matches and falls back to a supplement only when
 //     nothing better does. Text-only and PDF-only libraries keep matching.
-func walkLibraryEntries(ctx context.Context, root string, excluded []string) ([]libraryEntry, bool) {
+func walkLibraryEntries(ctx context.Context, root string, excluded []string) (*rootIndex, bool) {
 	var entries []libraryEntry
+	visited := make(map[string]struct{})
 	audioDirs := make(map[string]bool)
 	// walkRoot enters a root that is itself a symlink, reporting paths under
 	// root as configured, so FindExisting's answer matches book_files rows.
 	_ = walkRoot(root, excluded, func(path string, info os.FileInfo, err error) error {
 		if ctx.Err() != nil {
 			return filepath.SkipAll
+		}
+		if err == nil {
+			visited[path] = struct{}{}
 		}
 		if err != nil || info.IsDir() {
 			return nil //nolint:nilerr // best-effort walk: skip unreadable entries rather than abort
@@ -454,5 +622,5 @@ func walkLibraryEntries(ctx context.Context, root string, excluded []string) ([]
 	slices.SortStableFunc(entries, func(a, b libraryEntry) int {
 		return scanClaimRank(a.path) - scanClaimRank(b.path)
 	})
-	return entries, true
+	return &rootIndex{entries: slices.Clip(entries), visited: visited}, true
 }

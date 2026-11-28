@@ -13,6 +13,7 @@ import (
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/concurrency"
 	"github.com/vavallee/bindery/internal/db"
+	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/indexer"
 	"github.com/vavallee/bindery/internal/models"
 	"github.com/vavallee/bindery/internal/searchruns"
@@ -97,8 +98,9 @@ type BulkHandler struct {
 	// but never auto-grabs, and whether it may add books the library doesn't
 	// have is the author's monitoring policy's call. Nil when not wired (e.g.
 	// in tests that don't exercise refresh), in which case "refresh" is
-	// rejected.
-	refreshAuthor func(author *models.Author)
+	// rejected. The context carries the run's importer.SnapshotScope, so
+	// every author of one "refresh selected" shares one library walk.
+	refreshAuthor func(ctx context.Context, author *models.Author)
 
 	// lifetimeCtx is the process-lifecycle context; cancelled on server
 	// shutdown so a bulk-action POST that fans out indexer searches does
@@ -140,13 +142,13 @@ func (h *BulkHandler) WithSeriesRepo(series *db.SeriesRepo) *BulkHandler {
 
 // WithRefreshFunc attaches the per-author catalogue-refresh callback used by
 // the bulk "refresh" action. The callback must fetch metadata only (never
-// auto-grab) — wire it to AuthorHandler.RefreshAuthorBooks(author, false,
+// auto-grab) — wire it to AuthorHandler.RefreshAuthorBooks(ctx, author, false,
 // defaultMediaType), matching the single-author Refresh endpoint. Refresh, not
 // Fetch: the refresh entry point is the one that leaves an author who isn't
 // taking new books unchanged instead of inserting their back catalogue
 // (#1815). A nil fn is tolerated and ignored; the "refresh" action then
 // reports an error per ID.
-func (h *BulkHandler) WithRefreshFunc(fn func(author *models.Author)) *BulkHandler {
+func (h *BulkHandler) WithRefreshFunc(fn func(ctx context.Context, author *models.Author)) *BulkHandler {
 	if fn != nil {
 		h.refreshAuthor = fn
 	}
@@ -497,12 +499,14 @@ func (h *BulkHandler) fanOutRefreshes(authors []*models.Author) {
 	if h.refreshAuthor == nil || len(authors) == 0 {
 		return
 	}
-	bgCtx := h.bgCtx()
+	// One library snapshot for the whole run: each author sync used to walk
+	// the library tree again (importer.SnapshotScope).
+	bgCtx := importer.WithSnapshotScope(h.bgCtx())
 	h.refreshesRunning.Add(1)
 	go func() {
 		defer h.refreshesRunning.Add(-1)
-		concurrency.RunBounded(bgCtx, authors, bulkSearchConcurrency, func(_ context.Context, a *models.Author) {
-			h.refreshAuthor(a)
+		concurrency.RunBounded(bgCtx, authors, bulkSearchConcurrency, func(ctx context.Context, a *models.Author) {
+			h.refreshAuthor(ctx, a)
 		})
 	}()
 }

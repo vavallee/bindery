@@ -102,7 +102,7 @@ func TestAuthorRefresh_ManualRefreshBypassesAudibleCache(t *testing.T) {
 	}
 
 	// Warm the Audible cache the way a bulk refresh does.
-	h.RefreshAuthorBooks(reload(), false, models.MediaTypeAudiobook)
+	h.RefreshAuthorBooks(context.Background(), reload(), false, models.MediaTypeAudiobook)
 	if calls, _ := aud.counts(); calls != 1 {
 		t.Fatalf("warm sync made %d Audible calls, want 1", calls)
 	}
@@ -111,7 +111,7 @@ func TestAuthorRefresh_ManualRefreshBypassesAudibleCache(t *testing.T) {
 	aud.setBooks([]models.Book{audiobook("B0012601A1", "Ancillary Justice"), audiobook("B0012601A2", "Lake of Souls")})
 
 	// The bulk and Refresh all sync keeps the cached list.
-	h.RefreshAuthorBooks(reload(), false, models.MediaTypeAudiobook)
+	h.RefreshAuthorBooks(context.Background(), reload(), false, models.MediaTypeAudiobook)
 	if calls, _ := aud.counts(); calls != 1 {
 		t.Fatalf("bulk sync made %d Audible calls, want the 1 warm call: it went past the cache", calls)
 	}

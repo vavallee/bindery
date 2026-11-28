@@ -268,7 +268,7 @@ func TestAuthorSyncSummaryReconcilesOnNonAcceptingRefresh(t *testing.T) {
 
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
 		metadata.NewAggregator(&stubMetaProvider{works: works}), nil, profileRepo, nil)
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 
 	sync := h.syncSummaries.get(author.ID)
 	if sync == nil {

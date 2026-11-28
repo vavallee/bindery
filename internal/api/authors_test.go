@@ -6499,7 +6499,7 @@ func monitorNewItemsFixture(t *testing.T, monitorNewItems string, initial bool) 
 	if initial {
 		h.FetchAuthorBooks(author, false, "")
 	} else {
-		h.RefreshAuthorBooks(author, false, "")
+		h.RefreshAuthorBooks(context.Background(), author, false, "")
 	}
 
 	got, err := bookRepo.GetByForeignID(ctx, "OL801W")
@@ -6599,7 +6599,7 @@ func refreshDiscoveryFixture(t *testing.T, author *models.Author, withOwnedBook 
 	}
 
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(&stubMetaProvider{works: works}), nil, profileRepo, &searcherSpy{})
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 
 	books, err := bookRepo.ListByAuthor(ctx, author.ID)
 	if err != nil {
@@ -6741,7 +6741,7 @@ func emptiedAuthorFixture(t *testing.T, seed func(ctx context.Context, authorRep
 
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
 		metadata.NewAggregator(&stubMetaProvider{name: "openlibrary", works: works}), nil, profileRepo, &searcherSpy{})
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 
 	books, err := bookRepo.ListByAuthorIncludingExcluded(ctx, author.ID)
 	if err != nil {
@@ -6848,7 +6848,7 @@ func TestRefreshAuthorBooks_ExcludedTitleNotRecreatedForAMonitoredAuthor(t *test
 	}
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
 		metadata.NewAggregator(&stubMetaProvider{name: "openlibrary", works: works}), nil, profileRepo, &searcherSpy{})
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 
 	live, err := bookRepo.ListByAuthor(ctx, author.ID)
 	if err != nil {
@@ -6894,7 +6894,7 @@ func TestRefreshAuthorBooks_PopulateThenDeleteAllStaysDeleted(t *testing.T) {
 		metadata.NewAggregator(&stubMetaProvider{name: "openlibrary", works: works}), nil, profileRepo, &searcherSpy{})
 
 	// 1. The repair the carve-out exists for: an author with no catalogue gets one.
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 	populated, err := bookRepo.ListByAuthor(ctx, author.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -6911,7 +6911,7 @@ func TestRefreshAuthorBooks_PopulateThenDeleteAllStaysDeleted(t *testing.T) {
 	}
 
 	// 3. The next bulk refresh must not undo that.
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 	after, err := bookRepo.ListByAuthorIncludingExcluded(ctx, author.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -9613,7 +9613,7 @@ func TestAuthorRefresh_ManualRefreshBypassesMetadataCache(t *testing.T) {
 	}
 
 	// Warm the aggregator cache the way a bulk refresh does.
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 	if desc, n := profileAndBooks(); desc != "old bio" || n != 1 {
 		t.Fatalf("after warm refresh: description %q, %d books; want %q and 1", desc, n, "old bio")
 	}
@@ -9628,7 +9628,7 @@ func TestAuthorRefresh_ManualRefreshBypassesMetadataCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.RefreshAuthorBooks(reloaded, false, "")
+	h.RefreshAuthorBooks(context.Background(), reloaded, false, "")
 	if n := len(stub.getAuthorBypass); n != 0 {
 		t.Fatalf("bulk refresh reached the provider %d times; it should be answered by the cache", n)
 	}
@@ -9874,7 +9874,7 @@ func TestRefreshAuthorBooks_TitleMatchKeepsEditMadeDuringSync(t *testing.T) {
 
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
 		metadata.NewAggregator(provider), nil, profileRepo, &searcherSpy{})
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 
 	provider.editionCallsMu.Lock()
 	calls := len(provider.editionCalls)
@@ -9942,7 +9942,7 @@ func TestRefreshAuthorBooks_LostTitleMatchIsRetriedNextSync(t *testing.T) {
 	}}
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
 		metadata.NewAggregator(&stubMetaProvider{name: "openlibrary", works: works}), nil, profileRepo, &searcherSpy{})
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 
 	stored, err := bookRepo.GetByID(ctx, stub.ID)
 	if err != nil || stored == nil {
@@ -9958,7 +9958,7 @@ func TestRefreshAuthorBooks_LostTitleMatchIsRetriedNextSync(t *testing.T) {
 	if _, err := database.ExecContext(ctx, `DROP TRIGGER test_ignore_stub_upgrade`); err != nil {
 		t.Fatal(err)
 	}
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 
 	stored, err = bookRepo.GetByID(ctx, stub.ID)
 	if err != nil || stored == nil {

@@ -93,7 +93,7 @@ func TestAuthorSync_StoresNormalizedLanguage(t *testing.T) {
 	}}}
 	h := NewAuthorHandler(authorRepo, nil, bookRepo, nil,
 		metadata.NewAggregator(provider), nil, profileRepo, &searcherSpy{})
-	h.RefreshAuthorBooks(author, false, "")
+	h.RefreshAuthorBooks(context.Background(), author, false, "")
 
 	got, err := bookRepo.GetByID(ctx, stub.ID)
 	if err != nil || got == nil {

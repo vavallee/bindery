@@ -570,7 +570,7 @@ func TestAuthorsBulk_Refresh_FiresFetchPerAuthor(t *testing.T) {
 	wg.Add(len(ids))
 	var mu sync.Mutex
 	seen := map[int64]int{}
-	h.WithRefreshFunc(func(a *models.Author) {
+	h.WithRefreshFunc(func(_ context.Context, a *models.Author) {
 		mu.Lock()
 		seen[a.ID]++
 		mu.Unlock()
@@ -1512,7 +1512,7 @@ func seedTwoUserBulk(t *testing.T) bulkAuthzFixture {
 	b1, _ = books.GetByID(ctx, b1.ID)
 	b2, _ = books.GetByID(ctx, b2.ID)
 
-	h := NewBulkHandler(authors, books, blocklist, nil).WithSeriesRepo(series).WithRefreshFunc(func(*models.Author) {})
+	h := NewBulkHandler(authors, books, blocklist, nil).WithSeriesRepo(series).WithRefreshFunc(func(context.Context, *models.Author) {})
 
 	return bulkAuthzFixture{
 		database: database, h: h, authors: authors, books: books,

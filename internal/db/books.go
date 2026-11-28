@@ -1518,6 +1518,12 @@ func (r *BookRepo) BookFilesFingerprint(ctx context.Context) (int64, int64, erro
 	return r.files.Fingerprint(ctx)
 }
 
+// BookFilePathsAfter returns the paths of the book_files rows with an id
+// above afterID and the highest such id. See BookFileRepo.PathsAfter.
+func (r *BookRepo) BookFilePathsAfter(ctx context.Context, afterID int64) ([]string, int64, error) {
+	return r.files.PathsAfter(ctx, afterID)
+}
+
 // BookFilesPathEpoch returns the in place path rewrite counter for book_files
 // (see BookFileRepo.PathEpoch). Fingerprint alone misses the reorganize
 // action's UpdatePath, which changes neither the row count nor the max id.

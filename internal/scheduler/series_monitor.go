@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/vavallee/bindery/internal/importer"
 	"github.com/vavallee/bindery/internal/models"
 )
 
@@ -129,6 +130,9 @@ func (s *Scheduler) resolveSeriesMonitorInterval() (time.Duration, bool) {
 }
 
 func (j *seriesMonitorJob) tick(ctx context.Context) seriesTickResult {
+	// The series checked in one tick share one library snapshot instead of
+	// walking the library tree once per created book (importer.SnapshotScope).
+	ctx = importer.WithSnapshotScope(ctx)
 	start := j.now()
 	var res seriesTickResult
 	interval, on := j.interval()

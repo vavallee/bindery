@@ -45,7 +45,7 @@ func TestAuthorRefreshAll_UserRefreshesOnlyOwnAuthors(t *testing.T) {
 	settings := db.NewSettingsRepo(f.database)
 	var mu sync.Mutex
 	refreshed := map[int64]bool{}
-	h := NewAuthorRefreshHandler(f.authors, func(a *models.Author) {
+	h := NewAuthorRefreshHandler(f.authors, func(_ context.Context, a *models.Author) {
 		mu.Lock()
 		refreshed[a.ID] = true
 		mu.Unlock()
@@ -98,7 +98,7 @@ func TestAuthorRefreshAll_AdminAndTenancyOffCoverEveryAuthor(t *testing.T) {
 			f := seedSharedAuthor(t)
 			var mu sync.Mutex
 			refreshed := map[int64]bool{}
-			h := NewAuthorRefreshHandler(f.authors, func(a *models.Author) {
+			h := NewAuthorRefreshHandler(f.authors, func(_ context.Context, a *models.Author) {
 				mu.Lock()
 				refreshed[a.ID] = true
 				mu.Unlock()
