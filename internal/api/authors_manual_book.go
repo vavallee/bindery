@@ -146,10 +146,7 @@ func (h *AuthorHandler) AddManualBook(w http.ResponseWriter, r *http.Request) {
 		MetadataProvider: models.ManualMetadataProvider,
 		// Tenancy (#1457): the author's owner, or the caller's library scope
 		// under an unowned author, as addBookCore stamps it.
-		OwnerUserID: author.OwnerUserID,
-	}
-	if book.OwnerUserID == 0 {
-		book.OwnerUserID = scopeID
+		OwnerUserID: newBookOwnerUserID(ctx, author),
 	}
 	// The title is typed by hand, so lock it: an Audiobookshelf or Calibre
 	// import, a library scan or a refresh that matches the book by title must
