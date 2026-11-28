@@ -285,3 +285,77 @@ func TestRequestsAutoApprove_OwnerLookupFailureFailsClosed(t *testing.T) {
 		t.Fatalf("request = %+v err=%v, want pending and never claimed", row, err)
 	}
 }
+
+// ownerCannotChangeExistingBook answers true whenever it cannot show the
+// owner may change the book, so an auto approval never runs on a guess.
+func TestOwnerCannotChangeExistingBook_Branches(t *testing.T) {
+	auth.SetEnforceTenancyForTests(t, true)
+	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
+	ctx := context.Background()
+	seedOwnerlessEbook(t, f)
+	h := f.h
+	if h.ownerCannotChangeExistingBook(ctx, models.RequestKindAuthor, f.requester.ID, "OL27482W") {
+		t.Error("author request: want false")
+	}
+	if h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.requester.ID, "", "OL-NOT-THERE") {
+		t.Error("book not in the library: want false")
+	}
+	if !h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.requester.ID, "", "OL27482W") {
+		t.Error("shared book for a requester: want true")
+	}
+	if h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.admin.ID, "OL27482W") {
+		t.Error("shared book for an admin: want false")
+	}
+	if !h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, 9999, "OL27482W") {
+		t.Error("unknown owner: want true")
+	}
+	t.Run("tenancy off", func(t *testing.T) {
+		auth.SetEnforceTenancyForTests(t, false)
+		if h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.requester.ID, "OL27482W") {
+			t.Error("tenancy off: want false")
+		}
+	})
+
+	broken, err := db.OpenMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken.Close()
+	books, users := h.books, h.users
+	h.books = db.NewBookRepo(broken)
+	if !h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.requester.ID, "OL27482W") {
+		t.Error("book lookup error: want true")
+	}
+	h.books, h.users = books, nil
+	if !h.ownerCannotChangeExistingBook(ctx, models.RequestKindBook, f.requester.ID, "OL27482W") {
+		t.Error("no user repo: want true")
+	}
+	h.users = users
+}
+
+// autoApprove stops before the claim when there is no user repo or the owner
+// no longer exists, as it does on a lookup error.
+func TestRequestsAutoApprove_MissingOwnerFailsClosed(t *testing.T) {
+	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
+	ctx := context.Background()
+	req := models.LibraryRequest{
+		OwnerUserID: f.requester.ID, Kind: models.RequestKindBook, ForeignID: "OL27482W",
+		Title: "The War of the Worlds", PayloadJSON: `{"kind":"book","foreignId":"OL27482W"}`,
+	}
+	if err := f.requests.Create(ctx, &req, 0); err != nil {
+		t.Fatal(err)
+	}
+	users := f.h.users
+	f.h.users = nil
+	if done, _, _, err := f.h.autoApprove(ctx, req, f.requester.ID); err == nil || done != nil {
+		t.Fatalf("no user repo: done %+v err %v, want an error", done, err)
+	}
+	f.h.users = users
+	if done, _, _, err := f.h.autoApprove(ctx, req, 9999); err == nil || done != nil {
+		t.Fatalf("unknown owner: done %+v err %v, want an error", done, err)
+	}
+	row, err := f.requests.GetByID(ctx, req.ID)
+	if err != nil || row == nil || row.Status != models.RequestStatusPending || !row.UpdatedAt.Equal(row.CreatedAt) {
+		t.Fatalf("request = %+v err=%v, want pending and never claimed", row, err)
+	}
+}
