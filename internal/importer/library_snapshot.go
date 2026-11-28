@@ -61,11 +61,12 @@ type LibrarySnapshot struct {
 // rootIndex is one walked root: its book files in walk order, an index from
 // title words to those files, and every path the walk visited.
 //
-// Cost, measured on a generated 40,000 file tree (TestLibrarySnapshotMemory
-// prints it): about 25 MB of heap while the snapshot is alive, roughly 600
-// bytes per file, most of it the path strings the walk allocates anyway and
-// the parsed title and author. A snapshot lives for one sync or one batch and
-// is then garbage.
+// Cost, measured by BenchmarkLibrarySnapshotMemory on a generated library of
+// 40,000 books in 42,000 folders (82,001 visited paths): 24.8 MiB of heap
+// while the snapshot is alive, about 650 bytes per book file, most of it path
+// strings and the parsed title and author. A lookup through the index took
+// 0.85 ms there against 5.1 ms for the linear pass. A snapshot lives for one
+// sync or one batch and is then garbage.
 type rootIndex struct {
 	entries []libraryEntry
 	// byToken maps each significant title word (titleSigTokens) to the
