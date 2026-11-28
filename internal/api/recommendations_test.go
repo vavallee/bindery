@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -326,8 +328,9 @@ func TestRecommendationAdd_TenancyDoesNotUseAnotherUsersAuthor(t *testing.T) {
 }
 
 // The admin manages every library, and tenancy off is one shared library, so
-// both still resolve the author and create the book exactly as before, with
-// no owner stamped on it.
+// both still resolve another account's author. The book takes that author's
+// owner, as Add Book gives it (#4090), so it lands in alice's library rather
+// than in everyone's.
 func TestRecommendationAdd_AdminAndTenancyOffStillResolveAuthor(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -337,7 +340,7 @@ func TestRecommendationAdd_AdminAndTenancyOffStillResolveAuthor(t *testing.T) {
 		{"tenancy off", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, books, recID, aliceAuthorID, _, bob := recommendationAuthorFixture(t, tc.tenancy, false, false)
+			h, books, recID, aliceAuthorID, alice, bob := recommendationAuthorFixture(t, tc.tenancy, false, false)
 			ctx := auth.WithUserID(context.Background(), bob)
 			if tc.tenancy {
 				ctx = auth.WithUserRole(ctx, "admin")
@@ -350,8 +353,137 @@ func TestRecommendationAdd_AdminAndTenancyOffStillResolveAuthor(t *testing.T) {
 			if err != nil || book == nil {
 				t.Fatalf("book = %+v err=%v", book, err)
 			}
-			if book.AuthorID != aliceAuthorID || book.OwnerUserID != 0 {
-				t.Fatalf("book author=%d owner=%d, want author %d and no owner", book.AuthorID, book.OwnerUserID, aliceAuthorID)
+			if book.AuthorID != aliceAuthorID || book.OwnerUserID != alice {
+				t.Fatalf("book author=%d owner=%d, want author %d owner alice (%d)", book.AuthorID, book.OwnerUserID, aliceAuthorID, alice)
+			}
+		})
+	}
+}
+
+// ownerAfterAddBothWays adds the work hc:rec-cross under one author twice, on
+// two fresh databases: once through Add Book and once from a recommendation,
+// both as the same caller. authorOwner picks who owns the author: "caller",
+// "other" (another account) or "shared" (nobody). It returns the owner each
+// path stamped on the book, and the ids of the caller and the other account.
+func ownerAfterAddBothWays(t *testing.T, tenancy bool, role, authorOwner string) (viaAddBook, viaRecommendation, caller, other int64) {
+	t.Helper()
+	auth.SetEnforceTenancyForTests(t, tenancy)
+	seed := func() (*sql.DB, *db.AuthorRepo, *db.BookRepo, *models.Author, int64, int64) {
+		database, err := db.OpenMemory()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { database.Close() })
+		database.SetMaxOpenConns(1)
+		ctx := context.Background()
+		users := db.NewUserRepo(database)
+		c, err := users.Create(ctx, "caller", "h1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		o, err := users.Create(ctx, "other", "h2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		owner := map[string]int64{"caller": c.ID, "other": o.ID, "shared": 0}[authorOwner]
+		authorRepo := db.NewAuthorRepo(database)
+		author := &models.Author{
+			ForeignID: "hc:rec-author", Name: "Rec Writer", SortName: "Writer, Rec",
+			MetadataProvider: "hardcover", Monitored: true,
+		}
+		if err := authorRepo.CreateForUser(ctx, author, owner); err != nil {
+			t.Fatal(err)
+		}
+		return database, authorRepo, db.NewBookRepo(database), author, c.ID, o.ID
+	}
+	callerCtx := func(id int64) context.Context {
+		return auth.WithUserRole(auth.WithUserID(context.Background(), id), role)
+	}
+
+	// Add Book.
+	database, authorRepo, bookRepo, author, c, o := seed()
+	provider := &stubMetaProvider{
+		name: "hardcover",
+		getBookByID: map[string]*models.Book{"hc:rec-cross": {
+			ForeignID: "hc:rec-cross", Title: "Cross Book", SortTitle: "Cross Book",
+			Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "hardcover",
+		}},
+	}
+	ah := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(provider), nil, db.NewMetadataProfileRepo(database), nil)
+	body, _ := json.Marshal(map[string]any{
+		"foreignBookId": "hc:rec-cross", "foreignAuthorId": author.ForeignID, "authorName": author.Name,
+	})
+	parent, cancel := context.WithTimeout(callerCtx(c), 2*time.Second)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)).WithContext(parent)
+	rec := httptest.NewRecorder()
+	ah.AddBook(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("Add Book: want 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err := bookRepo.GetByForeignID(context.Background(), "hc:rec-cross")
+	if err != nil || got == nil {
+		t.Fatalf("Add Book: book = %+v err=%v", got, err)
+	}
+	viaAddBook = got.OwnerUserID
+
+	// Recommendation, on a fresh database with the same seed.
+	database, authorRepo, bookRepo, author, c2, _ := seed()
+	if c2 != c {
+		t.Fatalf("seed gave caller %d then %d", c, c2)
+	}
+	recRepo := db.NewRecommendationRepo(database)
+	if err := recRepo.ReplaceBatch(context.Background(), c, []models.RecommendationCandidate{{
+		ForeignID: "hc:rec-cross", RecType: models.RecTypeListCross, Title: "Cross Book",
+		AuthorID: &author.ID, AuthorName: author.Name, MediaType: models.MediaTypeEbook, Genres: []string{}, Score: 1,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := recRepo.List(context.Background(), c, "", 10, 0)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("caller's recommendations = %+v err=%v", recs, err)
+	}
+	rh := NewRecommendationHandler(recRepo, fakeRecommendationEngine{}, authorRepo, bookRepo, nil).WithAppContext(context.Background())
+	if rec := addRecommendationAs(rh, callerCtx(c), recs[0].ID); rec.Code != http.StatusCreated {
+		t.Fatalf("recommendation: want 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	got, err = bookRepo.GetByForeignID(context.Background(), "hc:rec-cross")
+	if err != nil || got == nil {
+		t.Fatalf("recommendation: book = %+v err=%v", got, err)
+	}
+	return viaAddBook, got.OwnerUserID, c, o
+}
+
+// Adding the same work under the same author gives the book the same owner
+// whether it comes from Add Book or from a recommendation (#4090). Before the
+// fix a recommendation stamped auth.ListScopeUserID, which is 0 for an admin,
+// so an admin's recommendation under their own author made a book with no
+// owner that every user saw and none but an admin could change, where Add
+// Book filed it in the admin's library.
+func TestRecommendationAdd_OwnerMatchesAddBook(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		tenancy     bool
+		role        string
+		authorOwner string
+		want        string // "caller", "other" or "none"
+	}{
+		{"admin under own author", true, "admin", "caller", "caller"},
+		{"admin under another account's author", true, "admin", "other", "other"},
+		{"admin under shared author", true, "admin", "shared", "none"},
+		{"user under own author", true, "user", "caller", "caller"},
+		{"user under shared author", true, "user", "shared", "caller"},
+		{"tenancy off under own author", false, "admin", "caller", "caller"},
+		{"tenancy off under shared author", false, "user", "shared", "none"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			viaAddBook, viaRec, caller, other := ownerAfterAddBothWays(t, tc.tenancy, tc.role, tc.authorOwner)
+			want := map[string]int64{"caller": caller, "other": other, "none": 0}[tc.want]
+			if viaAddBook != want {
+				t.Fatalf("Add Book owner = %d, want %s (%d)", viaAddBook, tc.want, want)
+			}
+			if viaRec != viaAddBook {
+				t.Fatalf("recommendation owner = %d, Add Book owner = %d: the two add paths disagree", viaRec, viaAddBook)
 			}
 		})
 	}

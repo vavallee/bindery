@@ -225,15 +225,15 @@ func (h *RecommendationHandler) Add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Under tenancy a user who is not an admin owns what they add. The author
-	// resolved above is theirs or shared, and a shared author does not make
-	// the book shared: with no owner it would appear in every user's library.
-	// ListScopeUserID is 0 for an admin and with tenancy off, which keep the
-	// book unowned as before.
+	// The owner Add Book gives the same work under the same author (#4090):
+	// the author's owner, or the caller's library scope under a shared
+	// author. A user who is not an admin owns what they add, and an admin's
+	// book under their own author is theirs rather than shared with every
+	// user.
 	book := &models.Book{
 		ForeignID:        rec.ForeignID,
 		AuthorID:         author.ID,
-		OwnerUserID:      auth.ListScopeUserID(r.Context()),
+		OwnerUserID:      newBookOwnerUserID(r.Context(), author),
 		Title:            rec.Title,
 		Description:      rec.Description,
 		ImageURL:         rec.ImageURL,

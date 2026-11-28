@@ -179,6 +179,24 @@ func (h *AuthorHandler) refuseBookHeldByAnotherUser(ctx context.Context, foreign
 	return nil
 }
 
+// newBookOwnerUserID is the owner a book gets when a person adds it by hand
+// under author: the author's owner, so the book lands in the library the
+// author belongs to. Under tenancy a shared (unowned) author does not make
+// the book shared: a user who is not an admin asked for it, so it is theirs,
+// since with no owner it would appear in every user's library as a book they
+// never added. auth.ListScopeUserID is 0 for an admin and with tenancy off,
+// which keep a book under a shared author unowned.
+//
+// Every interactive add uses it: Add Book's direct insert, a manual book and
+// adding a recommendation (#4090), so the same caller adding the same work
+// under the same author gets the same owner whichever way they add it.
+func newBookOwnerUserID(ctx context.Context, author *models.Author) int64 {
+	if author.OwnerUserID != 0 {
+		return author.OwnerUserID
+	}
+	return auth.ListScopeUserID(ctx)
+}
+
 // addBookCore adds one book to the library: it resolves or creates the
 // author, inserts the requested work, waits for the row, and marks it
 // monitored. It is AddBook without the HTTP layer; see addBookParams for
@@ -406,12 +424,9 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 		return addBookResult{}, errAddBookAuthorUnresolved
 	}
 
-	// Under tenancy a shared (unowned) author does not make the book shared:
-	// a user who is not an admin asked for it, so it is theirs. With no owner
-	// it would appear in every user's library as a book they never added.
-	// Same rule the Hardcover list syncer applies for the list owner. Both the
-	// direct insert and the single work fallback use it. ListScopeUserID is 0
-	// for an admin and with tenancy off, which keep the book unowned as before.
+	// The single work fallback sync stamps the same owner on the row it
+	// creates as the direct insert below (newBookOwnerUserID): the author's,
+	// or the caller's library scope under an unowned author.
 	ownerForUnownedAuthor := scopeID
 
 	// dedupedOnto is the existing row the direct insert below merged the
@@ -460,10 +475,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 			// row rather than the request, because that row usually pre-exists
 			// this request (#1612) — the scoped lookup above is what makes it
 			// the correct owner either way.
-			primary.OwnerUserID = author.OwnerUserID
-			if primary.OwnerUserID == 0 {
-				primary.OwnerUserID = ownerForUnownedAuthor
-			}
+			primary.OwnerUserID = newBookOwnerUserID(ctx, author)
 			primary.Monitored = author.Monitored
 			if primary.Status == "" {
 				primary.Status = models.BookStatusWanted

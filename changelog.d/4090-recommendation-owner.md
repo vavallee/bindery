@@ -1,0 +1,2 @@
+### Fixed
+- **Books added from Discover get the same owner as Add Book** (#4090). With `BINDERY_ENFORCE_TENANCY` on, a book an admin added from a recommendation was created with no owner, so it showed up in every user's library and only an admin could change it, while the same book added through Add Book went to the admin's own library. A recommendation now files the book in the library of the author it lands under, the way Add Book does. Books added before this change keep their current owner.
