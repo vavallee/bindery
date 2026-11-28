@@ -1,0 +1,2 @@
+### Changed
+- **Requesters can ask an admin for a missing format of a book they can't change** (#4089). With `BINDERY_ENFORCE_TENANCY` on, asking for the audiobook of a shared book, or of a book another account holds, used to answer "ask an admin" and create nothing. It now creates a request that always waits for an admin, even for accounts that auto approve, and approving it adds the format to the existing book. An admin's approval now also adds a missing format to another account's book instead of refusing it. Tenancy off is unchanged.

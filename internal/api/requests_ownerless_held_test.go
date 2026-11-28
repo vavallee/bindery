@@ -7,9 +7,11 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/vavallee/bindery/internal/auth"
 	"github.com/vavallee/bindery/internal/models"
+	"github.com/vavallee/bindery/internal/notifier"
 )
 
 // seedOwnerlessEbook adds the shared (no owner) ebook only book the requests
@@ -77,15 +79,58 @@ func TestRequestsCreate_AutoApproveOwnerlessCoveredBookIsNotSearched(t *testing.
 	}
 }
 
-// A requester asking for a missing format of a shared book is answered as for
-// another account's book: refused, with the ask an admin sentence.
-func TestRequestsCreate_OwnerlessMissingFormatAnswersLikeHeldElsewhere(t *testing.T) {
-	auth.SetEnforceTenancyForTests(t, true)
-	f := newRequestsFixture(t, wellsRequestStub(), &fakeAdder{})
-	seedOwnerlessEbook(t, f)
-	rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W","mediaType":"audiobook"}`)
-	if rec.Code != http.StatusConflict || requestErrorBody(rec) != bookHeldCreateMessage {
-		t.Fatalf("create: %d %q, want 409 with %q", rec.Code, requestErrorBody(rec), bookHeldCreateMessage)
+// A requester asking for a missing format of a shared book gets a pending
+// request for an admin (#4089), the same as for another account's book. It
+// is not auto approved, whether the auto approval is the account's own or the
+// install default, the shared book is left alone, and the admin is notified.
+func TestRequestsCreate_OwnerlessMissingFormatWaitsForAnAdmin(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, f *requestsFixture)
+	}{
+		{"account set to Always", func(t *testing.T, f *requestsFixture) { setAutoApprove(t, f, f.requester.ID, true) }},
+		{"install default on", func(t *testing.T, f *requestsFixture) {
+			if err := f.users.SetRequestsAutoApprove(context.Background(), f.requester.ID, nil); err != nil {
+				t.Fatal(err)
+			}
+			setAutoApproveDefault(t, f.settings, "true")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			auth.SetEnforceTenancyForTests(t, true)
+			adder := &fakeAdder{}
+			f := newRequestsFixture(t, wellsRequestStub(), adder)
+			capture := &capturingNotifier{events: make(chan capturedEvent, 4)}
+			f.h.WithNotifier(capture)
+			tc.setup(t, f)
+			if !f.h.autoApproveRequests(context.Background(), f.requester.ID) {
+				t.Fatal("setup: the requester does not auto approve")
+			}
+			book := seedOwnerlessEbook(t, f)
+			before, _ := f.books.GetByID(context.Background(), book.ID)
+			rec := f.create(t, f.requester, `{"kind":"book","foreignId":"OL27482W","mediaType":"audiobook"}`)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("create: %d %s, want 201", rec.Code, rec.Body.String())
+			}
+			created := decodeRequest(t, rec)
+			if created.Status != models.RequestStatusPending {
+				t.Fatalf("status %q, want pending", created.Status)
+			}
+			if n := addCalls(adder); n != 0 {
+				t.Fatalf("add core ran %d times for a shared book", n)
+			}
+			if after, _ := f.books.GetByID(context.Background(), book.ID); !reflect.DeepEqual(before, after) {
+				t.Fatalf("shared book changed: %+v -> %+v", before, after)
+			}
+			select {
+			case ev := <-capture.events:
+				if ev.event != notifier.EventRequestCreated {
+					t.Fatalf("event %q, want %q", ev.event, notifier.EventRequestCreated)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the admin was not notified of the pending request")
+			}
+		})
 	}
 }
 
