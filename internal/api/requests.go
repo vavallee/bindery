@@ -834,6 +834,25 @@ func (h *RequestHandler) autoApproveRequests(ctx context.Context, owner int64) b
 // quota just as it is when the setting is off. The count is part of the claim,
 // not a separate read, so a burst of creates cannot all pass it.
 func (h *RequestHandler) autoApprove(ctx context.Context, req models.LibraryRequest, owner int64) (*models.LibraryRequest, int, string, error) {
+	// The approval acts as the account that owns the request, whoever filed
+	// it (an admin can file on a requester's behalf). A requester's own auto
+	// approval therefore never writes to a shared book, as the book routes
+	// refuse it too (auth.CheckWriteOwnership). The owner is looked up before
+	// the claim, and a failed lookup stops here: running on with the caller's
+	// context would approve as the admin who filed the request, who may
+	// change any book. The request stays pending and unclaimed.
+	if h.users == nil {
+		return nil, 0, "", fmt.Errorf("auto approve request %d: no user lookup", req.ID)
+	}
+	u, err := h.users.GetByID(ctx, owner)
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("auto approve request %d: look up owner %d: %w", req.ID, owner, err)
+	}
+	if u == nil {
+		return nil, 0, "", fmt.Errorf("auto approve request %d: owner %d not found", req.ID, owner)
+	}
+	ownerCtx := auth.WithUserRole(auth.WithUserID(ctx, owner), u.Role)
+
 	claimed, err := h.requests.ClaimAutoApprove(ctx, req.ID, owner, startOfUTCDay(time.Now()), h.maxPendingPerUser(ctx))
 	if errors.Is(err, db.ErrRequestAutoApproveQuota) {
 		// The request is left pending for an admin, exactly as it would be
@@ -850,14 +869,7 @@ func (h *RequestHandler) autoApprove(ctx context.Context, req models.LibraryRequ
 		return nil, 0, "", fmt.Errorf("request %d is not owned by user %d", req.ID, owner)
 	}
 	search := claimed.Kind == models.RequestKindBook
-	// The approval acts as the account that owns the request, whoever filed
-	// it (an admin can file on a requester's behalf). A requester's own auto
-	// approval therefore never writes to a shared book, as the book routes
-	// refuse it too (auth.CheckWriteOwnership).
-	if u, uerr := h.users.GetByID(ctx, owner); uerr == nil && u != nil {
-		ctx = auth.WithUserRole(auth.WithUserID(ctx, owner), u.Role)
-	}
-	return h.runClaimedApproval(ctx, claimed, approveBody{SearchOnAdd: &search})
+	return h.runClaimedApproval(ownerCtx, claimed, approveBody{SearchOnAdd: &search})
 }
 
 // startOfUTCDay is midnight UTC of t's day, where the auto-approve quota
@@ -1095,7 +1107,11 @@ func existingBookOutcomeFor(ctx context.Context, book *models.Book, mediaType st
 var errBookHeldElsewhere = errors.New("book held by another account")
 
 const (
-	bookHeldElsewhereMessage = "This book is already in the library under another account and does not have the requested format, so approving cannot add it. Decline the request instead."
+	// bookHeldElsewhereMessage is the reason an approval acting as the
+	// requesting account gives up on a book that account may not change. Only
+	// an auto approval acts that way (an admin may change any book), and it
+	// logs this and leaves the request pending.
+	bookHeldElsewhereMessage = "The requesting account can't change this book, so the format was not added. The request waits for an admin."
 	bookChangedMessage       = "This book changed while the request was being approved. Try approving again."
 )
 
